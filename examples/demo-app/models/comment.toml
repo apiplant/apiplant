@@ -1,0 +1,29 @@
+# A comment belongs_to a post and to its author (a user). This gives:
+#   GET /api/post/{id}/comment      — the reverse has_many (post's comments)
+#   GET /api/comment?expand=post,owner  — inline the referenced records
+#   GET /api/comment?post_id=<uuid>     — filter by any field
+
+[resource]
+name = "comment"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "authenticated"
+update = "owner"
+delete = "owner"
+
+[fields.body]
+type = "text"
+required = true
+
+[fields.post_id]
+type = "reference"
+references = "post"
+required = true
+on_delete = "cascade"     # remove a post's comments when the post is deleted
+
+[fields.owner_id]
+type = "reference"
+references = "user"
+# on_delete defaults to "restrict"

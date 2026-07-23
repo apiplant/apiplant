@@ -1,0 +1,10 @@
+[package]
+name = "apiplant-abi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Stable C-ABI contract between apiplant and dynamically-loaded functions"
+
+[dependencies]
+abi_stable.workspace = true

@@ -1,0 +1,26 @@
+# apiplant demo app configuration. Every key here is optional; delete the file
+# entirely and the framework still boots with safe defaults.
+
+[server]
+host = "127.0.0.1"
+port = 8099
+base_path = "/api"          # the API is mounted under /api
+# domain = "api.example.com" # uncomment to only answer this Host header
+
+[database]
+# Point at the ephemeral cluster used in the walkthrough. Leave `url` empty to
+# build it from the individual parts instead.
+url = "postgres://postgres@127.0.0.1:55432/apiplant"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+# Interactive API docs. All optional (enabled by default). With the demo running,
+# open http://127.0.0.1:8099/api/docs — the Authorize button drives both the
+# Bearer-token and X-Api-Key schemes.
+[docs]
+enabled = true
+path = "/docs"
+title = "apiplant demo API"

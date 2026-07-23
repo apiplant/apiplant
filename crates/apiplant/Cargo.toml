@@ -1,0 +1,19 @@
+[package]
+name = "apiplant"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The apiplant server executable: point it at an app directory and it serves an API"
+
+[[bin]]
+name = "apiplant"
+path = "src/main.rs"
+
+[dependencies]
+apiplant-core.workspace = true
+apiplant-server.workspace = true
+ntex.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

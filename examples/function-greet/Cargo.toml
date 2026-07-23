@@ -1,0 +1,16 @@
+[package]
+name = "function-greet"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Example apiplant function compiled to a C-ABI cdylib"
+
+[lib]
+name = "function_greet"
+crate-type = ["cdylib"]
+
+[dependencies]
+apiplant-abi.workspace = true
+abi_stable.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true

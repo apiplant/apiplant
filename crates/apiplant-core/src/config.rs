@@ -1,0 +1,181 @@
+//! `main.toml` — the top-level server configuration.
+//!
+//! Every field is optional: a missing file, or a file missing any given key,
+//! falls back to a safe default. The only piece of configuration that is
+//! *inferred* rather than declared is TLS: if the app directory contains an
+//! `https/` folder with a cert + key, the server serves HTTPS.
+
+use serde::Deserialize;
+use std::path::Path;
+
+/// Fully-resolved server configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub server: ServerConfig,
+    pub database: DatabaseConfig,
+    pub auth: AuthConfig,
+    pub docs: DocsConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            server: ServerConfig::default(),
+            database: DatabaseConfig::default(),
+            auth: AuthConfig::default(),
+            docs: DocsConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// Interface to bind, e.g. `0.0.0.0`.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// Only answer requests for this `Host:` header. `None` = answer any host.
+    pub domain: Option<String>,
+    /// Sub-path the API is mounted under, e.g. `/api`. Always starts with `/`
+    /// and never ends with one (normalised on load).
+    pub base_path: String,
+    /// Number of worker threads. `None` = one per CPU.
+    pub workers: Option<usize>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        ServerConfig {
+            host: "0.0.0.0".to_string(),
+            port: 8080,
+            domain: None,
+            base_path: "/".to_string(),
+            workers: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DatabaseConfig {
+    /// Full connection URL. When empty it is assembled from the parts below.
+    pub url: String,
+    pub host: String,
+    pub port: u16,
+    pub name: String,
+    pub user: String,
+    pub password: String,
+    /// Max pool connections.
+    pub max_connections: u32,
+    /// Run pending migrations on boot.
+    pub auto_migrate: bool,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        DatabaseConfig {
+            url: String::new(),
+            host: "localhost".to_string(),
+            port: 5432,
+            name: "apiplant".to_string(),
+            user: "postgres".to_string(),
+            password: "postgres".to_string(),
+            max_connections: 16,
+            auto_migrate: true,
+        }
+    }
+}
+
+impl DatabaseConfig {
+    /// The connection URL, assembled from parts when `url` was left empty.
+    pub fn resolved_url(&self) -> String {
+        if !self.url.is_empty() {
+            return self.url.clone();
+        }
+        format!(
+            "postgres://{}:{}@{}:{}/{}",
+            self.user, self.password, self.host, self.port, self.name
+        )
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    /// Secret used to sign session JWTs. Auto-generated (and warned about) when
+    /// left empty — set it in production so tokens survive restarts.
+    pub jwt_secret: String,
+    /// Session token lifetime in seconds.
+    pub session_ttl_secs: u64,
+    /// Allow self-service signup on `POST /auth/register`.
+    pub allow_registration: bool,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        AuthConfig {
+            jwt_secret: String::new(),
+            session_ttl_secs: 60 * 60 * 24 * 7,
+            allow_registration: true,
+        }
+    }
+}
+
+/// Interactive API documentation (OpenAPI spec + Swagger UI).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DocsConfig {
+    /// Serve the OpenAPI spec and Swagger UI (default true).
+    pub enabled: bool,
+    /// Path (under `base_path`) the Swagger UI is served at.
+    pub path: String,
+    /// Title shown in the UI and the spec's `info.title`.
+    pub title: String,
+}
+
+impl Default for DocsConfig {
+    fn default() -> Self {
+        DocsConfig {
+            enabled: true,
+            path: "/docs".to_string(),
+            title: "apiplant API".to_string(),
+        }
+    }
+}
+
+impl Config {
+    /// Load `main.toml` from an app directory, applying defaults for anything
+    /// absent. A missing file is not an error.
+    pub fn load(app_dir: &Path) -> crate::Result<Self> {
+        let path = app_dir.join("main.toml");
+        let mut config = if path.exists() {
+            let text = std::fs::read_to_string(&path).map_err(|e| crate::Error::Io {
+                path: path.clone(),
+                source: e,
+            })?;
+            toml::from_str::<Config>(&text).map_err(|e| crate::Error::Toml { path, source: e })?
+        } else {
+            tracing::info!("no main.toml found, using defaults");
+            Config::default()
+        };
+        config.normalise();
+        Ok(config)
+    }
+
+    fn normalise(&mut self) {
+        let bp = self.server.base_path.trim_end_matches('/');
+        self.server.base_path = if bp.is_empty() {
+            String::new()
+        } else if bp.starts_with('/') {
+            bp.to_string()
+        } else {
+            format!("/{bp}")
+        };
+
+        if !self.docs.path.starts_with('/') {
+            self.docs.path = format!("/{}", self.docs.path);
+        }
+    }
+}

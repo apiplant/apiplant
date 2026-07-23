@@ -1,0 +1,34 @@
+# A blog post resource. This single file publishes:
+#   GET    /api/post          (list)     — public
+#   GET    /api/post/{id}     (read)     — public
+#   POST   /api/post          (create)   — any authenticated user
+#   PATCH  /api/post/{id}     (update)   — only the owner
+#   DELETE /api/post/{id}     (delete)   — only users with the `admin` role
+
+[resource]
+name = "post"
+
+[permissions]
+list = "public"
+read = "public"
+create = "authenticated"
+update = "owner"
+delete = "role:admin"
+
+[fields.title]
+type = "string"
+required = true
+max_length = 200
+
+[fields.body]
+type = "text"
+
+[fields.published]
+type = "boolean"
+default = false
+
+# `owner_id` matches the resource's default owner_field, so the framework stamps
+# it on create and enforces `update = owner` against it automatically.
+[fields.owner_id]
+type = "reference"
+references = "user"

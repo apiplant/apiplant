@@ -1,0 +1,17 @@
+[package]
+name = "apiplant-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "apiplant database layer: dynamic schema, migrations and JSON CRUD over Postgres"
+
+[dependencies]
+apiplant-core.workspace = true
+sea-orm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+thiserror.workspace = true

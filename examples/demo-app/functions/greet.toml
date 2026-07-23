@@ -1,0 +1,3 @@
+# Per-deployment configuration for the `greet` function. The framework converts
+# this to JSON and hands it to the function via `HostApi::config()`.
+greeting = "Bonjour"

@@ -1,0 +1,15 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Local TLS material and secrets should never be committed.
+**/https/*.pem
+**/https/*.key
+**/https/*.crt
+
+# Compiled function libraries dropped into example apps.
+examples/**/functions/*.so
+examples/**/functions/*.dylib
+examples/**/functions/*.dll
+
+pgdata

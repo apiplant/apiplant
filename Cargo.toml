@@ -1,0 +1,71 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/apiplant-abi",
+    "crates/apiplant-core",
+    "crates/apiplant-db",
+    "crates/apiplant-auth",
+    "crates/apiplant-server",
+    "crates/apiplant",
+    "examples/function-greet",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+authors = ["apiplant contributors"]
+repository = "https://github.com/apiplant/apiplant"
+
+[workspace.dependencies]
+# Internal crates
+apiplant-abi = { path = "crates/apiplant-abi" }
+apiplant-core = { path = "crates/apiplant-core" }
+apiplant-db = { path = "crates/apiplant-db" }
+apiplant-auth = { path = "crates/apiplant-auth" }
+apiplant-server = { path = "crates/apiplant-server" }
+
+# Stable ABI for dynamically loaded functions
+abi_stable = "0.11"
+
+# Async runtime + web server
+tokio = { version = "1", features = ["full"] }
+ntex = { version = "2", features = ["tokio", "rustls"] }
+
+# Database (sea-query for dynamic schema/queries, sea-orm for the pool + executor)
+sea-orm = { version = "1.1", default-features = false, features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+    "with-uuid",
+    "with-chrono",
+    "with-json",
+    "macros",
+] }
+sea-query = { version = "0.32", features = ["backend-postgres", "with-uuid", "with-chrono", "with-json"] }
+
+# Serialization / config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Auth
+argon2 = "0.5"
+jsonwebtoken = "9"
+
+# TLS
+rustls = "0.23"
+rustls-pemfile = "2"
+
+# Utilities
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+libloading = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
