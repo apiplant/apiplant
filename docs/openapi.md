@@ -23,7 +23,10 @@ Enable/configure via [`[docs]`](configuration.md#docs). Both are on by default.
   relations), and one exact-match filter per column.
 * **Nested `has_many` paths**: `/{parent}/{id}/{child}` for every reverse
   relation.
-* **Auth endpoints** and **every non-private function**.
+* **Auth endpoints** and **every non-private function**. Functions written with
+  the `function!` macro whose input/output derive `JsonSchema` get **typed
+  request/response schemas** (registered as `Fn<Name>Input` / `Fn<Name>Output`
+  components), so their bodies render as typed forms rather than opaque objects.
 * Each operation carries a `description` stating its permission
   (e.g. *"Requires the `admin` role."*).
 

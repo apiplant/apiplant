@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/apiplant-abi",
+    "crates/apiplant-function",
     "crates/apiplant-core",
     "crates/apiplant-db",
     "crates/apiplant-auth",
@@ -21,6 +22,7 @@ repository = "https://github.com/apiplant/apiplant"
 [workspace.dependencies]
 # Internal crates
 apiplant-abi = { path = "crates/apiplant-abi" }
+apiplant-function = { path = "crates/apiplant-function" }
 apiplant-core = { path = "crates/apiplant-core" }
 apiplant-db = { path = "crates/apiplant-db" }
 apiplant-auth = { path = "crates/apiplant-auth" }
@@ -47,6 +49,7 @@ sea-query = { version = "0.32", features = ["backend-postgres", "with-uuid", "wi
 # Serialization / config
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "0.8"
 toml = "0.8"
 
 # Auth

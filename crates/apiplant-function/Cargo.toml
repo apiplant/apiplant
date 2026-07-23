@@ -1,0 +1,21 @@
+[package]
+name = "apiplant-function"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Ergonomic helpers and the `function!` macro for writing apiplant functions"
+
+[dependencies]
+apiplant-abi.workspace = true
+abi_stable.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+schemars = { workspace = true, optional = true }
+
+[features]
+# `schema` (on by default) derives JSON Schemas for function input/output so they
+# appear typed in the generated OpenAPI docs. Disable default features to drop
+# the schemars dependency and the JsonSchema requirement on your I/O types.
+default = ["schema"]
+schema = ["dep:schemars"]

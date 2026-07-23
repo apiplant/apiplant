@@ -199,32 +199,47 @@ as JSON or small `#[repr(C)]` enums, so the host never shares a sea-orm, ntex, o
 tokio type with your plugin — the ABI stays tiny and genuinely stable across
 compiler/allocator versions.
 
-```rust
-impl Function for Greet {
-    fn manifest(&self) -> FunctionManifest { /* name, visibility, method, ... */ }
+With the `apiplant-function` crate you write **one typed Rust function** — no ABI
+traits, no root-module export, no manual JSON. Types are inferred from the
+handler's signature:
 
-    fn invoke(&self, host: HostApi_TO<'_, RBox<()>>, input: RStr<'_>)
-        -> RResult<RString, RString>
-    {
-        let cfg = host.config();                 // functions/<name>.toml as JSON
-        let rows = host.query(/* {"sql":..,"params":..} */);  // borrow the host DB
-        host.log(LogLevel::Info, "hi".into());
-        RResult::ROk(/* JSON response */)
-    }
+```rust
+use apiplant_function::prelude::*;
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize, JsonSchema)] struct Input { name: String }
+#[derive(Serialize, JsonSchema)]   struct Output { message: String }
+
+fn greet(ctx: &Context<()>, input: Input) -> Result<Output, String> {
+    let users = ctx.query_one("SELECT count(*)::int AS n FROM apiplant_user", &[])?;  // borrow the host DB
+    ctx.info("greet invoked");
+    Ok(Output { message: format!("Hello, {}!", input.name) })
+}
+
+apiplant_function::function! {
+    name: "greet",
+    description: "Greets a person",
+    method: Post,
+    visibility: Public,   // public | authenticated | role-gated | private
+    handler: greet,
 }
 ```
 
-The host loads every library in `functions/`, reads its manifest, mounts it at
-`<base>/functions/<name>` with the declared HTTP method and visibility
-(`public` / `authenticated` / `role-gated` / `private`), and on each request
-runs it on a blocking worker with a [`HostApi`] bridge to the database, config,
-and caller identity. See [`examples/function-greet`](examples/function-greet).
+The macro generates the ABI glue, reads/writes JSON, resolves typed config and
+input, and turns any `Err(_)` into a `400`. Deriving `JsonSchema` on the input
+and output makes the function **fully typed in the OpenAPI docs** (Swagger UI
+renders a typed form). The host loads every library in `functions/`, mounts it at
+`<base>/functions/<name>` with its declared method and visibility, and runs it on
+a blocking worker with a [`Context`] giving it the database, config, and caller
+identity. See [`examples/function-greet`](examples/function-greet) and the
+[Functions guide](docs/functions.md).
 
 ## Workspace layout
 
 | Crate                  | Responsibility                                                    |
 |------------------------|-------------------------------------------------------------------|
 | `apiplant-abi`         | the stable C-ABI contract shared with function authors            |
+| `apiplant-function`    | ergonomic `Context` + `function!` macro for writing functions     |
 | `apiplant-core`        | config, errors, the resource-schema model, app-directory loader   |
 | `apiplant-db`          | dynamic DDL/DML over Postgres (sea-query + sea-orm), migrations    |
 | `apiplant-auth`        | passwords, JWT sessions, API keys, permission evaluation          |
@@ -284,3 +299,4 @@ Licensed under MIT OR Apache-2.0.
 [jsonwebtoken]: https://docs.rs/jsonwebtoken
 [rustls]: https://docs.rs/rustls
 [`HostApi`]: crates/apiplant-abi/src/lib.rs
+[`Context`]: crates/apiplant-function/src/lib.rs

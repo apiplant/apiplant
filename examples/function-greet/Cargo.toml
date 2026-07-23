@@ -3,14 +3,19 @@ name = "function-greet"
 version.workspace = true
 edition.workspace = true
 publish = false
-description = "Example apiplant function compiled to a C-ABI cdylib"
+description = "Example apiplant function written with the function! macro"
 
 [lib]
 name = "function_greet"
 crate-type = ["cdylib"]
 
 [dependencies]
-apiplant-abi.workspace = true
+apiplant-function.workspace = true
+# Needed only so the `function!` macro's exported root-module glue resolves; you
+# never reference it directly.
 abi_stable.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
+# Enables `#[derive(JsonSchema)]` so the function's input/output are typed in the
+# OpenAPI docs. Drop it (and the derives) to fall back to untyped bodies.
+schemars.workspace = true

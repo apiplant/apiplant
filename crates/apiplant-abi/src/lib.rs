@@ -91,6 +91,11 @@ pub struct FunctionManifest {
     pub method: HttpMethod,
     /// Optional JSON-Schema describing the function's config object. Empty = none.
     pub config_schema: RString,
+    /// Optional JSON-Schema for the request body. Empty = untyped. Surfaced in
+    /// the generated OpenAPI document so function I/O is typed in the docs.
+    pub input_schema: RString,
+    /// Optional JSON-Schema for the response body. Empty = untyped.
+    pub output_schema: RString,
 }
 
 /// Services the host lends to a function for the duration of one invocation.
