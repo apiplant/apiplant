@@ -1,10 +1,9 @@
 //! Built-in authentication endpoints, mounted under `<base>/auth`.
 //!
-//! These operate on the `user`, `role` and `api_key` resources — which are just
-//! ordinary resources — but understand the `[auth]` section on the user model
+//! These operate on the `user` and `api_key` resources — which are just ordinary
+//! resources — but understand the `[auth]` section on the user model
 //! (configurable identity/password field names).
 
-use apiplant_auth::Principal;
 use apiplant_core::schema::AuthSpec;
 use ntex::web::types::{Json, State};
 use ntex::web::{HttpRequest, HttpResponse};
@@ -69,11 +68,7 @@ pub async fn register(
     let Some(user_id) = user_id else {
         return error(500, "created user missing id");
     };
-    let principal = Principal {
-        user_id,
-        role: None,
-    };
-    match state.auth.issue_token(&principal) {
+    match state.auth.issue_token(user_id) {
         Ok(token) => HttpResponse::Created().json(&json!({ "token": token, "user": created })),
         Err(_) => error(500, "failed to issue token"),
     }
@@ -96,13 +91,12 @@ pub async fn login(
         None => return error(400, "`password` is required"),
     };
 
-    let (Some(user_tbl), Some(role_tbl)) = (table(&state, "user"), table(&state, "role")) else {
-        return error(500, "missing user/role resource");
+    let Some(user_tbl) = table(&state, "user") else {
+        return error(500, "missing user resource");
     };
     let sql = format!(
-        "SELECT u.id::text AS id, u.{pw}::text AS password_hash, r.name AS role \
-         FROM {user_tbl} u LEFT JOIN {role_tbl} r ON r.id = u.role_id \
-         WHERE u.{ident} = $1 LIMIT 1",
+        "SELECT u.id::text AS id, u.{pw}::text AS password_hash \
+         FROM {user_tbl} u WHERE u.{ident} = $1 LIMIT 1",
         pw = quote(&spec.password_field),
         ident = quote(&spec.identity_field),
     );
@@ -124,9 +118,7 @@ pub async fn login(
     let Some(user_id) = user_id else {
         return error(500, "user missing id");
     };
-    let role = row.get("role").and_then(|v| v.as_str()).map(String::from);
-    let principal = Principal { user_id, role };
-    match state.auth.issue_token(&principal) {
+    match state.auth.issue_token(user_id) {
         Ok(token) => HttpResponse::Ok().json(&json!({ "token": token })),
         Err(_) => error(500, "failed to issue token"),
     }

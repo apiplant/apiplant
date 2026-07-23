@@ -35,6 +35,10 @@ pub struct ResourceMeta {
     /// Column used for `owner` permission checks (default `owner_id`).
     #[serde(default = "default_owner_field")]
     pub owner_field: String,
+    /// Tenancy: `organization` (default — rows belong to an org and are isolated)
+    /// or `global` (shared across the whole deployment).
+    #[serde(default = "default_scope")]
+    pub scope: Scope,
 }
 
 fn yes() -> bool {
@@ -42,6 +46,9 @@ fn yes() -> bool {
 }
 fn default_owner_field() -> String {
     "owner_id".to_string()
+}
+fn default_scope() -> Scope {
+    Scope::Organization
 }
 
 impl Resource {
@@ -95,6 +102,24 @@ impl Resource {
     /// Find the reference exposed under a given relation name (`"owner"`).
     pub fn reference_by_relation(&self, relation: &str) -> Option<Reference> {
         self.references().into_iter().find(|r| r.relation == relation)
+    }
+
+    /// Whether this resource is isolated per organisation (the default).
+    pub fn is_org_scoped(&self) -> bool {
+        self.meta.scope == Scope::Organization
+    }
+
+    /// The column that carries this resource's organisation, if any:
+    /// `organization_id` for org-scoped resources, `id` for the `organization`
+    /// resource itself (its rows *are* organisations), else `None`.
+    pub fn org_column(&self) -> Option<&'static str> {
+        if self.is_org_scoped() {
+            Some("organization_id")
+        } else if self.meta.name == "organization" {
+            Some("id")
+        } else {
+            None
+        }
     }
 
     /// Load and validate a single resource file.
@@ -196,14 +221,34 @@ pub fn relation_name(field: &str) -> &str {
     field.strip_suffix("_id").unwrap_or(field)
 }
 
+/// Whether a resource is isolated per organisation (the default) or shared
+/// across the whole deployment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    /// Rows belong to an organisation; every request is scoped to the caller's
+    /// active organisation and `organization_id` is enforced automatically.
+    Organization,
+    /// Not tenant-scoped — shared by everyone, governed only by `[permissions]`.
+    Global,
+}
+
 /// Access policy for a single action on a resource.
+///
+/// On an organisation-scoped resource, org membership is always required and
+/// queries are already filtered to the caller's active organisation; these
+/// levels then decide *who among the members* may act. `Role` is an
+/// **organisation** role (from the caller's membership), not a global one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Access {
-    /// No auth required.
+    /// No auth required. Only meaningful on `global` resources; on an
+    /// org-scoped resource it is treated like `member`.
     Public,
-    /// Any authenticated principal.
+    /// Any authenticated principal (⇒ any member, on an org-scoped resource).
     Authenticated,
-    /// Authenticated and holding the named role.
+    /// Any member of the (active) organisation.
+    Member,
+    /// A member holding the named role **within the organisation**.
     Role(String),
     /// The principal must own the row (owner_field == principal id).
     Owner,
@@ -212,11 +257,12 @@ pub enum Access {
 }
 
 impl Access {
-    /// Parse the string form used in TOML (`"public"`, `"role:admin"`, …).
+    /// Parse the string form used in TOML (`"public"`, `"member"`, `"role:admin"`, …).
     pub fn parse(s: &str) -> Access {
         match s {
             "public" => Access::Public,
             "authenticated" => Access::Authenticated,
+            "member" => Access::Member,
             "owner" => Access::Owner,
             "private" => Access::Private,
             other => other
@@ -240,13 +286,15 @@ pub struct Permissions {
 
 impl Default for Permissions {
     fn default() -> Self {
-        // Safe-by-default: readable by anyone, writable only when authenticated.
+        // Multitenant-by-default: every action is limited to members of the
+        // caller's organisation. On a `global` resource, `member` behaves like
+        // `authenticated` (there is no org to belong to).
         Permissions {
-            list: Access::Public,
-            read: Access::Public,
-            create: Access::Authenticated,
-            update: Access::Authenticated,
-            delete: Access::Authenticated,
+            list: Access::Member,
+            read: Access::Member,
+            create: Access::Member,
+            update: Access::Member,
+            delete: Access::Member,
         }
     }
 }

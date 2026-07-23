@@ -54,9 +54,13 @@ pub async fn invoke(
             }
         }
         Visibility::RoleGated => {
+            // Roles are per-organisation: the caller must hold `role` in their
+            // active organisation.
+            let active_org = state.active_org(&req, &principal);
             let ok = principal
                 .as_ref()
-                .and_then(|p| p.role.as_deref())
+                .zip(active_org)
+                .and_then(|(p, org)| p.role_in(org))
                 .map(|r| r == role)
                 .unwrap_or(false);
             if !ok {

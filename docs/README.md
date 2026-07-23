@@ -10,10 +10,11 @@ These guides cover everything the framework does.
 | Guide | What's in it |
 |-------|--------------|
 | [Configuration](configuration.md) | `main.toml` reference, TLS, database, workers |
-| [Resources](resources.md) | defining resources, field types & options, migrations |
-| [Permissions](permissions.md) | the access model, per-action policies, ownership, roles |
+| [Resources](resources.md) | defining resources, field types & options, scope, migrations |
+| [Permissions](permissions.md) | the access model, per-action policies, ownership, org roles |
+| [Multitenancy](multitenancy.md) | organisations, memberships, automatic per-tenant isolation |
 | [Relationships](relationships.md) | references, `has_many`, expansion, filtering, `on_delete` |
-| [Authentication](authentication.md) | users, roles, API keys, sessions, extending the user model |
+| [Authentication](authentication.md) | users, organisations, API keys, sessions, extending `user` |
 | [Functions](functions.md) | writing & loading compiled plugins over the stable ABI |
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](openapi.md) | the generated spec and interactive docs |

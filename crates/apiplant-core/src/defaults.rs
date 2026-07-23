@@ -1,25 +1,83 @@
 //! Built-in resources.
 //!
-//! `user`, `role` and `api_key` exist in every app. If the developer drops a
-//! `models/users.toml` (etc.) into the app, that file *replaces* the default,
-//! letting them add fields or tweak permissions while keeping the machinery
-//! (auth, ownership, api-key lookup) working. When absent, these embedded
-//! definitions are used verbatim.
+//! `organization`, `membership`, `user`, `api_key` and `oauth_connection` exist
+//! in every app. Together they make apps multitenant out of the box: users join
+//! organisations through memberships (which also carry their **role within that
+//! organisation**), and every other resource is isolated per organisation by
+//! default.
+//!
+//! Drop a `models/<name>.toml` with the same `name` to replace a built-in and
+//! add fields or tweak permissions while keeping the machinery working.
 
 use crate::schema::Resource;
 
-/// Default `user` resource: email + password auth, extendable via `models/users.toml`.
-pub const USER_TOML: &str = r#"
+/// The `organization` — the tenant. `global` because its rows *are* the
+/// organisations; membership (not an `organization_id`) decides who sees them.
+pub const ORGANIZATION_TOML: &str = r#"
 [resource]
-name = "user"
+name = "organization"
+scope = "global"
 timestamps = true
 
 [permissions]
-list = "role:admin"
-read = "owner"
-create = "public"      # registration
-update = "owner"
+list   = "member"          # organisations you belong to
+read   = "member"
+create = "authenticated"   # anyone may start one (and becomes its admin)
+update = "role:admin"      # an admin *of that organisation*
 delete = "role:admin"
+
+[fields.name]
+type = "string"
+required = true
+
+[fields.slug]
+type = "string"
+unique = true
+"#;
+
+/// A user's membership in an organisation, carrying their role there. The
+/// join table behind the N:N between `user` and `organization`.
+pub const MEMBERSHIP_TOML: &str = r#"
+[resource]
+name = "membership"
+scope = "organization"
+timestamps = true
+
+[permissions]
+list   = "member"          # members can see who else is in the org
+read   = "member"
+create = "role:admin"      # admins add members
+update = "role:admin"
+delete = "role:admin"
+
+[fields.user_id]
+type = "reference"
+references = "user"
+required = true
+
+[fields.organization_id]
+type = "reference"
+references = "organization"
+required = true
+
+[fields.role]
+type = "string"            # the member's role in this organisation, e.g. "admin"
+"#;
+
+/// The default `user`: global (users are shared across organisations) with
+/// email + password auth. Extend via `models/users.toml`.
+pub const USER_TOML: &str = r#"
+[resource]
+name = "user"
+scope = "global"
+timestamps = true
+
+[permissions]
+list   = "authenticated"
+read   = "owner"
+create = "public"          # registration
+update = "owner"
+delete = "private"
 
 [auth]
 identity_field = "email"
@@ -38,43 +96,18 @@ hidden = true
 
 [fields.display_name]
 type = "string"
-
-[fields.role_id]
-type = "reference"
-references = "role"
 "#;
 
-/// Default `role` resource used for permission checks.
-pub const ROLE_TOML: &str = r#"
-[resource]
-name = "role"
-timestamps = true
-
-[permissions]
-list = "authenticated"
-read = "authenticated"
-create = "role:admin"
-update = "role:admin"
-delete = "role:admin"
-
-[fields.name]
-type = "string"
-required = true
-unique = true
-
-[fields.description]
-type = "text"
-"#;
-
-/// Default `api_key` resource. A valid key authenticates as its owning user.
+/// Default `api_key` resource (global). A valid key authenticates as its owner.
 pub const API_KEY_TOML: &str = r#"
 [resource]
 name = "api_key"
+scope = "global"
 timestamps = true
 
 [permissions]
-list = "owner"
-read = "owner"
+list   = "owner"
+read   = "owner"
 create = "authenticated"
 update = "private"
 delete = "owner"
@@ -94,15 +127,16 @@ references = "user"
 required = true
 "#;
 
-/// Default `oauth_connection` resource linking a user to a third-party identity.
+/// Default `oauth_connection` resource (global) linking a user to a provider.
 pub const OAUTH_TOML: &str = r#"
 [resource]
 name = "oauth_connection"
+scope = "global"
 timestamps = true
 
 [permissions]
-list = "owner"
-read = "owner"
+list   = "owner"
+read   = "owner"
 create = "private"
 update = "private"
 delete = "owner"
@@ -121,12 +155,13 @@ references = "user"
 required = true
 "#;
 
-/// The name → embedded-TOML table of built-ins, in dependency order (role
-/// before user before api_key/oauth, so foreign keys resolve).
+/// The name → embedded-TOML table of built-ins, in dependency order so foreign
+/// keys resolve (organization and user before membership/api_key/oauth).
 pub fn builtins() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("role", ROLE_TOML),
+        ("organization", ORGANIZATION_TOML),
         ("user", USER_TOML),
+        ("membership", MEMBERSHIP_TOML),
         ("api_key", API_KEY_TOML),
         ("oauth_connection", OAUTH_TOML),
     ]

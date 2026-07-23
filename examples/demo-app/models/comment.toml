@@ -1,15 +1,14 @@
-# A comment belongs_to a post and to its author (a user). This gives:
-#   GET /api/post/{id}/comment      — the reverse has_many (post's comments)
-#   GET /api/comment?expand=post,owner  — inline the referenced records
-#   GET /api/comment?post_id=<uuid>     — filter by any field
+# A comment: organisation-scoped (like everything by default) and belonging to a
+# post and to its author. Isolation to the active organisation is automatic; the
+# permissions decide who within the org.
 
 [resource]
 name = "comment"
 
 [permissions]
-list   = "public"
-read   = "public"
-create = "authenticated"
+list   = "member"
+read   = "member"
+create = "member"
 update = "owner"
 delete = "owner"
 
@@ -18,12 +17,11 @@ type = "text"
 required = true
 
 [fields.post_id]
-type = "reference"
+type       = "reference"
 references = "post"
-required = true
-on_delete = "cascade"     # remove a post's comments when the post is deleted
+required   = true
+on_delete  = "cascade"
 
 [fields.owner_id]
-type = "reference"
+type       = "reference"
 references = "user"
-# on_delete defaults to "restrict"

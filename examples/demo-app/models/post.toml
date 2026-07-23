@@ -1,17 +1,21 @@
-# A blog post resource. This single file publishes:
-#   GET    /api/post          (list)     — public
-#   GET    /api/post/{id}     (read)     — public
-#   POST   /api/post          (create)   — any authenticated user
-#   PATCH  /api/post/{id}     (update)   — only the owner
-#   DELETE /api/post/{id}     (delete)   — only users with the `admin` role
+# A blog post. Organisation-scoped by default (multitenant): the framework adds
+# an `organization_id`, isolates every query to the caller's active organisation,
+# and stamps it on create. The permissions below decide who *within* the org:
+#   list/read/create — any member
+#   update           — only the post's owner
+#   delete           — only an `admin` of that organisation
+#
+# Publishes:
+#   GET/POST /api/post, GET/PATCH/DELETE /api/post/{id}
+#   GET /api/organization/{id}/post   (a has_many, from the auto organization_id)
 
 [resource]
 name = "post"
 
 [permissions]
-list = "public"
-read = "public"
-create = "authenticated"
+list   = "member"
+read   = "member"
+create = "member"
 update = "owner"
 delete = "role:admin"
 
@@ -27,8 +31,6 @@ type = "text"
 type = "boolean"
 default = false
 
-# `owner_id` matches the resource's default owner_field, so the framework stamps
-# it on create and enforces `update = owner` against it automatically.
 [fields.owner_id]
 type = "reference"
 references = "user"

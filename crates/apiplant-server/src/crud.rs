@@ -1,20 +1,18 @@
-//! Generic RESTful CRUD handlers, driven entirely by resource schemas.
+//! Generic RESTful CRUD handlers, driven by resource schemas and multitenancy.
 //!
-//! Every resource is served by the same handlers; the resource name is a path
-//! segment resolved against [`AppState`] at request time. Each handler evaluates
-//! the resource's per-action [`Access`] policy for the caller and, when the
-//! policy is `owner`, transparently scopes the query to owned rows.
+//! Resources are **organisation-scoped by default**: every request must resolve
+//! an active organisation, the caller must be a member, all queries are filtered
+//! to that organisation, and `organization_id` is stamped on create. On top of
+//! that isolation, each action's [`Access`] policy decides *who among the
+//! members* may act (`member`, an org `role:`, or the row `owner`). A resource
+//! marked `scope = "global"` opts out and is governed by permissions alone.
 //!
-//! On top of plain CRUD, list/read support:
-//! * **filtering** — any `?field=value` whose key is a column adds an equality
-//!   predicate,
-//! * **relation expansion** — `?expand=owner,role` inlines referenced records,
-//! * **nested collections** — `GET /parent/{id}/child` lists the children that
-//!   reference the parent (the reverse, `has_many`, side of a relationship).
+//! Also supported on list/read: `?field=value` filtering, `?expand=` relation
+//! inlining, and nested `GET /parent/{id}/child` collections.
 
 use std::collections::HashMap;
 
-use apiplant_auth::{evaluate, Decision, Principal};
+use apiplant_auth::Principal;
 use apiplant_core::schema::Access;
 use apiplant_core::Resource;
 use apiplant_db::{value, Filter};
@@ -25,8 +23,24 @@ use uuid::Uuid;
 use crate::response::{db_error, error, ok};
 use crate::state::AppState;
 
-/// Reserved query keys that are not field filters.
-const RESERVED: &[&str] = &["limit", "offset", "expand"];
+const RESERVED: &[&str] = &["limit", "offset", "expand", "via"];
+
+/// The caller plus their resolved active organisation, computed once per request.
+struct Caller {
+    principal: Option<Principal>,
+    active_org: Option<Uuid>,
+}
+
+impl AppState {
+    async fn caller(&self, req: &HttpRequest) -> Caller {
+        let principal = self.resolve_principal(req).await;
+        let active_org = self.active_org(req, &principal);
+        Caller {
+            principal,
+            active_org,
+        }
+    }
+}
 
 /// Column used for `owner` scoping: the resource's declared `owner_field` if it
 /// exists as a column, otherwise the row's own `id` (self-ownership, e.g. users).
@@ -38,7 +52,6 @@ fn owner_column(r: &Resource) -> &str {
     }
 }
 
-/// Resolve the resource or return a 404 response.
 fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpResponse> {
     state
         .app
@@ -47,24 +60,101 @@ fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpRes
         .ok_or_else(|| error(404, format!("unknown resource `{name}`")))
 }
 
-/// Authorize a read/write action, returning owner-scoping filters (empty when
-/// unrestricted) or an error response.
+/// Authorize an action, returning the filters that must scope the query (org
+/// isolation, ownership, org membership set) or an error response.
 fn authorize(
     access: &Access,
-    principal: &Option<Principal>,
+    caller: &Caller,
     r: &Resource,
 ) -> Result<Vec<Filter>, HttpResponse> {
-    match evaluate(access, principal.as_ref()) {
-        Decision::Allow => Ok(Vec::new()),
-        Decision::AllowOwned => {
-            let p = principal.as_ref().expect("AllowOwned implies a principal");
-            Ok(vec![Filter::new(owner_column(r).to_string(), p.user_id)])
+    if r.is_org_scoped() {
+        authorize_org_scoped(access, caller, r)
+    } else {
+        authorize_global(access, caller, r)
+    }
+}
+
+/// Org-scoped resources: membership in the active org is always required, the
+/// query is always filtered to it, and the policy refines who may act.
+fn authorize_org_scoped(
+    access: &Access,
+    caller: &Caller,
+    r: &Resource,
+) -> Result<Vec<Filter>, HttpResponse> {
+    if *access == Access::Private {
+        return Err(error(404, "not found"));
+    }
+    let Some(principal) = caller.principal.as_ref() else {
+        return Err(error(401, "authentication required"));
+    };
+    let Some(org) = caller.active_org else {
+        return Err(error(
+            403,
+            "select an organisation with the X-Organization header",
+        ));
+    };
+    let Some(membership) = principal.membership(org) else {
+        return Err(error(403, "you are not a member of this organisation"));
+    };
+
+    let mut filters = vec![Filter::eq("organization_id", org)];
+    match access {
+        Access::Public | Access::Authenticated | Access::Member => {}
+        Access::Owner => filters.push(Filter::eq(owner_column(r).to_string(), principal.user_id)),
+        Access::Role(role) => {
+            if membership.role.as_deref() != Some(role.as_str()) {
+                return Err(error(
+                    403,
+                    format!("requires the `{role}` role in this organisation"),
+                ));
+            }
         }
-        Decision::Deny => Err(if principal.is_none() {
+        Access::Private => unreachable!("handled above"),
+    }
+    Ok(filters)
+}
+
+/// Global resources: no org isolation; the policy alone decides. `member`/`role`
+/// are only meaningful on the `organization` resource (scoped to your orgs).
+fn authorize_global(
+    access: &Access,
+    caller: &Caller,
+    r: &Resource,
+) -> Result<Vec<Filter>, HttpResponse> {
+    let deny = || {
+        if caller.principal.is_none() {
             error(401, "authentication required")
         } else {
             error(403, "forbidden")
-        }),
+        }
+    };
+    let is_org_resource = r.meta.name == "organization";
+    match access {
+        Access::Public => Ok(Vec::new()),
+        Access::Private => Err(error(404, "not found")),
+        Access::Authenticated => match &caller.principal {
+            Some(_) => Ok(Vec::new()),
+            None => Err(deny()),
+        },
+        Access::Owner => match &caller.principal {
+            Some(p) => Ok(vec![Filter::eq(owner_column(r).to_string(), p.user_id)]),
+            None => Err(deny()),
+        },
+        Access::Member => match &caller.principal {
+            Some(p) if is_org_resource => Ok(vec![Filter::in_uuids("id", p.org_ids())]),
+            Some(_) => Ok(Vec::new()),
+            None => Err(deny()),
+        },
+        Access::Role(role) => match &caller.principal {
+            Some(p) if is_org_resource => {
+                Ok(vec![Filter::in_uuids("id", p.org_ids_with_role(role))])
+            }
+            Some(_) => Err(error(
+                403,
+                "role permissions apply to organisation-scoped resources",
+            )),
+            None => Err(deny()),
+        },
     }
 }
 
@@ -85,10 +175,10 @@ fn expand_list(params: &HashMap<String, String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Turn `?field=value` params (excluding reserved + unknown keys) into typed
-/// equality filters. Unknown keys are ignored; a value that can't be parsed for
-/// its column type is an error.
-fn field_filters(r: &Resource, params: &HashMap<String, String>) -> Result<Vec<Filter>, HttpResponse> {
+fn field_filters(
+    r: &Resource,
+    params: &HashMap<String, String>,
+) -> Result<Vec<Filter>, HttpResponse> {
     let mut filters = Vec::new();
     for (key, raw) in params {
         if RESERVED.contains(&key.as_str()) {
@@ -98,15 +188,16 @@ fn field_filters(r: &Resource, params: &HashMap<String, String>) -> Result<Vec<F
             continue;
         };
         match value::string_to_sql(field.ty, raw) {
-            Ok(v) => filters.push(Filter { column: key.clone(), value: v }),
+            Ok(v) => filters.push(Filter::Eq {
+                column: key.clone(),
+                value: v,
+            }),
             Err(e) => return Err(error(400, format!("invalid filter `{key}`: {e}"))),
         }
     }
     Ok(filters)
 }
 
-/// Expand `belongs_to` relations into an array of result rows, in place.
-/// Batches one query per relation (`WHERE id IN (...)`), so no N+1.
 async fn expand_relations(
     state: &AppState,
     r: &Resource,
@@ -124,7 +215,6 @@ async fn expand_relations(
             continue;
         };
 
-        // Collect the distinct referenced ids present in this page.
         let mut ids: Vec<Uuid> = Vec::new();
         for row in rows.iter() {
             if let Some(id) = row.get(&reference.field).and_then(|v| v.as_str()) {
@@ -136,11 +226,7 @@ async fn expand_relations(
             }
         }
 
-        let fetched = state
-            .db
-            .fetch_by_ids(target, &ids)
-            .await
-            .map_err(db_error)?;
+        let fetched = state.db.fetch_by_ids(target, &ids).await.map_err(db_error)?;
         let mut by_id: HashMap<String, serde_json::Value> = HashMap::new();
         if let Some(arr) = fetched.as_array() {
             for row in arr {
@@ -170,9 +256,9 @@ pub async fn list(req: HttpRequest, state: State<AppState>, path: Path<String>) 
         Err(resp) => return resp,
     };
     let params = parse_query(req.query_string());
-    let principal = state.resolve_principal(&req).await;
+    let caller = state.caller(&req).await;
 
-    let mut filters = match authorize(&r.permissions.list, &principal, r) {
+    let mut filters = match authorize(&r.permissions.list, &caller, r) {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -223,8 +309,8 @@ pub async fn get(
         Err(_) => return error(400, "invalid id"),
     };
     let params = parse_query(req.query_string());
-    let principal = state.resolve_principal(&req).await;
-    let filters = match authorize(&r.permissions.read, &principal, r) {
+    let caller = state.caller(&req).await;
+    let filters = match authorize(&r.permissions.read, &caller, r) {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -245,8 +331,7 @@ pub async fn get(
     }
 }
 
-/// `GET /parent/{id}/child` — the reverse (`has_many`) side of a relationship:
-/// lists `child` rows whose reference field points at the parent id.
+/// `GET /parent/{id}/child` — the reverse (`has_many`) side of a relationship.
 pub async fn nested_list(
     req: HttpRequest,
     state: State<AppState>,
@@ -266,8 +351,6 @@ pub async fn nested_list(
         Err(_) => return error(400, "invalid id"),
     };
 
-    // Find the child field that references the parent. `?via=<field>` picks one
-    // when several fields reference the same parent.
     let params = parse_query(req.query_string());
     let refs: Vec<_> = child
         .references()
@@ -294,12 +377,12 @@ pub async fn nested_list(
         }
     };
 
-    let principal = state.resolve_principal(&req).await;
-    let mut filters = match authorize(&child.permissions.list, &principal, child) {
+    let caller = state.caller(&req).await;
+    let mut filters = match authorize(&child.permissions.list, &caller, child) {
         Ok(f) => f,
         Err(resp) => return resp,
     };
-    filters.push(Filter::new(reference.field.clone(), parent_id));
+    filters.push(Filter::eq(reference.field.clone(), parent_id));
 
     let limit = params
         .get("limit")
@@ -328,19 +411,26 @@ pub async fn create(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    let principal = state.resolve_principal(&req).await;
-    if let Err(resp) = authorize(&r.permissions.create, &principal, r) {
+    let caller = state.caller(&req).await;
+    if let Err(resp) = authorize(&r.permissions.create, &caller, r) {
         return resp;
     }
 
     let mut data = body.into_inner();
-    // Stamp the owner column from the authenticated caller whenever the resource
-    // has a real owner field. The creator owns the row — this is what makes an
-    // `update = "owner"` (or `delete = "owner"`) policy enforceable later. A
-    // client can't spoof it: we always overwrite with the caller's own id.
+
+    // Auto-stamp the organisation on org-scoped resources (never client-set).
+    if r.is_org_scoped() {
+        if let Some(org) = caller.active_org {
+            data.insert(
+                "organization_id".to_string(),
+                serde_json::Value::String(org.to_string()),
+            );
+        }
+    }
+    // Auto-stamp the owner when the resource has a real owner column.
     let owner_col = owner_column(r);
     if owner_col != "id" && r.fields.contains_key(owner_col) {
-        if let Some(p) = principal.as_ref() {
+        if let Some(p) = caller.principal.as_ref() {
             data.insert(
                 owner_col.to_string(),
                 serde_json::Value::String(p.user_id.to_string()),
@@ -348,9 +438,53 @@ pub async fn create(
         }
     }
 
-    match state.db.create(r, &data).await {
-        Ok(row) => HttpResponse::Created().json(&row),
-        Err(e) => db_error(e),
+    let created = match state.db.create(r, &data).await {
+        Ok(row) => row,
+        Err(e) => return db_error(e),
+    };
+
+    // Bootstrap: whoever creates an organisation becomes its admin member, so
+    // they can immediately manage it (org create is otherwise unmanageable).
+    if r.meta.name == "organization" {
+        if let Some(resp) = bootstrap_org_admin(&state, &caller, &created).await {
+            return resp;
+        }
+    }
+
+    HttpResponse::Created().json(&created)
+}
+
+/// After an organisation is created, add the creator as an `admin` member.
+async fn bootstrap_org_admin(
+    state: &AppState,
+    caller: &Caller,
+    org: &serde_json::Value,
+) -> Option<HttpResponse> {
+    let (Some(principal), Some(membership_r)) = (
+        caller.principal.as_ref(),
+        state.app.resources.get("membership"),
+    ) else {
+        return None;
+    };
+    let Some(org_id) = org.get("id").and_then(|v| v.as_str()) else {
+        return Some(error(500, "created organisation missing id"));
+    };
+    let mut m = serde_json::Map::new();
+    m.insert(
+        "user_id".into(),
+        serde_json::Value::String(principal.user_id.to_string()),
+    );
+    m.insert(
+        "organization_id".into(),
+        serde_json::Value::String(org_id.to_string()),
+    );
+    m.insert("role".into(), serde_json::Value::String("admin".into()));
+    match state.db.create(membership_r, &m).await {
+        Ok(_) => None,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to create bootstrap membership");
+            Some(db_error(e))
+        }
     }
 }
 
@@ -369,8 +503,8 @@ pub async fn update(
         Ok(id) => id,
         Err(_) => return error(400, "invalid id"),
     };
-    let principal = state.resolve_principal(&req).await;
-    let filters = match authorize(&r.permissions.update, &principal, r) {
+    let caller = state.caller(&req).await;
+    let filters = match authorize(&r.permissions.update, &caller, r) {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -395,8 +529,8 @@ pub async fn delete(
         Ok(id) => id,
         Err(_) => return error(400, "invalid id"),
     };
-    let principal = state.resolve_principal(&req).await;
-    let filters = match authorize(&r.permissions.delete, &principal, r) {
+    let caller = state.caller(&req).await;
+    let filters = match authorize(&r.permissions.delete, &caller, r) {
         Ok(f) => f,
         Err(resp) => return resp,
     };

@@ -1,18 +1,17 @@
 //! # apiplant-auth
 //!
-//! Authentication and authorization primitives, deliberately independent of the
-//! HTTP layer so they can be unit-tested in isolation.
+//! Authentication primitives, independent of HTTP so they can be unit-tested in
+//! isolation:
 //!
 //! * [`Authenticator`] — password hashing (argon2), JWT session tokens, and
 //!   API-key generation/hashing.
-//! * [`Principal`] — the resolved caller identity a request carries.
-//! * [`evaluate`] — turns a resource's [`Access`] policy plus the caller into an
-//!   allow / allow-if-owner / deny [`Decision`].
+//! * [`Principal`] — the resolved caller identity, including the organisations
+//!   they belong to and their **role within each** (roles are per-organisation).
 //!
-//! API keys authenticate *as* their owning user: the server looks the key's
-//! SHA-256 up in the `api_key` resource and adopts the owner's [`Principal`].
+//! Authorization itself (mapping a resource's [`Access`](apiplant_core::Access)
+//! policy plus org context to a decision) lives in the server, where the active
+//! organisation and resource schema are known.
 
-use apiplant_core::Access;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -26,58 +25,60 @@ pub enum Error {
     Token,
 }
 
+/// A user's membership in one organisation, with their role there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrgMembership {
+    pub org_id: Uuid,
+    /// Role within this organisation (e.g. `"admin"`), if any.
+    pub role: Option<String>,
+}
+
 /// The authenticated caller behind a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
     pub user_id: Uuid,
-    /// Role name, when the user has one. Drives [`Access::Role`] checks.
-    pub role: Option<String>,
+    /// Organisations the caller belongs to (loaded per request). Drives all
+    /// org-scoped access and `role:` checks.
+    pub organizations: Vec<OrgMembership>,
 }
 
-/// Result of a permission check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Decision {
-    /// Allowed unconditionally.
-    Allow,
-    /// Allowed, but the query must be scoped to rows the caller owns.
-    AllowOwned,
-    /// Rejected.
-    Deny,
-}
+impl Principal {
+    /// Membership in a specific organisation, if any.
+    pub fn membership(&self, org: Uuid) -> Option<&OrgMembership> {
+        self.organizations.iter().find(|m| m.org_id == org)
+    }
 
-/// Evaluate an [`Access`] policy for a (possibly anonymous) caller.
-pub fn evaluate(access: &Access, principal: Option<&Principal>) -> Decision {
-    match access {
-        Access::Public => Decision::Allow,
-        Access::Private => Decision::Deny,
-        Access::Authenticated => {
-            if principal.is_some() {
-                Decision::Allow
-            } else {
-                Decision::Deny
-            }
-        }
-        Access::Owner => {
-            if principal.is_some() {
-                Decision::AllowOwned
-            } else {
-                Decision::Deny
-            }
-        }
-        Access::Role(required) => match principal.and_then(|p| p.role.as_deref()) {
-            Some(role) if role == required => Decision::Allow,
-            _ => Decision::Deny,
-        },
+    /// Whether the caller belongs to `org`.
+    pub fn is_member(&self, org: Uuid) -> bool {
+        self.membership(org).is_some()
+    }
+
+    /// The caller's role within `org`, if any.
+    pub fn role_in(&self, org: Uuid) -> Option<&str> {
+        self.membership(org).and_then(|m| m.role.as_deref())
+    }
+
+    /// Every organisation id the caller belongs to.
+    pub fn org_ids(&self) -> Vec<Uuid> {
+        self.organizations.iter().map(|m| m.org_id).collect()
+    }
+
+    /// Organisations where the caller holds a specific role.
+    pub fn org_ids_with_role(&self, role: &str) -> Vec<Uuid> {
+        self.organizations
+            .iter()
+            .filter(|m| m.role.as_deref() == Some(role))
+            .map(|m| m.org_id)
+            .collect()
     }
 }
 
-/// JWT claims for a session token.
+/// JWT claims for a session token. Org memberships are *not* baked in — they are
+/// resolved fresh from the database each request so changes take effect at once.
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     /// Subject: the user id.
     sub: String,
-    /// Role, if any.
-    role: Option<String>,
     /// Expiry (unix seconds).
     exp: i64,
 }
@@ -124,13 +125,12 @@ impl Authenticator {
 
     // --- Session tokens ---------------------------------------------------
 
-    /// Mint a signed session JWT for a principal.
-    pub fn issue_token(&self, principal: &Principal) -> Result<String, Error> {
+    /// Mint a signed session JWT for a user id.
+    pub fn issue_token(&self, user_id: Uuid) -> Result<String, Error> {
         use jsonwebtoken::{encode, EncodingKey, Header};
         let exp = chrono::Utc::now().timestamp() + self.session_ttl_secs;
         let claims = Claims {
-            sub: principal.user_id.to_string(),
-            role: principal.role.clone(),
+            sub: user_id.to_string(),
             exp,
         };
         encode(
@@ -141,8 +141,8 @@ impl Authenticator {
         .map_err(|_| Error::Token)
     }
 
-    /// Verify a session JWT and recover its principal.
-    pub fn verify_token(&self, token: &str) -> Result<Principal, Error> {
+    /// Verify a session JWT and recover the user id it was issued for.
+    pub fn verify_token(&self, token: &str) -> Result<Uuid, Error> {
         use jsonwebtoken::{decode, DecodingKey, Validation};
         let data = decode::<Claims>(
             token,
@@ -150,11 +150,7 @@ impl Authenticator {
             &Validation::default(),
         )
         .map_err(|_| Error::Token)?;
-        let user_id = Uuid::parse_str(&data.claims.sub).map_err(|_| Error::Token)?;
-        Ok(Principal {
-            user_id,
-            role: data.claims.role,
-        })
+        Uuid::parse_str(&data.claims.sub).map_err(|_| Error::Token)
     }
 
     // --- API keys ---------------------------------------------------------
@@ -194,12 +190,9 @@ mod tests {
     #[test]
     fn token_roundtrip() {
         let auth = Authenticator::new(b"secret".to_vec(), 3600);
-        let p = Principal {
-            user_id: Uuid::new_v4(),
-            role: Some("admin".into()),
-        };
-        let token = auth.issue_token(&p).unwrap();
-        assert_eq!(auth.verify_token(&token).unwrap(), p);
+        let id = Uuid::new_v4();
+        let token = auth.issue_token(id).unwrap();
+        assert_eq!(auth.verify_token(&token).unwrap(), id);
     }
 
     #[test]
@@ -211,21 +204,19 @@ mod tests {
     }
 
     #[test]
-    fn permission_matrix() {
-        let admin = Principal {
+    fn membership_lookup() {
+        let org = Uuid::new_v4();
+        let p = Principal {
             user_id: Uuid::new_v4(),
-            role: Some("admin".into()),
+            organizations: vec![OrgMembership {
+                org_id: org,
+                role: Some("admin".into()),
+            }],
         };
-        assert_eq!(evaluate(&Access::Public, None), Decision::Allow);
-        assert_eq!(evaluate(&Access::Authenticated, None), Decision::Deny);
-        assert_eq!(evaluate(&Access::Owner, Some(&admin)), Decision::AllowOwned);
-        assert_eq!(
-            evaluate(&Access::Role("admin".into()), Some(&admin)),
-            Decision::Allow
-        );
-        assert_eq!(
-            evaluate(&Access::Role("root".into()), Some(&admin)),
-            Decision::Deny
-        );
+        assert!(p.is_member(org));
+        assert_eq!(p.role_in(org), Some("admin"));
+        assert!(!p.is_member(Uuid::new_v4()));
+        assert_eq!(p.org_ids_with_role("admin"), vec![org]);
+        assert!(p.org_ids_with_role("member").is_empty());
     }
 }

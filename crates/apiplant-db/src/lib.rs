@@ -37,18 +37,43 @@ pub enum Error {
     BadInput(String),
 }
 
-/// An extra equality predicate, e.g. owner scoping (`owner_id = <principal>`).
+/// An extra predicate applied to a query: equality (owner/org scoping,
+/// `?field=` filters) or membership (`id IN (…)`, e.g. "organisations you belong
+/// to"). Column names are always validated and quoted; values are always bound.
 #[derive(Clone)]
-pub struct Filter {
-    pub column: String,
-    pub value: SqlValue,
+pub enum Filter {
+    /// `column = value`.
+    Eq { column: String, value: SqlValue },
+    /// `column IN (values…)`. An empty set matches no rows.
+    In { column: String, values: Vec<SqlValue> },
 }
 
 impl Filter {
-    pub fn new(column: impl Into<String>, value: impl Into<SqlValue>) -> Self {
-        Filter {
+    pub fn eq(column: impl Into<String>, value: impl Into<SqlValue>) -> Self {
+        Filter::Eq {
             column: column.into(),
             value: value.into(),
+        }
+    }
+
+    pub fn in_(column: impl Into<String>, values: Vec<SqlValue>) -> Self {
+        Filter::In {
+            column: column.into(),
+            values,
+        }
+    }
+
+    /// Convenience: `column IN (…uuids)`.
+    pub fn in_uuids(column: impl Into<String>, ids: Vec<Uuid>) -> Self {
+        Filter::In {
+            column: column.into(),
+            values: ids.into_iter().map(SqlValue::from).collect(),
+        }
+    }
+
+    fn column(&self) -> &str {
+        match self {
+            Filter::Eq { column, .. } | Filter::In { column, .. } => column,
         }
     }
 }
@@ -120,7 +145,7 @@ impl Db {
         filters: &[Filter],
     ) -> Result<Option<serde_json::Value>, Error> {
         let table = quote_ident(&r.table_name())?;
-        let mut all = vec![Filter::new("id", id)];
+        let mut all = vec![Filter::eq("id", id)];
         all.extend_from_slice(filters);
         let (where_sql, params, _) = self.build_where(&all)?;
         let hidden = self.hidden_subtraction(r)?;
@@ -214,9 +239,7 @@ impl Db {
         params.push(SqlValue::from(id));
         n += 1;
         for f in filters {
-            where_parts.push(format!("{} = ${n}", quote_ident(&f.column)?));
-            params.push(f.value.clone());
-            n += 1;
+            where_parts.push(Self::render_filter(f, &mut params, &mut n)?);
         }
 
         let hidden = self.hidden_subtraction(r)?;
@@ -242,7 +265,7 @@ impl Db {
     /// `DELETE /<resource>/<id>` — returns whether a row was removed.
     pub async fn delete(&self, r: &Resource, id: Uuid, filters: &[Filter]) -> Result<bool, Error> {
         let table = quote_ident(&r.table_name())?;
-        let mut all = vec![Filter::new("id", id)];
+        let mut all = vec![Filter::eq("id", id)];
         all.extend_from_slice(filters);
         let (where_sql, params, _) = self.build_where(&all)?;
         let res = self
@@ -332,8 +355,8 @@ impl Db {
 
     // --- helpers ----------------------------------------------------------
 
-    /// Build a `WHERE a = $1 AND b = $2` clause; returns the SQL, the bound
-    /// values, and the next free parameter index.
+    /// Build a `WHERE …` clause from filters; returns the SQL, the bound values,
+    /// and the next free parameter index.
     fn build_where(&self, filters: &[Filter]) -> Result<(String, Vec<SqlValue>, usize), Error> {
         if filters.is_empty() {
             return Ok((String::new(), Vec::new(), 1));
@@ -342,11 +365,42 @@ impl Db {
         let mut params = Vec::new();
         let mut n = 1;
         for f in filters {
-            parts.push(format!("{} = ${n}", quote_ident(&f.column)?));
-            params.push(f.value.clone());
-            n += 1;
+            parts.push(Self::render_filter(f, &mut params, &mut n)?);
         }
         Ok((format!("WHERE {}", parts.join(" AND ")), params, n))
+    }
+
+    /// Render one filter to SQL, appending its bound values to `params` and
+    /// advancing the `$n` counter.
+    fn render_filter(
+        f: &Filter,
+        params: &mut Vec<SqlValue>,
+        n: &mut usize,
+    ) -> Result<String, Error> {
+        let col = quote_ident(f.column())?;
+        Ok(match f {
+            Filter::Eq { value, .. } => {
+                let part = format!("{col} = ${n}");
+                params.push(value.clone());
+                *n += 1;
+                part
+            }
+            Filter::In { values, .. } => {
+                if values.is_empty() {
+                    return Ok("false".to_string());
+                }
+                let placeholders: Vec<String> = values
+                    .iter()
+                    .map(|v| {
+                        let p = format!("${n}");
+                        params.push(v.clone());
+                        *n += 1;
+                        p
+                    })
+                    .collect();
+                format!("{col} IN ({})", placeholders.join(", "))
+            }
+        })
     }
 
     /// `- 'col'` fragments that strip hidden fields from a `to_jsonb` result.

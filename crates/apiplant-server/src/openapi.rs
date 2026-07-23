@@ -170,7 +170,9 @@ fn resource_input_schema(r: &Resource) -> Value {
     let mut props = Map::new();
     let mut required = Vec::new();
     for (name, field) in &r.fields {
-        if field.hidden || name == &r.meta.owner_field {
+        // Hidden, the auto-stamped owner, and the auto-stamped organisation are
+        // never client-supplied.
+        if field.hidden || name == &r.meta.owner_field || name == "organization_id" {
             continue;
         }
         props.insert(name.clone(), field_schema(field));
@@ -199,8 +201,9 @@ fn access_note(access: &Access) -> String {
     match access {
         Access::Public => "Public — no authentication required.".into(),
         Access::Authenticated => "Requires authentication.".into(),
+        Access::Member => "Requires membership of the active organisation.".into(),
         Access::Owner => "Requires authentication; scoped to records you own.".into(),
-        Access::Role(role) => format!("Requires the `{role}` role."),
+        Access::Role(role) => format!("Requires the `{role}` role in the active organisation."),
         Access::Private => "Not exposed.".into(),
     }
 }

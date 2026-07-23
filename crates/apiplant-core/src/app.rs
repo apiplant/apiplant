@@ -1,7 +1,7 @@
 //! The loaded application: an app directory turned into config + resources.
 
 use crate::config::Config;
-use crate::schema::Resource;
+use crate::schema::{Field, FieldType, OnDelete, Resource};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -61,7 +61,28 @@ impl App {
             }
         }
 
-        // 3. TLS is inferred from the presence of an `https/` directory.
+        // 3. Make multitenancy automatic: every org-scoped resource carries an
+        //    `organization_id` foreign key. Inject it where the author didn't
+        //    declare one, so the column, its FK, and org filtering all just work.
+        for resource in resources.values_mut() {
+            if resource.is_org_scoped() && !resource.fields.contains_key("organization_id") {
+                resource.fields.insert(
+                    "organization_id".to_string(),
+                    Field {
+                        ty: FieldType::Reference,
+                        references: Some("organization".to_string()),
+                        required: true,
+                        unique: false,
+                        hidden: false,
+                        default: None,
+                        max_length: None,
+                        on_delete: Some(OnDelete::Cascade),
+                    },
+                );
+            }
+        }
+
+        // 4. TLS is inferred from the presence of an `https/` directory.
         let tls = Self::detect_tls(&root);
         if tls.is_some() {
             tracing::info!("https/ directory found — serving over TLS");
