@@ -337,10 +337,10 @@ type = "string"
     );
 
     let state = load_state(&root).await;
-    let mut app = init_http_app!(state);
+    let app = init_http_app!(state);
 
     let resp = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/register",
@@ -356,7 +356,7 @@ type = "string"
     assert!(registered["user"].get("password_hash").is_none());
 
     let resp = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/login",
@@ -369,7 +369,7 @@ type = "string"
     assert!(login["token"].as_str().unwrap().len() > 10);
 
     let resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/auth/apikeys")
@@ -385,7 +385,7 @@ type = "string"
     let plaintext = api_key["api_key"].as_str().unwrap();
 
     let resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get()
             .uri(&format!("/api/user/{user_id}"))
             .header("x-api-key", plaintext)
@@ -398,7 +398,7 @@ type = "string"
     assert!(via_x_header.get("password_hash").is_none());
 
     let resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get()
             .uri(&format!("/api/user/{user_id}"))
             .header("authorization", format!("ApiKey {plaintext}"))
@@ -436,10 +436,10 @@ allow_registration = false
     );
 
     let state = load_state(&root).await;
-    let mut app = init_http_app!(state);
+    let app = init_http_app!(state);
 
     let resp = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/register",
@@ -546,10 +546,10 @@ type = "string"
     );
 
     let state = load_state(&root).await;
-    let mut app = init_http_app!(state);
+    let app = init_http_app!(state);
 
     let alice_reg = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/register",
@@ -562,7 +562,7 @@ type = "string"
     let alice_id = alice["user"]["id"].as_str().unwrap().to_string();
 
     let org_a_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/organization")
@@ -578,7 +578,7 @@ type = "string"
     let org_a_id = org_a["id"].as_str().unwrap().to_string();
 
     let post_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/post")
@@ -603,7 +603,7 @@ type = "string"
     assert_eq!(post["organization_id"], org_a_id);
 
     let second_post_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/post")
@@ -619,7 +619,7 @@ type = "string"
     let second_post_id = second_post["id"].as_str().unwrap().to_string();
 
     let duplicate_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/post")
@@ -633,7 +633,7 @@ type = "string"
     assert_eq!(duplicate_resp.status().as_u16(), 409);
 
     let comment_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/comment")
@@ -647,7 +647,7 @@ type = "string"
     assert_eq!(comment_resp.status().as_u16(), 201);
 
     let bad_comment_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/comment")
@@ -661,7 +661,7 @@ type = "string"
     assert_eq!(bad_comment_resp.status().as_u16(), 400);
 
     let paged_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::get().uri("/api/post?limit=1&offset=1"),
             &alice_token,
@@ -676,7 +676,7 @@ type = "string"
     assert_eq!(page[0]["id"], post_id);
 
     let update_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::put()
                 .uri(&format!("/api/post/{post_id}"))
@@ -692,7 +692,7 @@ type = "string"
     assert_eq!(updated["title"], "hello-updated");
 
     let bob_reg = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/register",
@@ -705,7 +705,7 @@ type = "string"
     let bob_id = bob["user"]["id"].as_str().unwrap().to_string();
 
     let org_b_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/organization")
@@ -721,7 +721,7 @@ type = "string"
     let org_b_id = org_b["id"].as_str().unwrap().to_string();
 
     let isolated_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(test::TestRequest::get().uri("/api/post"), &bob_token).to_request(),
     )
     .await;
@@ -729,7 +729,7 @@ type = "string"
     assert_eq!(read_json(isolated_resp).await, json!([]));
 
     let plan_resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get().uri("/api/plan").to_request(),
     )
     .await;
@@ -737,7 +737,7 @@ type = "string"
     assert_eq!(read_json(plan_resp).await, json!([]));
 
     let membership_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/membership")
@@ -753,7 +753,7 @@ type = "string"
     assert_eq!(membership["organization_id"], org_a_id);
 
     let multi_org_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(test::TestRequest::get().uri("/api/post"), &bob_token).to_request(),
     )
     .await;
@@ -764,7 +764,7 @@ type = "string"
     );
 
     let org_a_posts_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::get()
                 .uri("/api/post")
@@ -779,7 +779,7 @@ type = "string"
     assert_eq!(org_a_posts.as_array().unwrap().len(), 2);
 
     let bob_update_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::patch()
                 .uri(&format!("/api/post/{post_id}"))
@@ -794,7 +794,7 @@ type = "string"
     assert_eq!(bob_update_resp.status().as_u16(), 404);
 
     let bob_membership_write_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/membership")
@@ -809,7 +809,7 @@ type = "string"
     assert_eq!(bob_membership_write_resp.status().as_u16(), 403);
 
     let expand_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::get()
                 .uri(&format!("/api/comment?expand=post,owner&post_id={post_id}")),
@@ -826,7 +826,7 @@ type = "string"
     assert!(comment["owner"].get("password_hash").is_none());
 
     let nested_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::get().uri(&format!("/api/post/{post_id}/comment")),
             &alice_token,
@@ -838,7 +838,7 @@ type = "string"
     assert_eq!(read_json(nested_resp).await.as_array().unwrap().len(), 1);
 
     let org_b_posts_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::get()
                 .uri("/api/post")
@@ -883,17 +883,17 @@ title = "Doc Test"
     );
 
     let state = load_state(&root).await;
-    let mut app = init_http_app!(state);
+    let app = init_http_app!(state);
 
     let resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get().uri("/api/_health").to_request(),
     )
     .await;
     assert_eq!(resp.status().as_u16(), 404);
 
     let resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get()
             .uri("/api/_health")
             .header("host", "api.example.test")
@@ -904,7 +904,7 @@ title = "Doc Test"
     assert_eq!(read_json(resp).await["status"], "ok");
 
     let spec_resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get()
             .uri("/api/openapi.json")
             .header("host", "api.example.test")
@@ -917,7 +917,7 @@ title = "Doc Test"
     assert!(spec["paths"]["/auth/login"].is_object());
 
     let docs_resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get()
             .uri("/api/docs")
             .header("host", "api.example.test")
@@ -1283,24 +1283,24 @@ default = "queued"
     );
 
     let state = load_state(&root).await;
-    let mut app = init_http_app!(state);
+    let app = init_http_app!(state);
 
-    let anon_news = test::call_service(&mut app, test::TestRequest::get().uri("/api/news").to_request()).await;
+    let anon_news = test::call_service(&app, test::TestRequest::get().uri("/api/news").to_request()).await;
     assert_eq!(anon_news.status().as_u16(), 200);
     assert_eq!(read_json(anon_news).await, json!([]));
 
-    let anon_bulletin = test::call_service(&mut app, test::TestRequest::get().uri("/api/bulletin").to_request()).await;
+    let anon_bulletin = test::call_service(&app, test::TestRequest::get().uri("/api/bulletin").to_request()).await;
     assert_eq!(anon_bulletin.status().as_u16(), 401);
 
     let anon_news_create = test::call_service(
-        &mut app,
+        &app,
         req_json("POST", "/api/news", json!({"headline":"launch"})),
     )
     .await;
     assert_eq!(anon_news_create.status().as_u16(), 404);
 
     let alice_reg = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/register",
@@ -1313,7 +1313,7 @@ default = "queued"
     let alice_id = alice["user"]["id"].as_str().unwrap().to_string();
 
     let alice_login = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/login",
@@ -1324,7 +1324,7 @@ default = "queued"
     assert_eq!(alice_login.status().as_u16(), 200);
 
     let org_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/organization")
@@ -1341,14 +1341,14 @@ default = "queued"
     assert_eq!(organization["tier"], "enterprise");
 
     let bulletin_auth = test::call_service(
-        &mut app,
+        &app,
         bearer(test::TestRequest::get().uri("/api/bulletin"), &alice_token).to_request(),
     )
     .await;
     assert_eq!(bulletin_auth.status().as_u16(), 200);
 
     let pref_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/preference")
@@ -1367,7 +1367,7 @@ default = "queued"
     assert_eq!(preference["owner_id"], alice_id);
 
     let project_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/project")
@@ -1383,7 +1383,7 @@ default = "queued"
     let project_id = project["id"].as_str().unwrap().to_string();
 
     let bob_reg = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/register",
@@ -1396,7 +1396,7 @@ default = "queued"
     let bob_id = bob["user"]["id"].as_str().unwrap().to_string();
 
     let carol_reg = test::call_service(
-        &mut app,
+        &app,
         req_json(
             "POST",
             "/api/auth/register",
@@ -1409,7 +1409,7 @@ default = "queued"
     let carol_id = carol["user"]["id"].as_str().unwrap().to_string();
 
     let bob_membership = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/membership")
@@ -1426,7 +1426,7 @@ default = "queued"
     assert_eq!(bob_membership["team"], "platform");
 
     let carol_membership = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/membership")
@@ -1440,7 +1440,7 @@ default = "queued"
     assert_eq!(carol_membership.status().as_u16(), 201);
 
     let bob_api_key = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/auth/apikeys")
@@ -1456,7 +1456,7 @@ default = "queued"
     let bob_key = bob_api_key["api_key"].as_str().unwrap().to_string();
 
     let deployment_resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::post()
             .uri("/api/deployment")
             .header("x-api-key", bob_key.as_str())
@@ -1472,7 +1472,7 @@ default = "queued"
     assert_eq!(deployment["status"], "queued");
 
     let carol_deployment = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/deployment")
@@ -1487,7 +1487,7 @@ default = "queued"
     assert_eq!(carol_deployment.status().as_u16(), 403);
 
     let bob_delete_project = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::delete()
             .uri(&format!("/api/project/{project_id}"))
             .header("authorization", format!("ApiKey {bob_key}"))
@@ -1498,7 +1498,7 @@ default = "queued"
     assert_eq!(bob_delete_project.status().as_u16(), 403);
 
     let bob_membership_write = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/membership")
@@ -1513,7 +1513,7 @@ default = "queued"
     assert_eq!(bob_membership_write.status().as_u16(), 403);
 
     let alice_prefs = test::call_service(
-        &mut app,
+        &app,
         bearer(test::TestRequest::get().uri("/api/preference"), &alice_token).to_request(),
     )
     .await;
@@ -1521,7 +1521,7 @@ default = "queued"
     assert_eq!(read_json(alice_prefs).await.as_array().unwrap().len(), 1);
 
     let bob_prefs = test::call_service(
-        &mut app,
+        &app,
         bearer(test::TestRequest::get().uri("/api/preference"), &bob_token).to_request(),
     )
     .await;
@@ -1529,7 +1529,7 @@ default = "queued"
     assert_eq!(read_json(bob_prefs).await, json!([]));
 
     let bob_pref_read = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::get().uri(&format!("/api/preference/{preference_id}")),
             &bob_token,
@@ -1540,14 +1540,14 @@ default = "queued"
     assert_eq!(bob_pref_read.status().as_u16(), 404);
 
     let docs_resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get().uri("/api/reference").to_request(),
     )
     .await;
     assert_eq!(docs_resp.status().as_u16(), 200);
 
     let spec_resp = test::call_service(
-        &mut app,
+        &app,
         test::TestRequest::get().uri("/api/openapi.json").to_request(),
     )
     .await;
@@ -1733,11 +1733,11 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
         ],
     )
     .await;
-    let mut app = init_http_app!(state);
+    let app = init_http_app!(state);
 
     let registration = read_json(
         test::call_service(
-            &mut app,
+            &app,
             req_json(
                 "POST",
                 "/api/auth/register",
@@ -1752,7 +1752,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     let org = read_json(
         test::call_service(
-            &mut app,
+            &app,
             bearer(
                 test::TestRequest::post()
                     .uri("/api/organization")
@@ -1769,7 +1769,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // --- create: the before hook rewrites the body, the after hook audits it.
     let created_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/post")
@@ -1788,7 +1788,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
     // The after_create hook reached the database through the host bridge.
     let audits = read_json(
         test::call_service(
-            &mut app,
+            &app,
             bearer(test::TestRequest::get().uri("/api/audit"), &token).to_request(),
         )
         .await,
@@ -1800,7 +1800,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // --- create: the before hook can reject outright.
     let rejected = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/post")
@@ -1816,7 +1816,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // --- list: the after hook replaces the response body wholesale.
     let listed_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(test::TestRequest::get().uri("/api/post?limit=10"), &token).to_request(),
     )
     .await;
@@ -1827,7 +1827,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // --- read: the after hook annotates the fetched row.
     let read_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::get().uri(&format!("/api/post/{post_id}")),
             &token,
@@ -1842,7 +1842,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // --- read: the before hook can veto on request context alone.
     let blocked = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::get().uri(&format!("/api/post/{post_id}?blocked=1")),
             &token,
@@ -1855,7 +1855,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // --- update: the before hook rewrites the submitted body.
     let updated_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::patch()
                 .uri(&format!("/api/post/{post_id}"))
@@ -1872,7 +1872,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // --- delete: the before hook sees the row it is about to lose.
     let lock_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::patch()
                 .uri(&format!("/api/post/{post_id}"))
@@ -1886,7 +1886,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
     assert_eq!(lock_resp.status().as_u16(), 200);
 
     let locked_delete = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::delete().uri(&format!("/api/post/{post_id}")),
             &token,
@@ -1898,7 +1898,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
     assert_eq!(read_json(locked_delete).await["error"], "post is locked");
 
     let unlock_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::patch()
                 .uri(&format!("/api/post/{post_id}"))
@@ -1913,7 +1913,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // --- delete: the after hook turns the usual 204 into a body.
     let deleted_resp = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::delete().uri(&format!("/api/post/{post_id}")),
             &token,
@@ -1992,7 +1992,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
 
     // Hook functions stay invisible over HTTP.
     let direct = test::call_service(
-        &mut app,
+        &app,
         bearer(
             test::TestRequest::post()
                 .uri("/api/functions/post_guard")
@@ -2060,11 +2060,11 @@ type = "string"
         vec![test_function("echo", Visibility::Public, echo_hook)],
     )
     .await;
-    let mut app = init_http_app!(state);
+    let app = init_http_app!(state);
 
     let called = read_json(
         test::call_service(
-            &mut app,
+            &app,
             req_json("POST", "/api/functions/echo", json!({"hello":"world"})),
         )
         .await,
@@ -2074,7 +2074,7 @@ type = "string"
     assert_eq!(called["echoed"], json!({"hello":"world"}).to_string());
 
     let blocked = test::call_service(
-        &mut app,
+        &app,
         req_json("POST", "/api/note", json!({"title":"unreachable hook"})),
     )
     .await;
@@ -2086,7 +2086,7 @@ type = "string"
 
     // The row must not have been written despite the hook being unavailable.
     let listed = read_json(
-        test::call_service(&mut app, test::TestRequest::get().uri("/api/note").to_request())
+        test::call_service(&app, test::TestRequest::get().uri("/api/note").to_request())
             .await,
     )
     .await;

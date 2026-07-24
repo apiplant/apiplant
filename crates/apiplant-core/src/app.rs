@@ -140,7 +140,7 @@ impl App {
             });
             if !progressed {
                 // Cyclic or dangling reference — emit the rest as-is rather than loop forever.
-                ordered.extend(remaining.drain(..));
+                ordered.append(&mut remaining);
             }
         }
         ordered

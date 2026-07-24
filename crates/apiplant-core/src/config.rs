@@ -9,24 +9,13 @@ use serde::Deserialize;
 use std::path::Path;
 
 /// Fully-resolved server configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
     pub docs: DocsConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            server: ServerConfig::default(),
-            database: DatabaseConfig::default(),
-            auth: AuthConfig::default(),
-            docs: DocsConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

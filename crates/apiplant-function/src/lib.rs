@@ -6,16 +6,16 @@
 //! module, and shuttling JSON in and out by hand, you write one ordinary typed
 //! function and call [`function!`]:
 //!
-//! ```ignore
+//! ```no_run
 //! use apiplant_function::prelude::*;
 //!
 //! #[derive(serde::Deserialize, Default)]
 //! struct Config { #[serde(default)] greeting: String }
 //!
-//! #[derive(serde::Deserialize)]
+//! #[derive(serde::Deserialize, JsonSchema)]
 //! struct Input { name: String }
 //!
-//! #[derive(serde::Serialize)]
+//! #[derive(serde::Serialize, JsonSchema)]
 //! struct Output { message: String }
 //!
 //! fn greet(ctx: &Context<Config>, input: Input) -> Result<Output, String> {
@@ -29,11 +29,14 @@
 //!     visibility: Public,
 //!     handler: greet,
 //! }
+//! # fn main() {}
 //! ```
 //!
 //! The macro generates the root module, reads/writes JSON, resolves typed config
 //! and input, and turns your `Err(_)` into a `400`. Types are inferred from the
-//! handler's signature — you never name them twice.
+//! handler's signature — you never name them twice. With the default `schema`
+//! feature the input and output types must also derive [`JsonSchema`](prelude::JsonSchema)
+//! so the endpoint shows up typed in the OpenAPI docs.
 //!
 //! Use [`functions!`] to export several from one library — each with its own
 //! name, manifest and handler.
@@ -47,7 +50,8 @@
 //! happen next. One function per event, so a handler never has to work out why
 //! it was called:
 //!
-//! ```ignore
+//! ```no_run
+//! # use apiplant_function::prelude::*;
 //! fn post_after_create(ctx: &Context<()>, row: serde_json::Value) -> Result<serde_json::Value, String> {
 //!     let actor = ctx.hook().and_then(|hook| hook.principal_id.clone());
 //!     ctx.info(&format!("post {} created by {actor:?}", row["id"]));
@@ -63,6 +67,7 @@
 //!         handler: post_after_create,
 //!     },
 //! }
+//! # fn main() {}
 //! ```
 
 use abi_stable::std_types::{RBox, RResult, RStr};
@@ -105,12 +110,17 @@ impl<'a, 'h, C> Context<'a, 'h, C> {
     /// created, fetched or deleted, the rows a list returned, the request URL,
     /// and the caller's auth status.
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use apiplant_function::prelude::*;
+    /// # fn validate(_data: &serde_json::Value) {}
+    /// # fn audit(_event: &str, _row: &serde_json::Value) {}
+    /// # fn example(ctx: &Context<()>) {
     /// match ctx.hook() {
     ///     Some(h) if h.is_before() => validate(h.data()),
-    ///     Some(h) => audit(h.event(), h.row()),
+    ///     Some(h) => audit(&h.event, h.row()),
     ///     None => {} // plain HTTP call
     /// }
+    /// # }
     /// ```
     pub fn hook(&self) -> Option<&Hook> {
         self.hook.as_ref()
@@ -289,7 +299,8 @@ impl Hook {
 /// unchanged", so an observational hook can simply return
 /// `Ok(serde_json::Value::Null)`.
 ///
-/// ```ignore
+/// ```no_run
+/// # use apiplant_function::prelude::*;
 /// fn guard(ctx: &Context<()>, _input: serde_json::Value) -> Result<serde_json::Value, String> {
 ///     let Some(h) = ctx.hook() else { return Ok(reply::proceed()) };
 ///     if h.field("title").and_then(|t| t.as_str()).unwrap_or("").is_empty() {
@@ -475,16 +486,20 @@ pub mod __rt {
 ///
 /// Fields (`version` and `role` optional):
 ///
-/// ```ignore
+/// ```no_run
+/// # use apiplant_function::prelude::*;
+/// # type Json = serde_json::Value;
+/// # fn greet(_ctx: &Context<()>, input: Json) -> Result<Json, String> { Ok(input) }
 /// apiplant_function::function! {
 ///     name: "greet",               // URL segment → /functions/greet
 ///     version: "1.2.0",            // optional; defaults to CARGO_PKG_VERSION
 ///     description: "Greets people",
 ///     method: Post,                // Get | Post | Put | Delete
-///     visibility: Public,          // Public | Authenticated | RoleGated | Private
-///     role: "admin",              // optional; required when visibility: RoleGated
+///     visibility: RoleGated,       // Public | Authenticated | RoleGated | Private
+///     role: "admin",               // optional; required when visibility: RoleGated
 ///     handler: greet,              // fn(&Context<C>, I) -> Result<O, E>
 /// }
+/// # fn main() {}
 /// ```
 ///
 /// To export several functions from one library, use [`functions!`] — this is
@@ -503,7 +518,11 @@ macro_rules! function {
 /// This is how one crate provides a set of related endpoints, or a resource's
 /// whole set of lifecycle hooks:
 ///
-/// ```ignore
+/// ```no_run
+/// # use apiplant_function::prelude::*;
+/// # type Json = serde_json::Value;
+/// # fn post_before_create(_ctx: &Context<()>, input: Json) -> Result<Json, String> { Ok(input) }
+/// # fn post_after_create(_ctx: &Context<()>, input: Json) -> Result<Json, String> { Ok(input) }
 /// apiplant_function::functions! {
 ///     {
 ///         name: "post_before_create",
@@ -520,6 +539,7 @@ macro_rules! function {
 ///         handler: post_after_create,
 ///     },
 /// }
+/// # fn main() {}
 /// ```
 ///
 /// Then, in `models/post.toml`:
