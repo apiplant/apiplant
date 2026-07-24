@@ -20,7 +20,7 @@ lifecycle as **hooks**, running before or after any CRUD operation.
 $ apiplant ./my-app
   INFO apiplant_server: running migrations
   INFO apiplant_server:   fn greet -> /api/functions/greet
-  INFO apiplant_server:   hook post.before_create -> post_guard
+  INFO apiplant_server:   hook post.before_create -> post_before_create
   INFO apiplant_server: apiplant listening on http://127.0.0.1:8099/api
 ```
 
@@ -256,33 +256,35 @@ and output makes the function **fully typed in the OpenAPI docs** (Swagger UI
 renders a typed form). The host loads every library in `functions/`, mounts it at
 `<base>/functions/<name>` with its declared method and visibility, and runs it on
 a blocking worker with a [`Context`] giving it the database, config, and caller
-identity. See [`examples/function-greet`](examples/function-greet) and the
+identity. Use `functions! { {…}, {…} }` to export several from one library, each
+with its own name and config. See
+[`examples/function-greet`](examples/function-greet) and the
 [Functions guide](docs/functions.md).
 
 ## Lifecycle hooks: custom logic on CRUD
 
-The same functions can run *inside* a resource's request lifecycle. Point an
-event at a function name and it fires around the generated endpoints:
+Functions can also run *inside* a resource's request lifecycle. Point each event
+at a function and it fires around the generated endpoints:
 
 ```toml
 # models/post.toml
 [hooks]
-before_create = "post_guard"     # validate & normalise, or reject the request
-after_create  = "post_audit"     # record it, notify, reshape the response
-after_list    = "post_redact"
+before_create = "post_before_create"   # validate & normalise, or reject the request
+after_create  = "post_after_create"    # record it, notify, reshape the response
+after_list    = "post_after_list"
 ```
 
 There is a `before_` and an `after_` for every operation — `list`, `read`,
-`create`, `update`, `delete`. A hook receives the operation's payload plus a
-context describing it, and its return value decides what happens next:
+`create`, `update`, `delete` — and **one function per event**, so a handler
+never has to work out why it was called. A hook receives the operation's payload
+plus a context describing it, and its return value decides what happens next:
 
 ```rust
-fn post_guard(ctx: &Context<()>, mut input: serde_json::Value) -> Result<serde_json::Value, String> {
-    let Some(hook) = ctx.hook() else { return Ok(reply::proceed()) };
-    //  hook.event / .resource / .url / .method / .query
-    //  hook.authenticated / .principal_id / .organization_id / .role
-    //  hook.data() — submitted body   hook.row() — row created, fetched or deleted
-    //  hook.rows() — rows a list returned
+fn post_before_create(ctx: &Context<()>, mut input: serde_json::Value) -> Result<serde_json::Value, String> {
+    //  ctx.hook() → .resource / .url / .method / .query
+    //               .authenticated / .principal_id / .organization_id / .role
+    //               .data() — submitted body   .row() — row created, fetched or deleted
+    //               .rows() — rows a list returned
     if input["title"].as_str().unwrap_or_default().trim().is_empty() {
         return Ok(reply::abort(422, "title is required"));   // stop the request
     }
@@ -295,8 +297,9 @@ fn post_guard(ctx: &Context<()>, mut input: serde_json::Value) -> Result<serde_j
 so they can validate, rewrite the payload, or abort; `after_*` hooks see the
 resulting row (or rows) and can replace the response body. Hooks ignore a
 function's `visibility`, so hook functions are usually `Private` — invisible
-over HTTP, fully wired into the lifecycle. Details in the
-[Hooks guide](docs/hooks.md).
+over HTTP, fully wired into the lifecycle. One library can carry a resource's
+whole set: see [`examples/function-post-hooks`](examples/function-post-hooks)
+and the [Hooks guide](docs/hooks.md).
 
 ## Workspace layout
 
@@ -310,8 +313,8 @@ over HTTP, fully wired into the lifecycle. Details in the
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
 | `apiplant`             | the executable                                                     |
 | `examples/function-greet` | an example function compiled to a cdylib                       |
-| `examples/function-post-hooks` | an example function used as a resource lifecycle hook    |
-| `examples/demo-app`    | a ready-to-run app directory                                      |
+| `examples/function-post-hooks` | five per-event lifecycle hooks in one cdylib             |
+| `examples/demo-app`    | a ready-to-run app directory, hooks wired up                      |
 
 ## Quickstart
 
@@ -331,9 +334,12 @@ docker run -d --name apiplant-postgres \
 #      createdb -h 127.0.0.1 -p 55432 -U postgres apiplant
 #    (stop later with: pg_ctl -D ./pgdata stop)
 
-# 2. Build a function and drop it into the demo app.
-cargo build -p function-greet
-cp target/debug/libfunction_greet.so examples/demo-app/functions/
+# 2. Build the example functions and drop them into the demo app. The second
+#    library carries the `post` resource's lifecycle hooks, which the demo wires
+#    up in models/post.toml — build it or post requests fail closed with a 500.
+cargo build -p function-greet -p function-post-hooks
+cp target/debug/libfunction_greet.so target/debug/libfunction_post_hooks.so \
+   examples/demo-app/functions/
 
 # 3. Run.
 cargo run -p apiplant -- examples/demo-app

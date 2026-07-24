@@ -8,9 +8,13 @@ independently and never require recompiling the server.
 
 ```
 my-app/functions/
-├── libgreet.so       # the compiled library
-└── greet.toml        # optional per-deployment config for the `greet` function
+├── libgreet.so       # a compiled library
+├── greet.toml        # optional per-deployment config for the `greet` function
+└── libhooks.so       # another library; every .so in here is loaded
 ```
+
+A directory can hold any number of libraries, and each library can export any
+number of functions.
 
 ## Writing a function
 
@@ -62,6 +66,40 @@ resolves your typed config and input, and turns any `Err(_)` into a `400`.
 
 A complete, runnable version is in
 [`examples/function-greet`](../examples/function-greet).
+
+### Several functions in one library
+
+A library isn't limited to one function. `functions!` takes a braced entry per
+function — each with its own name, manifest and handler, and its own inferred
+types and config file:
+
+```rust
+apiplant_function::functions! {
+    {
+        name: "post_before_create",
+        description: "Validates a post before it is stored.",
+        method: Post,
+        visibility: Private,
+        handler: post_before_create,
+    },
+    {
+        name: "post_after_create",
+        description: "Records a newly created post.",
+        method: Post,
+        visibility: Private,
+        handler: post_after_create,
+    },
+}
+```
+
+`function!` is exactly this macro with a single entry, so use whichever reads
+better. Names must be unique within a library; the host rejects a library that
+exports two functions with the same name, and a name that collides across
+libraries is resolved last-loaded-wins.
+
+This is the usual way to ship a resource's [lifecycle hooks](hooks.md): one
+handler per event, no dispatcher. See
+[`examples/function-post-hooks`](../examples/function-post-hooks).
 
 ### The handler signature
 
@@ -165,8 +203,8 @@ The same function can be wired into a resource's CRUD lifecycle from
 
 ```toml
 [hooks]
-before_create = "post_guard"
-after_create  = "post_audit"
+before_create = "post_before_create"
+after_create  = "post_after_create"
 ```
 
 When invoked that way, `ctx.hook()` carries the operation's context — the event,
@@ -175,7 +213,7 @@ caller's auth status — and the handler's return value tells the host what to d
 next (continue, replace the payload, or reject the request):
 
 ```rust
-fn post_guard(ctx: &Context<()>, mut input: serde_json::Value) -> Result<serde_json::Value, String> {
+fn post_before_create(ctx: &Context<()>, mut input: serde_json::Value) -> Result<serde_json::Value, String> {
     let Some(hook) = ctx.hook() else { return Ok(reply::proceed()) };
     ctx.info(&format!("{} on {}", hook.event, hook.resource));
     if input["title"].as_str().unwrap_or_default().is_empty() {
@@ -201,6 +239,11 @@ greeting = "Bonjour"
 
 Then `ctx.config().greeting` is `"Bonjour"`. Missing file ⇒ `Config::default()`.
 
+Config is per **function**, not per library: a library exporting
+`post_before_create` and `post_before_update` reads
+`functions/post_before_create.toml` and `functions/post_before_update.toml`, so
+the two can be tuned independently even when they share a `Config` type.
+
 ## Building & deploying
 
 ```bash
@@ -208,13 +251,14 @@ cargo build -p my-function --release
 cp target/release/libmy_function.so my-app/functions/
 ```
 
-On boot the server logs each loaded function and its route:
+On boot the server logs every function each library provides, and its route:
 
 ```
 INFO apiplant_server:   fn greet -> /api/functions/greet
 ```
 
 A library that fails to load is logged and skipped — it never stops the server.
+That includes a library exporting no functions at all, or two with the same name.
 
 ## Calling a function
 
@@ -235,8 +279,9 @@ curl -XPOST http://localhost:8099/api/functions/greet \
 The macro is optional sugar over the [`apiplant-abi`](../crates/apiplant-abi)
 contract. If you need full control — or you're writing a function in another
 language — you can implement the `Function` trait and export the root module
-yourself. The macro expands to exactly that: a `Function` impl whose `invoke`
-calls `apiplant_function::invoke_handler`, plus an `#[export_root_module]`
-constructor. See the crate docs for the trait definitions.
+yourself. The macro expands to exactly that: an `#[export_root_module]`
+constructor whose `new_functions` returns one `Function` trait object per
+exported function, each delegating to `apiplant_function::invoke_handler`. See
+the crate docs for the trait definitions.
 
 [`abi_stable`]: https://docs.rs/abi_stable

@@ -36,7 +36,7 @@ type       = "reference"
 references = "user"
 
 [hooks]                      # see hooks.md — optional custom logic per operation
-before_create = "post_guard"
+before_create = "post_before_create"
 ```
 
 This publishes:
@@ -124,9 +124,9 @@ operation:
 
 ```toml
 [hooks]
-before_create = "post_guard"    # validate/normalise, or reject the request
-after_create  = "post_audit"    # record it, or reshape the response
-after_list    = "post_redact"
+before_create = "post_before_create"    # validate/normalise, or reject the request
+after_create  = "post_after_create"    # record it, or reshape the response
+after_list    = "post_after_list"
 ```
 
 Available keys are `before_`/`after_` × `list`, `read`, `create`, `update`,

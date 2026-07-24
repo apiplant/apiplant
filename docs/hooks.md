@@ -13,19 +13,21 @@ Declare them in the resource's `[hooks]` section, one function name per event:
 name = "post"
 
 [hooks]
-before_create = "post_guard"     # validate & normalise what the client sent
-after_create  = "post_audit"     # record it, notify, enrich the response
-after_list    = "post_redact"
+before_create = "post_before_create"   # validate & normalise what the client sent
+after_create  = "post_after_create"    # record it, notify, enrich the response
+after_list    = "post_after_list"
 
 [fields.title]
 type     = "string"
 required = true
 ```
 
-The names refer to the `name` in a function's `function!` block — the same
-functions that can be mounted at `/functions/<name>`. Hooks ignore a function's
-`visibility`, so declaring a hook function `Private` is the usual choice: it's
-callable from the lifecycle but invisible over HTTP and absent from the docs.
+Each event names **one function**, and each function serves one event — the
+handler never has to work out why it was called. The names refer to the `name`
+in a function's `function!` / `functions!` block, the same names that can be
+mounted at `/functions/<name>`. Hooks ignore a function's `visibility`, so
+declaring a hook function `Private` is the usual choice: it's callable from the
+lifecycle but invisible over HTTP and absent from the docs.
 
 ## The events
 
@@ -71,38 +73,45 @@ use apiplant_function::prelude::*;
 use serde_json::{json, Value};
 
 /// before_create on `post`: require a title, and normalise it.
-fn post_guard(ctx: &Context<()>, mut input: Value) -> Result<Value, String> {
-    let Some(hook) = ctx.hook() else {
-        return Ok(reply::proceed()); // called over HTTP, not as a hook
-    };
-
+fn post_before_create(ctx: &Context<()>, mut input: Value) -> Result<Value, String> {
     let title = input["title"].as_str().unwrap_or_default().trim().to_string();
     if title.is_empty() {
         return Ok(reply::abort(422, "title is required"));
     }
-    ctx.info(&format!("{} on {} by {:?}", hook.event, hook.resource, hook.principal_id));
+    if let Some(hook) = ctx.hook() {
+        ctx.info(&format!("{} by {:?}", hook.resource, hook.principal_id));
+    }
 
     input["title"] = json!(title);
     Ok(reply::replace(input))
 }
 
 apiplant_function::function! {
-    name: "post_guard",
+    name: "post_before_create",
     description: "Validates and normalises posts before they are stored.",
     method: Post,
     visibility: Private,   // hooks don't need an HTTP endpoint
-    handler: post_guard,
+    handler: post_before_create,
 }
 ```
 
-A complete, runnable version — one function serving four events — is in
-[`examples/function-post-hooks`](../examples/function-post-hooks); build it and
-drop the `.so` into `functions/` like any other function:
+`ctx.hook()` is `None` when the function is called over HTTP instead — worth
+handling if a function serves both roles, and safe to ignore for a `Private`
+hook-only function that can never be reached any other way.
+
+A complete, runnable version — five per-event hooks in one library — is in
+[`examples/function-post-hooks`](../examples/function-post-hooks), wired up in
+[`examples/demo-app`](../examples/demo-app). Build it and drop the `.so` into
+`functions/` like any other function:
 
 ```bash
 cargo build -p function-post-hooks --release
 cp target/release/libfunction_post_hooks.so my-app/functions/
 ```
+
+Running the demo app then shows all five in the boot log and enforces them on
+`/api/post`: titles are trimmed and validated, other members' drafts are hidden
+from listings, and published posts refuse to be deleted without `?force=1`.
 
 The handler's `Input` is the payload from the table above, so
 `serde_json::Value` is the flexible choice — but a typed struct works whenever
@@ -175,28 +184,45 @@ Everything else on `Context` — `query`, `execute`, `config()`, the loggers —
 works exactly as it does for an HTTP function. Hooks run on a blocking worker,
 so these stay ordinary synchronous calls.
 
-## One function, several events
+## A whole set of hooks in one library
 
-A library exports exactly one function, so a function that serves more than one
-event branches on `hook.event`:
-
-```toml
-[hooks]
-before_create = "post_hooks"
-before_update = "post_hooks"
-after_create  = "post_hooks"
-```
+Each event gets its **own** function — no dispatcher, no matching on the event
+name inside a handler. One library can export as many as you like with
+`functions!`:
 
 ```rust
-match hook.event.as_str() {
-    "before_create" | "before_update" => validate(input),
-    "after_create" => { audit(hook); Ok(reply::proceed()) }
-    _ => Ok(reply::proceed()),
+apiplant_function::functions! {
+    {
+        name: "post_before_create",
+        description: "Validates a post before it is stored.",
+        method: Post,
+        visibility: Private,
+        handler: post_before_create,
+    },
+    {
+        name: "post_after_create",
+        description: "Records a newly created post.",
+        method: Post,
+        visibility: Private,
+        handler: post_after_create,
+    },
 }
 ```
 
-Nothing stops you from splitting them across libraries instead — hooks are
-resolved by name, one function per event.
+```toml
+[hooks]
+before_create = "post_before_create"
+after_create  = "post_after_create"
+```
+
+Every entry takes the same fields as `function!` and keeps its own inferred
+`Config`/`Input`/`Output` types — including its own `functions/<name>.toml`, so
+`post_before_create` and `post_before_update` can be configured separately.
+Names must be unique within a library.
+
+Hooks are resolved by function name, so it makes no difference whether they come
+from one library or several. If two events genuinely want identical behaviour,
+point them at the same function and read `hook.event` to tell them apart.
 
 ## Recipes
 
@@ -255,7 +281,7 @@ Ok(reply::proceed())
 Boot logs one line per resolved hook:
 
 ```
-INFO apiplant_server:   hook post.before_create -> post_guard
+INFO apiplant_server:   hook post.before_create -> post_before_create
 ```
 
 ## Performance notes

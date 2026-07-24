@@ -12,10 +12,12 @@
 //! ## The shape of a function
 //!
 //! A function library exports exactly one root module ([`FunctionMod`]) whose
-//! `new` constructor yields a [`Function`] trait object. The host:
+//! `new_functions` constructor yields one or more [`Function`] trait objects —
+//! a single library can provide a whole set of independently-named functions.
+//! For each of them the host:
 //!
-//! 1. loads the library and reads the [`FunctionManifest`] (name, visibility,
-//!    HTTP method, config schema),
+//! 1. reads its [`FunctionManifest`] (name, visibility, HTTP method, config
+//!    schema),
 //! 2. mounts it on an HTTP endpoint according to its [`Visibility`],
 //! 3. on each request calls [`Function::invoke`], passing a [`HostApi`] handle
 //!    (database access, logging, resolved config) plus a JSON input string,
@@ -145,7 +147,8 @@ pub trait HostApi: Send + Sync {
 }
 
 /// A loaded function instance. Constructed once per library via
-/// [`FunctionMod::new`] and reused across requests, so it must be `Send + Sync`.
+/// [`FunctionMod::new_functions`] and reused across requests, so it must be
+/// `Send + Sync`.
 #[sabi_trait]
 pub trait Function: Send + Sync {
     /// Static metadata; called once right after construction.
@@ -165,14 +168,21 @@ pub trait Function: Send + Sync {
 ///
 /// Use [`FunctionMod_Ref`] together with [`abi_stable::export_root_module`] on
 /// the function side; the host loads it with [`FunctionMod_Ref::load_from_file`].
+///
+/// A library exports **one root module** but may carry any number of functions
+/// through it — each with its own name, manifest and handler. That is what lets
+/// one crate provide a whole set of related endpoints or
+/// [lifecycle hooks](FunctionManifest) without a shared dispatcher.
 #[repr(C)]
 #[derive(StableAbi)]
 #[sabi(kind(Prefix(prefix_ref = FunctionMod_Ref)))]
 #[sabi(missing_field(panic))]
 pub struct FunctionMod {
-    /// Construct the function instance. Called exactly once by the host.
+    /// Construct every function this library provides. Called exactly once by
+    /// the host, which then reads each function's [`FunctionManifest`].
+    /// Duplicate names within one library are a load error.
     #[sabi(last_prefix_field)]
-    pub new: extern "C" fn() -> Function_TO<'static, abi_stable::std_types::RBox<()>>,
+    pub new_functions: extern "C" fn() -> abi_stable::std_types::RVec<BoxedFunction>,
 }
 
 impl RootModule for FunctionMod_Ref {

@@ -5,6 +5,8 @@
 #   update           — only the post's owner
 #   delete           — only an `admin` of that organisation
 #
+# On top of that, [hooks] at the bottom run custom logic around each operation.
+#
 # Publishes:
 #   GET/POST /api/post, GET/PATCH/DELETE /api/post/{id}
 #   GET /api/organization/{id}/post   (a has_many, from the auto organization_id)
@@ -35,15 +37,19 @@ default = false
 type = "reference"
 references = "user"
 
-# Lifecycle hooks: run a function around each operation. Uncomment after
-# building the example and dropping it in — a hook whose function isn't loaded
-# fails its requests closed with a 500, on purpose.
+# Lifecycle hooks: one function per operation, all five exported by a single
+# library (examples/function-post-hooks). Build it and drop it in before running
+# the demo — a hook whose function isn't loaded fails its requests closed with a
+# 500, on purpose:
 #
 #   cargo build -p function-post-hooks
 #   cp target/debug/libfunction_post_hooks.so examples/demo-app/functions/
 #
-# [hooks]
-# before_create = "post_hooks"   # validate & normalise the title
-# before_update = "post_hooks"
-# after_create  = "post_hooks"   # log who created the post
-# after_list    = "post_hooks"   # envelope the list, hide drafts from anonymous callers
+# Each function's own config lives beside the library, in functions/<name>.toml.
+
+[hooks]
+before_create = "post_before_create"   # trim & validate the title, or reject
+before_update = "post_before_update"   # same rules; partial bodies pass through
+after_create  = "post_after_create"    # log who created the post
+after_list    = "post_after_list"      # hide other members' drafts from listings
+before_delete = "post_before_delete"   # protect published posts (unless ?force=1)

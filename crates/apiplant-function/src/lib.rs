@@ -35,19 +35,33 @@
 //! and input, and turns your `Err(_)` into a `400`. Types are inferred from the
 //! handler's signature — you never name them twice.
 //!
+//! Use [`functions!`] to export several from one library — each with its own
+//! name, manifest and handler.
+//!
 //! ## Functions as lifecycle hooks
 //!
-//! The same function can also be attached to a resource's lifecycle from
+//! A function can also be attached to a resource's lifecycle from
 //! `models/<name>.toml`, in which case [`Context::hook`] carries the operation's
 //! context — the row created or fetched, the rows a list returned, the request
 //! URL, the caller's auth status — and the [`reply`] helpers say what should
-//! happen next:
+//! happen next. One function per event, so a handler never has to work out why
+//! it was called:
 //!
 //! ```ignore
-//! fn audit(ctx: &Context<()>, _input: serde_json::Value) -> Result<serde_json::Value, String> {
-//!     let Some(hook) = ctx.hook() else { return Ok(reply::proceed()) };
-//!     ctx.info(&format!("{} on {} by {:?}", hook.event, hook.resource, hook.principal_id));
+//! fn post_after_create(ctx: &Context<()>, row: serde_json::Value) -> Result<serde_json::Value, String> {
+//!     let actor = ctx.hook().and_then(|hook| hook.principal_id.clone());
+//!     ctx.info(&format!("post {} created by {actor:?}", row["id"]));
 //!     Ok(reply::proceed())
+//! }
+//!
+//! apiplant_function::functions! {
+//!     {
+//!         name: "post_after_create",
+//!         description: "Records a newly created post",
+//!         method: Post,
+//!         visibility: Private,
+//!         handler: post_after_create,
+//!     },
 //! }
 //! ```
 
@@ -341,6 +355,50 @@ where
     }
 }
 
+/// One exported function: a manifest plus the handler that serves it.
+///
+/// Generated code builds one of these per entry in [`functions!`], which is what
+/// lets a single library export several independently-named functions without
+/// declaring a type for each. The `C`/`I`/`O`/`E` parameters are inferred from
+/// the handler's signature, exactly as they are for a lone [`function!`].
+#[doc(hidden)]
+pub struct Exported<C, I, O, E, F> {
+    manifest: apiplant_abi::FunctionManifest,
+    handler: F,
+    _signature: core::marker::PhantomData<fn(C, I) -> Result<O, E>>,
+}
+
+impl<C, I, O, E, F> Exported<C, I, O, E, F> {
+    pub fn new(manifest: apiplant_abi::FunctionManifest, handler: F) -> Self {
+        Exported {
+            manifest,
+            handler,
+            _signature: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<C, I, O, E, F> apiplant_abi::Function for Exported<C, I, O, E, F>
+where
+    C: serde::de::DeserializeOwned + Default,
+    I: serde::de::DeserializeOwned,
+    O: serde::Serialize,
+    E: core::fmt::Display,
+    F: Fn(&Context<'_, '_, C>, I) -> Result<O, E> + Send + Sync,
+{
+    fn manifest(&self) -> apiplant_abi::FunctionManifest {
+        self.manifest.clone()
+    }
+
+    fn invoke(
+        &self,
+        host: HostApi_TO<'_, RBox<()>>,
+        input: RStr<'_>,
+    ) -> RResult<abi_stable::std_types::RString, abi_stable::std_types::RString> {
+        invoke_handler(&host, input, &self.handler)
+    }
+}
+
 /// Produce the JSON Schema for a handler's `Input` type, inferred from the
 /// handler's signature. Used by [`function!`] to type the request body in the
 /// OpenAPI docs. Returns `""` when the `schema` feature is off.
@@ -395,19 +453,21 @@ pub mod prelude {
 /// Re-exports the generated code depends on. Not a stable public API.
 #[doc(hidden)]
 pub mod __rt {
-    pub use crate::{input_schema_json, invoke_handler, output_schema_json, Context, Hook};
+    pub use crate::{
+        input_schema_json, invoke_handler, output_schema_json, Context, Exported, Hook,
+    };
     pub use abi_stable::export_root_module;
     pub use abi_stable::prefix_type::PrefixTypeTrait;
     pub use abi_stable::sabi_extern_fn;
     pub use abi_stable::sabi_trait::TD_Opaque;
-    pub use abi_stable::std_types::{RBox, RResult, RStr, RString};
+    pub use abi_stable::std_types::{RBox, RResult, RStr, RString, RVec};
     pub use apiplant_abi::{
         BoxedFunction, Function, FunctionMod, FunctionMod_Ref, FunctionManifest, Function_TO,
         HostApi_TO, HttpMethod, Visibility,
     };
 }
 
-/// Define and export an apiplant function from a plain handler.
+/// Define and export **one** apiplant function from a plain handler.
 ///
 /// Fields (`version` and `role` optional):
 ///
@@ -422,73 +482,119 @@ pub mod __rt {
 ///     handler: greet,              // fn(&Context<C>, I) -> Result<O, E>
 /// }
 /// ```
+///
+/// To export several functions from one library, use [`functions!`] — this is
+/// exactly that macro with a single entry.
 #[macro_export]
 macro_rules! function {
+    ( $($definition:tt)* ) => {
+        $crate::functions! { { $($definition)* } }
+    };
+}
+
+/// Define and export **several** apiplant functions from one library.
+///
+/// Each entry is an independent function with its own name, manifest and
+/// handler — there is no shared dispatcher and no matching inside a handler.
+/// This is how one crate provides a set of related endpoints, or a resource's
+/// whole set of lifecycle hooks:
+///
+/// ```ignore
+/// apiplant_function::functions! {
+///     {
+///         name: "post_before_create",
+///         description: "Validates a post before it is stored.",
+///         method: Post,
+///         visibility: Private,
+///         handler: post_before_create,
+///     },
+///     {
+///         name: "post_after_create",
+///         description: "Records a newly created post.",
+///         method: Post,
+///         visibility: Private,
+///         handler: post_after_create,
+///     },
+/// }
+/// ```
+///
+/// Then, in `models/post.toml`:
+///
+/// ```toml
+/// [hooks]
+/// before_create = "post_before_create"
+/// after_create  = "post_after_create"
+/// ```
+///
+/// Every entry takes the same fields as [`function!`], and each handler keeps
+/// its own inferred `Config`/`Input`/`Output` types. Names must be unique within
+/// a library; the host rejects duplicates at load time.
+#[macro_export]
+macro_rules! functions {
     (
-        name: $name:expr,
-        $(version: $version:expr,)?
-        description: $description:expr,
-        method: $method:ident,
-        visibility: $visibility:ident,
-        $(role: $role:expr,)?
-        handler: $handler:path
+        $(
+            {
+                name: $name:expr,
+                $(version: $version:expr,)?
+                description: $description:expr,
+                method: $method:ident,
+                visibility: $visibility:ident,
+                $(role: $role:expr,)?
+                handler: $handler:path
+                $(,)?
+            }
+        ),+
         $(,)?
     ) => {
         #[doc(hidden)]
-        pub mod __apiplant_generated_function {
+        pub mod __apiplant_generated_functions {
             use super::*;
-
-            struct __ApiplantFunction;
-
-            impl $crate::__rt::Function for __ApiplantFunction {
-                fn manifest(&self) -> $crate::__rt::FunctionManifest {
-                    #[allow(unused_mut)]
-                    let mut version =
-                        $crate::__rt::RString::from(::core::env!("CARGO_PKG_VERSION"));
-                    $( version = $crate::__rt::RString::from($version); )?
-
-                    #[allow(unused_mut)]
-                    let mut role = $crate::__rt::RString::new();
-                    $( role = $crate::__rt::RString::from($role); )?
-
-                    $crate::__rt::FunctionManifest {
-                        name: $crate::__rt::RString::from($name),
-                        version,
-                        description: $crate::__rt::RString::from($description),
-                        visibility: $crate::__rt::Visibility::$visibility,
-                        role,
-                        method: $crate::__rt::HttpMethod::$method,
-                        config_schema: $crate::__rt::RString::new(),
-                        input_schema: $crate::__rt::RString::from(
-                            $crate::__rt::input_schema_json(&$handler),
-                        ),
-                        output_schema: $crate::__rt::RString::from(
-                            $crate::__rt::output_schema_json(&$handler),
-                        ),
-                    }
-                }
-
-                fn invoke(
-                    &self,
-                    host: $crate::__rt::HostApi_TO<'_, $crate::__rt::RBox<()>>,
-                    input: $crate::__rt::RStr<'_>,
-                ) -> $crate::__rt::RResult<$crate::__rt::RString, $crate::__rt::RString> {
-                    $crate::__rt::invoke_handler(&host, input, $handler)
-                }
-            }
 
             #[$crate::__rt::export_root_module]
             fn __apiplant_root_module() -> $crate::__rt::FunctionMod_Ref {
                 use $crate::__rt::PrefixTypeTrait as _;
                 $crate::__rt::FunctionMod {
-                    new: __apiplant_new,
+                    new_functions: __apiplant_new_functions,
                 }
                 .leak_into_prefix()
             }
 
             #[$crate::__rt::sabi_extern_fn]
-            fn __apiplant_new() -> $crate::__rt::BoxedFunction {
-                $crate::__rt::Function_TO::from_value(__ApiplantFunction, $crate::__rt::TD_Opaque)
+            fn __apiplant_new_functions() -> $crate::__rt::RVec<$crate::__rt::BoxedFunction> {
+                let mut exported = $crate::__rt::RVec::new();
+                $(
+                    exported.push({
+                        #[allow(unused_mut)]
+                        let mut version =
+                            $crate::__rt::RString::from(::core::env!("CARGO_PKG_VERSION"));
+                        $( version = $crate::__rt::RString::from($version); )?
+
+                        #[allow(unused_mut)]
+                        let mut role = $crate::__rt::RString::new();
+                        $( role = $crate::__rt::RString::from($role); )?
+
+                        let manifest = $crate::__rt::FunctionManifest {
+                            name: $crate::__rt::RString::from($name),
+                            version,
+                            description: $crate::__rt::RString::from($description),
+                            visibility: $crate::__rt::Visibility::$visibility,
+                            role,
+                            method: $crate::__rt::HttpMethod::$method,
+                            config_schema: $crate::__rt::RString::new(),
+                            input_schema: $crate::__rt::RString::from(
+                                $crate::__rt::input_schema_json(&$handler),
+                            ),
+                            output_schema: $crate::__rt::RString::from(
+                                $crate::__rt::output_schema_json(&$handler),
+                            ),
+                        };
+                        $crate::__rt::Function_TO::from_value(
+                            $crate::__rt::Exported::new(manifest, $handler),
+                            $crate::__rt::TD_Opaque,
+                        )
+                    });
+                )+
+                exported
             }
         }
     };
@@ -791,6 +897,103 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["data"]["event"], "after_create");
         assert_eq!(value["data"]["title"], "Hi");
+    }
+
+    #[test]
+    fn exported_functions_carry_their_own_manifest_and_handler() {
+        use apiplant_abi::{Function, FunctionManifest, HttpMethod, Visibility};
+
+        fn manifest(name: &str) -> FunctionManifest {
+            FunctionManifest {
+                name: RString::from(name),
+                version: RString::from("1.0.0"),
+                description: RString::from("test"),
+                visibility: Visibility::Private,
+                role: RString::new(),
+                method: HttpMethod::Post,
+                config_schema: RString::new(),
+                input_schema: RString::new(),
+                output_schema: RString::new(),
+            }
+        }
+
+        // Two functions with different handlers — and different inferred input
+        // types — as `functions!` builds them.
+        let before: Exported<(), Input, Output, String, _> = Exported::new(
+            manifest("post_before_create"),
+            |_ctx: &Context<'_, '_, ()>, input: Input| {
+                Ok(Output {
+                    message: format!("before {}", input.name),
+                })
+            },
+        );
+        let after: Exported<(), Vec<i64>, Output, String, _> = Exported::new(
+            manifest("post_after_list"),
+            |_ctx: &Context<'_, '_, ()>, rows: Vec<i64>| {
+                Ok(Output {
+                    message: format!("after {}", rows.len()),
+                })
+            },
+        );
+
+        assert_eq!(before.manifest().name.as_str(), "post_before_create");
+        assert_eq!(after.manifest().name.as_str(), "post_after_list");
+        assert_eq!(before.manifest().version.as_str(), "1.0.0");
+
+        let new_host = || {
+            HostApi_TO::from_value(
+                MockHost::success("{}", "u1", serde_json::json!([])),
+                TD_Opaque,
+            )
+        };
+
+        let first = match before.invoke(new_host(), RStr::from_str(r#"{"name":"Ann"}"#)) {
+            RResult::ROk(v) => v.into_string(),
+            RResult::RErr(e) => panic!("unexpected error: {}", e.into_string()),
+        };
+        assert!(first.contains("before Ann"));
+
+        let second = match after.invoke(new_host(), RStr::from_str("[1,2,3]")) {
+            RResult::ROk(v) => v.into_string(),
+            RResult::RErr(e) => panic!("unexpected error: {}", e.into_string()),
+        };
+        assert!(second.contains("after 3"));
+    }
+
+    #[test]
+    fn exported_functions_are_abi_trait_objects() {
+        use apiplant_abi::{Function_TO, FunctionManifest, HttpMethod, Visibility};
+
+        let exported: Exported<Config, Input, Output, String, _> = Exported::new(
+            FunctionManifest {
+                name: RString::from("greet"),
+                version: RString::from("0.1.0"),
+                description: RString::from("test"),
+                visibility: Visibility::Public,
+                role: RString::new(),
+                method: HttpMethod::Post,
+                config_schema: RString::new(),
+                input_schema: RString::new(),
+                output_schema: RString::new(),
+            },
+            |ctx: &Context<'_, '_, Config>, input: Input| {
+                Ok(Output {
+                    message: format!("{}, {}!", ctx.config().greeting, input.name),
+                })
+            },
+        );
+
+        // This is the exact conversion the `functions!` macro performs per entry.
+        let boxed = Function_TO::from_value(exported, TD_Opaque);
+        assert_eq!(boxed.manifest().name.as_str(), "greet");
+
+        let host = MockHost::success(r#"{"greeting":"Hi"}"#, "u1", serde_json::json!([]));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+        let reply = match boxed.invoke(host, RStr::from_str(r#"{"name":"Ann"}"#)) {
+            RResult::ROk(v) => v.into_string(),
+            RResult::RErr(e) => panic!("unexpected error: {}", e.into_string()),
+        };
+        assert!(reply.contains("Hi, Ann!"));
     }
 
     #[derive(Deserialize, schemars::JsonSchema)]

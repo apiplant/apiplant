@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use abi_stable::library::RootModule;
+use abi_stable::library::{lib_header_from_raw_library, RawLibrary};
 use abi_stable::sabi_trait::TD_Opaque;
 use abi_stable::std_types::{RResult, RStr, RString};
 use apiplant_abi::{
@@ -74,16 +74,17 @@ impl FunctionRegistry {
             if !is_lib {
                 continue;
             }
-            match Self::load_one(&path) {
-                Ok(f) => {
-                    tracing::info!(
-                        function = %f.manifest.name,
-                        version = %f.manifest.version,
-                        "loaded function"
-                    );
-                    registry
-                        .functions
-                        .insert(f.manifest.name.to_string(), f);
+            match Self::load_library(&path) {
+                Ok(loaded) => {
+                    for f in loaded {
+                        tracing::info!(
+                            function = %f.manifest.name,
+                            version = %f.manifest.version,
+                            library = %path.display(),
+                            "loaded function"
+                        );
+                        registry.functions.insert(f.manifest.name.to_string(), f);
+                    }
                 }
                 Err(e) => tracing::error!(path = %path.display(), error = %e, "failed to load function"),
             }
@@ -91,26 +92,63 @@ impl FunctionRegistry {
         registry
     }
 
-    fn load_one(path: &Path) -> Result<LoadedFunction, String> {
-        let module = FunctionMod_Ref::load_from_file(path).map_err(|e| e.to_string())?;
-        let func = module.new()();
-        let manifest = func.manifest();
+    /// Load every function a library exports. One library commonly provides a
+    /// set of related functions — a resource's lifecycle hooks, say — each with
+    /// its own name and manifest.
+    fn load_library(path: &Path) -> Result<Vec<LoadedFunction>, String> {
+        let module = Self::open(path)?;
+        let exported = module.new_functions()();
+        if exported.is_empty() {
+            return Err("library exports no functions".to_string());
+        }
 
-        // Per-deployment config: functions/<name>.toml → JSON.
-        let config_path = path
-            .with_file_name(format!("{}.toml", manifest.name))
-            .to_path_buf();
-        let config_json = std::fs::read_to_string(&config_path)
-            .ok()
-            .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
-            .and_then(|v| serde_json::to_string(&v).ok())
-            .unwrap_or_else(|| "{}".to_string());
+        let mut loaded: Vec<LoadedFunction> = Vec::with_capacity(exported.len());
+        for func in exported {
+            let manifest = func.manifest();
+            let name = manifest.name.to_string();
+            if loaded.iter().any(|f| f.manifest.name == manifest.name) {
+                return Err(format!("library exports two functions named `{name}`"));
+            }
 
-        Ok(LoadedFunction {
-            manifest,
-            config_json,
-            func,
-        })
+            // Per-deployment config: functions/<name>.toml → JSON. Each function
+            // in a library reads its own file.
+            let config_path = path.with_file_name(format!("{name}.toml"));
+            let config_json = std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+                .and_then(|v| serde_json::to_string(&v).ok())
+                .unwrap_or_else(|| "{}".to_string());
+
+            loaded.push(LoadedFunction {
+                manifest,
+                config_json,
+                func,
+            });
+        }
+        Ok(loaded)
+    }
+
+    /// Open one library and return its root module, with the ABI version and
+    /// layout checked.
+    ///
+    /// Deliberately *not* [`RootModule::load_from_file`]: that caches the first
+    /// library it ever loads in a process-wide static and hands the same root
+    /// module back for every later path, so an app with more than one library in
+    /// `functions/` would silently get the first one's functions repeatedly.
+    /// Going through the header directly keeps each library separate.
+    fn open(path: &Path) -> Result<FunctionMod_Ref, String> {
+        let library = RawLibrary::load_at(path).map_err(|e| e.to_string())?;
+
+        // The library must outlive every function it exports; abi_stable never
+        // unloads, so leaking it is the supported way to keep its code mapped.
+        let library: &'static RawLibrary = Box::leak(Box::new(library));
+
+        // SAFETY: `library` is leaked above, so the `&'static LibHeader` this
+        // returns stays valid for the rest of the process.
+        let header = unsafe { lib_header_from_raw_library(library).map_err(|e| e.to_string())? };
+        header
+            .init_root_module::<FunctionMod_Ref>()
+            .map_err(|e| e.to_string())
     }
 
     /// Add a function that wasn't loaded from disk, replacing any function of

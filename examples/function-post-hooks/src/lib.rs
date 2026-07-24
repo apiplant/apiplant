@@ -1,116 +1,184 @@
-//! Example apiplant function used as a **resource lifecycle hook**.
+//! Example apiplant functions used as **resource lifecycle hooks**, wired up in
+//! [`examples/demo-app`](../../demo-app).
 //!
-//! One library exports one function, but one function can serve *several*
-//! events — branch on `ctx.hook().event`. Wire it up from `models/post.toml`:
+//! One function per event — no dispatcher, no matching on the event name. The
+//! library exports all five through `functions!`, and `models/post.toml` points
+//! each event at the one it wants:
 //!
 //! ```toml
 //! [hooks]
-//! before_create = "post_hooks"
-//! before_update = "post_hooks"
-//! after_create  = "post_hooks"
-//! after_list    = "post_hooks"
+//! before_create = "post_before_create"
+//! before_update = "post_before_update"
+//! after_create  = "post_after_create"
+//! after_list    = "post_after_list"
+//! before_delete = "post_before_delete"
 //! ```
 //!
-//! Build with `cargo build -p function-post-hooks --release` and drop the `.so`
-//! into an app's `functions/` directory.
+//! Build with `cargo build -p function-post-hooks` and drop the `.so` into the
+//! app's `functions/` directory.
 
 use apiplant_function::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-/// Config comes from `functions/post_hooks.toml` (all optional).
+/// Config for the validating hooks, read from `functions/<name>.toml`. Each
+/// function reads its own file, so create and update can be tuned separately.
 #[derive(Deserialize)]
 #[serde(default)]
-struct Config {
+struct Rules {
     /// Titles longer than this are rejected.
     max_title_len: usize,
     /// Titles containing any of these (case-insensitive) are rejected.
     banned_words: Vec<String>,
 }
 
-impl Default for Config {
+impl Default for Rules {
     fn default() -> Self {
-        Config {
+        Rules {
             max_title_len: 200,
             banned_words: Vec::new(),
         }
     }
 }
 
-/// The whole hook. `input` is the operation's payload — the submitted body on
-/// `before_*`, the row or rows on `after_*` — and the returned object tells the
-/// host to continue, to replace that payload, or to reject the request.
-fn post_hooks(ctx: &Context<Config>, input: Value) -> Result<Value, String> {
-    // Invoked over HTTP rather than from a lifecycle event: nothing to do.
-    let Some(hook) = ctx.hook() else {
-        return Ok(reply::proceed());
-    };
+/// `before_create` — the submitted body arrives as `input`. Returning
+/// `replace` rewrites what gets stored; `abort` rejects the request outright.
+fn post_before_create(ctx: &Context<Rules>, input: Value) -> Result<Value, String> {
+    let title = input
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
 
-    match hook.event.as_str() {
-        // Validate and normalise what the client sent, before it is stored.
-        "before_create" | "before_update" => {
-            let mut body = input;
-            let Some(title) = body.get("title").and_then(Value::as_str) else {
-                // PATCH bodies are partial; nothing to check without a title.
-                return Ok(reply::proceed());
-            };
-            let title = title.trim().to_string();
-
-            if title.is_empty() {
-                return Ok(reply::abort(422, "title is required"));
-            }
-            if title.chars().count() > ctx.config().max_title_len {
-                return Ok(reply::abort(
-                    422,
-                    format!("title must be at most {} characters", ctx.config().max_title_len),
-                ));
-            }
-            let lowered = title.to_lowercase();
-            if let Some(word) = ctx
-                .config()
-                .banned_words
-                .iter()
-                .find(|w| lowered.contains(&w.to_lowercase()))
-            {
-                return Ok(reply::abort(422, format!("title may not mention `{word}`")));
-            }
-
-            body["title"] = json!(title);
-            Ok(reply::replace(body))
-        }
-
-        // The row exists now: record who created it, using the host's database.
-        "after_create" => {
-            ctx.info(&format!(
-                "post {} created by {}",
-                hook.row()["id"],
-                hook.principal_id.as_deref().unwrap_or("anonymous"),
-            ));
-            Ok(reply::proceed())
-        }
-
-        // Wrap list responses in an envelope, and hide drafts from anonymous
-        // callers (the resource's permissions may allow public reads).
-        "after_list" => {
-            let rows: Vec<Value> = hook
-                .rows()
-                .iter()
-                .filter(|row| hook.authenticated || row["published"] == json!(true))
-                .cloned()
-                .collect();
-            Ok(reply::replace(json!({ "count": rows.len(), "rows": rows })))
-        }
-
-        _ => Ok(reply::proceed()),
+    if title.is_empty() {
+        return Ok(reply::abort(422, "title is required"));
     }
+    if let Some(problem) = check(ctx.config(), &title) {
+        return Ok(reply::abort(422, problem));
+    }
+
+    let mut body = input;
+    body["title"] = json!(title);
+    Ok(reply::replace(body))
 }
 
-apiplant_function::function! {
-    name: "post_hooks",
-    description: "Validates, normalises and reports on posts as a lifecycle hook.",
-    method: Post,
-    // Hooks run whatever the visibility, so a hook-only function should be
-    // private: no HTTP endpoint, and absent from the generated docs.
-    visibility: Private,
-    handler: post_hooks,
+/// `before_update` — the same rules, but `PATCH` bodies are partial: a body
+/// that doesn't touch the title has nothing to validate.
+fn post_before_update(ctx: &Context<Rules>, input: Value) -> Result<Value, String> {
+    let Some(raw) = input.get("title").and_then(Value::as_str) else {
+        return Ok(reply::proceed());
+    };
+    let title = raw.trim().to_string();
+
+    if title.is_empty() {
+        return Ok(reply::abort(422, "title cannot be blanked"));
+    }
+    if let Some(problem) = check(ctx.config(), &title) {
+        return Ok(reply::abort(422, problem));
+    }
+
+    let mut body = input;
+    body["title"] = json!(title);
+    Ok(reply::replace(body))
+}
+
+fn check(rules: &Rules, title: &str) -> Option<String> {
+    if title.chars().count() > rules.max_title_len {
+        return Some(format!(
+            "title must be at most {} characters",
+            rules.max_title_len
+        ));
+    }
+    let lowered = title.to_lowercase();
+    rules
+        .banned_words
+        .iter()
+        .find(|word| lowered.contains(&word.to_lowercase()))
+        .map(|word| format!("title may not mention `{word}`"))
+}
+
+/// `after_create` — the stored row arrives as `input`, and the hook context
+/// says who caused it. `proceed()` leaves the `201` response untouched.
+fn post_after_create(ctx: &Context<()>, input: Value) -> Result<Value, String> {
+    let hook = ctx.hook().ok_or("post_after_create is a lifecycle hook")?;
+    ctx.info(&format!(
+        "post {} created in org {} by {}",
+        input["id"],
+        hook.organization_id.as_deref().unwrap_or("-"),
+        hook.principal_id.as_deref().unwrap_or("anonymous"),
+    ));
+    Ok(reply::proceed())
+}
+
+/// `after_list` — the rows arrive as `input`. Members see published posts plus
+/// their own drafts; an organisation `admin` sees everything.
+fn post_after_list(ctx: &Context<()>, input: Vec<Value>) -> Result<Value, String> {
+    let hook = ctx.hook().ok_or("post_after_list is a lifecycle hook")?;
+    if hook.role.as_deref() == Some("admin") {
+        return Ok(reply::proceed());
+    }
+
+    let me = hook.principal_id.as_deref().unwrap_or_default();
+    let visible: Vec<Value> = input
+        .into_iter()
+        .filter(|row| row["published"] == json!(true) || row["owner_id"] == json!(me))
+        .collect();
+    Ok(reply::replace(json!(visible)))
+}
+
+/// `before_delete` — the row about to be deleted arrives as `input` (the host
+/// fetches it for you). Published posts are protected unless `?force=1`.
+fn post_before_delete(ctx: &Context<()>, input: Value) -> Result<Value, String> {
+    let hook = ctx.hook().ok_or("post_before_delete is a lifecycle hook")?;
+    let forced = hook.query.get("force").map(String::as_str) == Some("1");
+
+    if input["published"] == json!(true) && !forced {
+        return Ok(reply::abort(
+            409,
+            "published posts are protected; retry with ?force=1",
+        ));
+    }
+    Ok(reply::proceed())
+}
+
+// Five independent functions from one library. Hooks run whatever the
+// visibility, so hook-only functions are `Private`: no HTTP endpoint, and
+// absent from the generated docs.
+apiplant_function::functions! {
+    {
+        name: "post_before_create",
+        description: "Validates and normalises a post before it is stored.",
+        method: Post,
+        visibility: Private,
+        handler: post_before_create,
+    },
+    {
+        name: "post_before_update",
+        description: "Validates and normalises a post before it is updated.",
+        method: Post,
+        visibility: Private,
+        handler: post_before_update,
+    },
+    {
+        name: "post_after_create",
+        description: "Reports a newly created post.",
+        method: Post,
+        visibility: Private,
+        handler: post_after_create,
+    },
+    {
+        name: "post_after_list",
+        description: "Hides other members' drafts from post listings.",
+        method: Post,
+        visibility: Private,
+        handler: post_after_list,
+    },
+    {
+        name: "post_before_delete",
+        description: "Protects published posts from deletion.",
+        method: Post,
+        visibility: Private,
+        handler: post_before_delete,
+    },
 }
