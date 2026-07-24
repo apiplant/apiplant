@@ -136,10 +136,12 @@ impl TempDatabase {
 ///
 /// `handler` receives the host (for database access), the hook context JSON
 /// (empty for a plain HTTP call) and the input body, and returns the JSON reply.
+type TestHandler = fn(&HostApi_TO<'_, RBox<()>>, &str, &str) -> Result<String, String>;
+
 struct TestFunction {
     name: String,
     visibility: Visibility,
-    handler: fn(&HostApi_TO<'_, RBox<()>>, &str, &str) -> Result<String, String>,
+    handler: TestHandler,
 }
 
 impl Function for TestFunction {
@@ -165,11 +167,7 @@ impl Function for TestFunction {
     }
 }
 
-fn test_function(
-    name: &str,
-    visibility: Visibility,
-    handler: fn(&HostApi_TO<'_, RBox<()>>, &str, &str) -> Result<String, String>,
-) -> BoxedFunction {
+fn test_function(name: &str, visibility: Visibility, handler: TestHandler) -> BoxedFunction {
     Function_TO::from_value(
         TestFunction {
             name: name.to_string(),
@@ -254,7 +252,10 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         auth: Authenticator::new(b"test-secret".to_vec(), 3600),
         functions: Arc::new(functions),
         openapi_json: Arc::new(serde_json::to_string(&spec).unwrap()),
-        docs_html: Arc::new(openapi::swagger_ui_html(&spec_url, &spec["info"]["title"].as_str().unwrap_or("apiplant API"))),
+        docs_html: Arc::new(openapi::swagger_ui_html(
+            &spec_url,
+            spec["info"]["title"].as_str().unwrap_or("apiplant API"),
+        )),
     }
 }
 

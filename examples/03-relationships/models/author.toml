@@ -1,0 +1,21 @@
+# The "one" side of a one-to-many. Nothing here declares the relationship —
+# it's the child's `reference` field that creates the link, and the reverse
+# (has_many) endpoint appears automatically.
+
+[resource]
+name = "author"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "public"
+delete = "public"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.country]
+type = "string"

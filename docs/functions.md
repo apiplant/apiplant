@@ -1,20 +1,46 @@
 # Functions (compiled plugins)
 
 A **function** is custom logic compiled into a shared library
-(`.so`/`.dylib`/`.dll`) and dropped into the app's `functions/` directory. The
-framework loads it at boot and mounts it as an HTTP endpoint. Functions talk to
-the host across a stable C ABI (via [`abi_stable`]), so they can be shipped
-independently and never require recompiling the server.
+(`.so`/`.dylib`/`.dll`) in the app's `functions/` directory. The framework loads
+it at boot and mounts it as an HTTP endpoint. Functions talk to the host across a
+stable C ABI (via [`abi_stable`]), so they can be shipped independently and never
+require recompiling the server.
+
+You write the **source**; `apiplant build` produces the library:
 
 ```
 my-app/functions/
-├── libgreet.so       # a compiled library
+├── greet.rs          # source: one file, written as if it were a lib.rs
 ├── greet.toml        # optional per-deployment config for the `greet` function
-└── libhooks.so       # another library; every .so in here is loaded
+├── libgreet.so       # ← produced by `apiplant build`
+└── libhooks.so       # another library; every .so here is loaded
 ```
 
 A directory can hold any number of libraries, and each library can export any
 number of functions.
+
+## Building
+
+```bash
+apiplant build my-app          # compile every functions/*.rs
+apiplant build my-app --release
+apiplant build my-app --force  # ignore up-to-date libraries
+apiplant run my-app --build    # build, then serve
+```
+
+Each source is wrapped in a generated cdylib crate under
+`my-app/.apiplant-build/`, compiled with cargo, and the resulting library copied
+next to the source. Only sources newer than their library are rebuilt, and one
+shared `target/` keeps dependencies compiled once. Serving an app whose source is
+newer than its library logs a warning.
+
+The only requirement is `cargo` on `PATH`. Every generated crate depends on
+`apiplant-function`, `abi_stable`, `serde`, `serde_json` and `schemars`; the
+`apiplant-function` path is taken from the checkout the binary was built from, or
+from `APIPLANT_FUNCTION_CRATE` if you set it.
+
+If you'd rather manage the crate yourself, you can — see
+[Cargo setup](#cargo-setup) below. `apiplant build` just automates it.
 
 ## Writing a function
 
@@ -65,7 +91,7 @@ That's the whole library. The macro generates the root module, reads/writes JSON
 resolves your typed config and input, and turns any `Err(_)` into a `400`.
 
 A complete, runnable version is in
-[`examples/function-greet`](../examples/function-greet).
+[`examples/07-functions`](../examples/07-functions).
 
 ### Several functions in one library
 
@@ -99,7 +125,7 @@ libraries is resolved last-loaded-wins.
 
 This is the usual way to ship a resource's [lifecycle hooks](hooks.md): one
 handler per event, no dispatcher. See
-[`examples/function-post-hooks`](../examples/function-post-hooks).
+[`examples/08-hooks`](../examples/08-hooks).
 
 ### The handler signature
 
@@ -137,6 +163,9 @@ you skip the derives), function bodies fall back to an untyped `object`.
 | `role` | no | Required role name when `visibility: RoleGated`. |
 
 ### Cargo setup
+
+Only needed if you build the library yourself instead of using
+[`apiplant build`](#building) — which generates exactly this:
 
 ```toml
 [lib]
@@ -244,11 +273,10 @@ Config is per **function**, not per library: a library exporting
 `functions/post_before_create.toml` and `functions/post_before_update.toml`, so
 the two can be tuned independently even when they share a `Config` type.
 
-## Building & deploying
+## Deploying
 
 ```bash
-cargo build -p my-function --release
-cp target/release/libmy_function.so my-app/functions/
+apiplant build my-app --release     # or build the cdylib yourself and copy it in
 ```
 
 On boot the server logs every function each library provides, and its route:

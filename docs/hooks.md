@@ -99,19 +99,17 @@ apiplant_function::function! {
 handling if a function serves both roles, and safe to ignore for a `Private`
 hook-only function that can never be reached any other way.
 
-A complete, runnable version — five per-event hooks in one library — is in
-[`examples/function-post-hooks`](../examples/function-post-hooks), wired up in
-[`examples/demo-app`](../examples/demo-app). Build it and drop the `.so` into
-`functions/` like any other function:
+A complete, runnable version — five per-event hooks in one library, wired into a
+resource — is [`examples/08-hooks`](../examples/08-hooks):
 
 ```bash
-cargo build -p function-post-hooks --release
-cp target/release/libfunction_post_hooks.so my-app/functions/
+cargo run -p apiplant -- build examples/08-hooks
+cargo run -p apiplant -- examples/08-hooks
 ```
 
-Running the demo app then shows all five in the boot log and enforces them on
-`/api/post`: titles are trimmed and validated, other members' drafts are hidden
-from listings, and published posts refuse to be deleted without `?force=1`.
+It shows all five in the boot log and enforces them on `/api/post`: titles are
+trimmed and validated, other members' drafts are hidden from listings, and
+published posts refuse to be deleted without `?force=1`.
 
 The handler's `Input` is the payload from the table above, so
 `serde_json::Value` is the flexible choice — but a typed struct works whenever

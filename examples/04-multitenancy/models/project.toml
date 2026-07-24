@@ -1,0 +1,25 @@
+# Note what ISN'T here: no organization_id field, no tenant filtering, no checks.
+#
+# Resources are organisation-scoped by default, so the framework injects an
+# `organization_id` foreign key, filters every query to the caller's active
+# organisation, and stamps it on create. Rows simply cannot leak between orgs.
+
+[resource]
+name = "project"
+
+# `member` on every action = any member of the active organisation.
+# (This is also the default, spelled out here for clarity.)
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "member"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.status]
+type    = "string"
+default = "active"

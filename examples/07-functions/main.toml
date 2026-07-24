@@ -10,7 +10,7 @@ base_path = "/api"          # the API is mounted under /api
 [database]
 # Point at the ephemeral cluster used in the walkthrough. Leave `url` empty to
 # build it from the individual parts instead.
-url = "postgres://postgres@127.0.0.1:55432/apiplant"
+url = "postgres://postgres@127.0.0.1:55432/apiplant_functions"
 auto_migrate = true
 
 [auth]
@@ -23,4 +23,4 @@ allow_registration = true
 [docs]
 enabled = true
 path = "/docs"
-title = "apiplant demo API"
+title = "07 · Functions"

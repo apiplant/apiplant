@@ -57,9 +57,10 @@ my-app/
 ├── models/              # one .toml per resource → a table + CRUD endpoints
 │   ├── post.toml
 │   └── users.toml       # optional: extend/override the built-in `user`
-└── functions/           # compiled function libraries + their <name>.toml config
-    ├── libgreet.so
-    └── greet.toml
+└── functions/           # function sources, their config, and the built libraries
+    ├── greet.rs         # you write this…
+    ├── greet.toml       #   …plus optional config
+    └── libgreet.so      # …and `apiplant build` produces this
 ```
 
 | Piece            | Default when absent                                        |
@@ -68,6 +69,11 @@ my-app/
 | `https/`         | plain HTTP                                                  |
 | `models/*.toml`  | just the built-in `organization`, `membership`, `user`, `api_key`, `oauth_connection` |
 | `functions/`     | no function endpoints                                       |
+
+Functions are ordinary `.rs` files in `functions/`, each written as if it were a
+`lib.rs`. `apiplant build <dir>` wraps every source in a generated cdylib crate,
+compiles it with cargo, and drops the library beside it — so the only toolchain
+requirement is a working `cargo`.
 
 ## Defining a resource
 
@@ -258,7 +264,7 @@ renders a typed form). The host loads every library in `functions/`, mounts it a
 a blocking worker with a [`Context`] giving it the database, config, and caller
 identity. Use `functions! { {…}, {…} }` to export several from one library, each
 with its own name and config. See
-[`examples/function-greet`](examples/function-greet) and the
+[`examples/07-functions`](examples/07-functions) and the
 [Functions guide](docs/functions.md).
 
 ## Lifecycle hooks: custom logic on CRUD
@@ -298,7 +304,7 @@ so they can validate, rewrite the payload, or abort; `after_*` hooks see the
 resulting row (or rows) and can replace the response body. Hooks ignore a
 function's `visibility`, so hook functions are usually `Private` — invisible
 over HTTP, fully wired into the lifecycle. One library can carry a resource's
-whole set: see [`examples/function-post-hooks`](examples/function-post-hooks)
+whole set: see [`examples/08-hooks`](examples/08-hooks)
 and the [Hooks guide](docs/hooks.md).
 
 ## Workspace layout
@@ -312,18 +318,14 @@ and the [Hooks guide](docs/hooks.md).
 | `apiplant-auth`        | passwords, JWT sessions, API keys, permission evaluation          |
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
 | `apiplant`             | the executable                                                     |
-| `examples/function-greet` | an example function compiled to a cdylib                       |
-| `examples/function-post-hooks` | five per-event lifecycle hooks in one cdylib             |
-| `examples/demo-app`    | a ready-to-run app directory, hooks wired up                      |
+| `examples/`            | eight runnable apps, from hello-world to hooks — see [examples/](examples/) |
 
 ## Quickstart
 
 ```bash
-# 1. Start Postgres. This matches the demo app's connection string exactly
-#    (postgres://postgres@127.0.0.1:55432/apiplant), so it works out of the box.
+# 1. Start Postgres on the port the examples expect.
 docker run -d --name apiplant-postgres \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
-  -e POSTGRES_DB=apiplant \
   -p 55432:5432 \
   postgres:16
 # (stop & remove later with: docker rm -f apiplant-postgres)
@@ -331,30 +333,40 @@ docker run -d --name apiplant-postgres \
 #    No Docker? Run a throwaway local cluster in ./pgdata instead:
 #      initdb -D ./pgdata --username=postgres --auth=trust
 #      pg_ctl -D ./pgdata -o "-p 55432 -k /tmp" -l ./pgdata/log.txt start
-#      createdb -h 127.0.0.1 -p 55432 -U postgres apiplant
 #    (stop later with: pg_ctl -D ./pgdata stop)
 
-# 2. Build the example functions and drop them into the demo app. The second
-#    library carries the `post` resource's lifecycle hooks, which the demo wires
-#    up in models/post.toml — build it or post requests fail closed with a 500.
-cargo build -p function-greet -p function-post-hooks
-cp target/debug/libfunction_greet.so target/debug/libfunction_post_hooks.so \
-   examples/demo-app/functions/
+# 2. Start with the smallest example: config only, no models.
+createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hello
+cargo run -p apiplant -- examples/01-hello-world
 
-# 3. Run.
-cargo run -p apiplant -- examples/demo-app
-
-# 4. Use it.
 curl -s localhost:8099/api/_health
 curl -s -XPOST localhost:8099/api/auth/register \
   -H 'content-type: application/json' \
   -d '{"email":"a@b.com","password":"pw"}'          # → { "token": ... }
+
+# 3. Then work up through the others — each adds one idea.
+createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_functions
+cargo run -p apiplant -- build examples/07-functions   # compiles functions/*.rs
+cargo run -p apiplant -- examples/07-functions
+
 curl -s -XPOST localhost:8099/api/functions/greet \
   -H 'content-type: application/json' -d '{"name":"World"}'
-# → { "message": "Bonjour, World!", "registered_users": 1 }
+# → { "message": "Buongiorno, World!", "registered_users": 1 }
 ```
 
-Run `apiplant --check <dir>` to load and validate an app without serving it.
+The [examples](examples/) go from a bare `main.toml` to a full app with
+lifecycle hooks, one concept at a time.
+
+## The CLI
+
+```
+apiplant [run] [APP_DIR]     serve the app (default command)
+apiplant build [APP_DIR]     compile functions/*.rs into loadable libraries
+apiplant check [APP_DIR]     load and validate the app, then exit
+```
+
+`run` takes `--build` to compile out-of-date sources first; `build` takes
+`--release` and `--force`.
 
 ## Built on
 

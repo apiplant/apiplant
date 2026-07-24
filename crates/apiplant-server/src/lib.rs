@@ -73,12 +73,18 @@ pub async fn run(app: App) -> anyhow::Result<()> {
     // 3. Load dynamic functions.
     let registry = FunctionRegistry::load_dir(&app.functions_dir);
     for f in registry.iter() {
-        tracing::info!(
-            "  fn {} -> {}/functions/{}",
-            f.manifest.name,
-            app.config.server.base_path,
-            f.manifest.name
-        );
+        // A `Private` function has no route — it exists to be called from a
+        // hook — so don't advertise one it would answer 404 on.
+        if f.manifest.visibility == apiplant_abi::Visibility::Private {
+            tracing::info!("  fn {} (private — no endpoint)", f.manifest.name);
+        } else {
+            tracing::info!(
+                "  fn {} -> {}/functions/{}",
+                f.manifest.name,
+                app.config.server.base_path,
+                f.manifest.name
+            );
+        }
     }
 
     // 4. Report the resource hooks, loudly flagging any that can't resolve —

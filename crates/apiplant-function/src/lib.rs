@@ -361,11 +361,15 @@ where
 /// lets a single library export several independently-named functions without
 /// declaring a type for each. The `C`/`I`/`O`/`E` parameters are inferred from
 /// the handler's signature, exactly as they are for a lone [`function!`].
+/// The handler shape an [`Exported`] stands for, held only as a marker so the
+/// inferred type parameters stay pinned to the struct.
+type Signature<C, I, O, E> = fn(C, I) -> Result<O, E>;
+
 #[doc(hidden)]
 pub struct Exported<C, I, O, E, F> {
     manifest: apiplant_abi::FunctionManifest,
     handler: F,
-    _signature: core::marker::PhantomData<fn(C, I) -> Result<O, E>>,
+    _signature: core::marker::PhantomData<Signature<C, I, O, E>>,
 }
 
 impl<C, I, O, E, F> Exported<C, I, O, E, F> {

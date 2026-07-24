@@ -1,0 +1,16 @@
+[server]
+host = "127.0.0.1"
+port = 8099
+base_path = "/api"
+
+[database]
+url = "postgres://postgres@127.0.0.1:55432/apiplant_permissions"
+auto_migrate = true
+
+[auth]
+jwt_secret = "example-secret-change-me"
+
+[docs]
+enabled = true
+path = "/docs"
+title = "06 · Permissions"

@@ -1,0 +1,20 @@
+# Organisation-scoped (the default), so membership is required on top of the
+# policy below. `role:editor` means "an editor **in the caller's active
+# organisation**" — roles come from the membership row, not from the user.
+
+[resource]
+name = "announcement"
+
+[permissions]
+list   = "member"          # any member of the org
+read   = "member"
+create = "role:editor"     # only editors may publish
+update = "role:editor"
+delete = "role:admin"      # only admins may remove
+
+[fields.headline]
+type     = "string"
+required = true
+
+[fields.body]
+type = "text"

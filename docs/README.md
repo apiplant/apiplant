@@ -5,7 +5,9 @@ You don't write server code — you declare resources, permissions and
 relationships in TOML, drop in optional compiled functions, and run the
 `apiplant` binary against the directory.
 
-These guides cover everything the framework does.
+These guides cover everything the framework does. To learn by running things
+instead, the [examples](../examples/) go from a bare `main.toml` to a full app
+with lifecycle hooks, one idea at a time.
 
 | Guide | What's in it |
 |-------|--------------|
@@ -27,7 +29,7 @@ my-app/
 ├── main.toml       # optional server/db/auth/docs config — safe defaults if absent
 ├── https/          # cert + key here ⇒ the server runs HTTPS
 ├── models/         # one <name>.toml per resource ⇒ a table + CRUD endpoints
-└── functions/      # compiled .so/.dylib/.dll plugins + their <name>.toml config
+└── functions/      # function sources (.rs), their config, and built libraries
 ```
 
 * A **resource** (`models/post.toml`) becomes a Postgres table and a set of
@@ -38,7 +40,8 @@ my-app/
 * **Relationships** come from `reference` fields — enforced with real foreign
   keys, navigable via nested endpoints, and inlinable with `?expand=`.
 * **Functions** are separately-compiled libraries mounted as endpoints, talking
-  to the host over a stable C ABI.
+  to the host over a stable C ABI. Write them as plain `.rs` files and let
+  `apiplant build` compile them.
 * **Hooks** attach those functions to a resource's lifecycle (`before_create`,
   `after_list`, …) so custom logic can validate, rewrite or observe every CRUD
   operation.

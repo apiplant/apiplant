@@ -1,0 +1,22 @@
+# Owner-only: every action is scoped to the row's owner_field (default owner_id),
+# which the framework stamps on create. Lists silently contain only your rows;
+# someone else's row reads as 404 rather than 403, so ids can't be probed.
+
+[resource]
+name = "diary"
+scope = "global"
+
+[permissions]
+list   = "owner"
+read   = "owner"
+create = "authenticated"
+update = "owner"
+delete = "owner"
+
+[fields.entry]
+type     = "text"
+required = true
+
+[fields.owner_id]
+type       = "reference"
+references = "user"

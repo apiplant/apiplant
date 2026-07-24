@@ -13,3 +13,4 @@ examples/**/functions/*.dylib
 examples/**/functions/*.dll
 
 pgdata
+.apiplant-build/

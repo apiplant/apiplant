@@ -1,0 +1,21 @@
+# A public catalogue: anyone can read, nobody can write over the API.
+# `private` actions are not just forbidden — they answer 404, so the endpoint
+# doesn't advertise its own existence.
+
+[resource]
+name = "plan"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "private"
+update = "private"
+delete = "private"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.price_cents]
+type = "integer"
