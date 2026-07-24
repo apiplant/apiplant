@@ -96,7 +96,20 @@ pub async fn invoke(
         Ok(Ok(json)) => HttpResponse::Ok()
             .content_type("application/json")
             .body(json),
-        Ok(Err(msg)) => error(400, msg),
-        Err(_) => error(500, "function panicked"),
+        // The function faulted rather than faulting the caller. Log the detail and
+        // answer generically — it names internals the caller shouldn't see.
+        Ok(Err(msg)) => match msg.strip_prefix(apiplant_abi::INTERNAL_ERROR_PREFIX) {
+            Some(detail) => {
+                tracing::error!(function = %name, detail, "function faulted");
+                error(500, "internal function error")
+            }
+            None => error(400, msg),
+        },
+        // Reached only if the *host* side of the blocking closure panicked;
+        // panics inside the function are caught before they cross the ABI.
+        Err(_) => {
+            tracing::error!(function = %name, "function task panicked");
+            error(500, "internal function error")
+        }
     }
 }

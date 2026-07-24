@@ -24,6 +24,7 @@
 //! | `{"data": …}` | replace the payload (`before_create`/`before_update`) or the response body (`after_*`) |
 //! | `{"error": {"status": 422, "message": "…"}}` | abort the request with that status |
 //! | `Err(msg)` from the handler | abort with `400` and `msg` |
+//! | a panic in the handler | abort with `500`; the detail is logged, not returned |
 //!
 //! Hooks are called regardless of a function's `visibility`, so a
 //! `Private` function — invisible over HTTP — is the natural way to write one.
@@ -176,9 +177,19 @@ pub async fn run(
 
     match result {
         Ok(Ok(raw)) => outcome(&raw, &hook_name),
-        Ok(Err(message)) => Err(error(400, message)),
+        // A hook that faulted must not abort the request with the caller's `400`;
+        // it is the hook that is broken, not the request.
+        Ok(Err(message)) => match message.strip_prefix(apiplant_abi::INTERNAL_ERROR_PREFIX) {
+            Some(detail) => {
+                tracing::error!(hook = %hook_name, detail, "hook faulted");
+                Err(error(500, "hook failed"))
+            }
+            None => Err(error(400, message)),
+        },
+        // Reached only if the *host* side of the blocking closure panicked;
+        // panics inside the hook are caught before they cross the ABI.
         Err(_) => {
-            tracing::error!(hook = %hook_name, "hook function panicked");
+            tracing::error!(hook = %hook_name, "hook task panicked");
             Err(error(500, "hook failed"))
         }
     }

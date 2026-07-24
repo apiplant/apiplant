@@ -332,8 +332,60 @@ pub mod reply {
 
 /// The glue every generated `invoke` calls: parse config + input, run the
 /// handler, serialize the result. Type parameters are inferred from `handler`.
+///
+/// Also the crate's panic firewall. [`apiplant_abi::Function::invoke`] is
+/// reached through an `extern "C"` function pointer, and a panic that escapes
+/// one of those does not unwind into the host — `abi_stable` detects it and
+/// aborts the process. A `panic!`, `unwrap()` or index-out-of-bounds anywhere in
+/// a handler would therefore take the whole server down with it, dropping every
+/// other in-flight request. So the handler runs inside [`catch_unwind`] here,
+/// while it is still on the function's side of the boundary, and a panic becomes
+/// an [`INTERNAL_ERROR_PREFIX`](apiplant_abi::INTERNAL_ERROR_PREFIX) error that
+/// the host reports as a `500`.
 #[doc(hidden)]
 pub fn invoke_handler<C, I, O, E, F>(
+    host: &HostApi_TO<'_, RBox<()>>,
+    input: RStr<'_>,
+    handler: F,
+) -> RResult<abi_stable::std_types::RString, abi_stable::std_types::RString>
+where
+    C: serde::de::DeserializeOwned + Default,
+    I: serde::de::DeserializeOwned,
+    O: serde::Serialize,
+    E: core::fmt::Display,
+    F: FnOnce(&Context<'_, '_, C>, I) -> Result<O, E>,
+{
+    use abi_stable::std_types::RString;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    // `AssertUnwindSafe`: nothing observable is shared across the boundary that a
+    // half-finished handler could leave inconsistent. `host` is borrowed and its
+    // methods are the host's own business, the config and input are moved in and
+    // dropped on unwind, and on a panic we return immediately without touching
+    // anything the handler may have left mid-update.
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        run_handler::<C, I, O, E, F>(host, input, handler)
+    }));
+
+    match outcome {
+        Ok(result) => result,
+        // The default panic hook has already printed the message and backtrace to
+        // stderr, so the detail is in the operator's log either way; this carries
+        // enough for the host to log a useful line without echoing it to the caller.
+        // `&*payload`, not `&payload`: `Box<dyn Any + Send>` is itself `Any`, so
+        // `&payload` would coerce by erasing the *box* and every downcast below
+        // would miss, turning every panic message into "panicked".
+        Err(payload) => RResult::RErr(RString::from(format!(
+            "{}{}",
+            apiplant_abi::INTERNAL_ERROR_PREFIX,
+            panic_message(&*payload)
+        ))),
+    }
+}
+
+/// [`invoke_handler`] minus the panic firewall — everything here may unwind, and
+/// [`invoke_handler`] is what stops it from reaching the ABI boundary.
+fn run_handler<C, I, O, E, F>(
     host: &HostApi_TO<'_, RBox<()>>,
     input: RStr<'_>,
     handler: F,
@@ -363,6 +415,19 @@ where
             Err(e) => RResult::RErr(RString::from(format!("failed to serialize output: {e}"))),
         },
         Err(e) => RResult::RErr(RString::from(e.to_string())),
+    }
+}
+
+/// Recover the text from a caught panic payload. `panic!` with a literal yields
+/// a `&str` and the formatting forms yield a `String`; anything else (a
+/// `panic_any` with a custom type) has no text to show.
+fn panic_message(payload: &(dyn core::any::Any + Send)) -> &str {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "panicked"
     }
 }
 
@@ -784,6 +849,146 @@ mod tests {
         match result {
             RResult::ROk(v) => panic!("unexpected success: {}", v.into_string()),
             RResult::RErr(e) => assert!(e.into_string().contains("invalid input")),
+        }
+    }
+
+    /// A panic must not escape as a panic: `Function::invoke` is reached through
+    /// an `extern "C"` pointer, and `abi_stable` aborts the process rather than
+    /// letting one unwind into the host.
+    #[test]
+    fn invoke_handler_turns_a_panicking_handler_into_an_internal_error() {
+        let host = MockHost::success("{}", "u1", serde_json::json!([]));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+
+        let result = invoke_handler::<Config, Input, Output, String, _>(
+            &host,
+            RStr::from_str(r#"{"name":"Ann"}"#),
+            |_ctx, _input| panic!("handler exploded"),
+        );
+
+        match result {
+            RResult::ROk(v) => panic!("unexpected success: {}", v.into_string()),
+            RResult::RErr(e) => {
+                let msg = e.into_string();
+                let detail = msg
+                    .strip_prefix(apiplant_abi::INTERNAL_ERROR_PREFIX)
+                    .expect("a panic must be marked internal so the host answers 500, not 400");
+                // The real message has to survive, or the operator's log says nothing.
+                assert_eq!(detail, "handler exploded");
+            }
+        }
+    }
+
+    /// The same for the implicit panics people actually hit.
+    #[test]
+    fn invoke_handler_catches_panics_from_unwrap_and_indexing() {
+        for (label, handler) in [
+            (
+                "unwrap",
+                Box::new(|_: &Context<'_, '_, Config>, input: Input| -> Result<Output, String> {
+                    // Derived from the input so clippy sees a real `Option`
+                    // rather than a literal `None` it can flag at the call site.
+                    let missing = input.name.strip_prefix("nonexistent-prefix");
+                    Ok(Output {
+                        message: missing.unwrap().to_string(),
+                    })
+                }) as Box<dyn Fn(&Context<'_, '_, Config>, Input) -> Result<Output, String>>,
+            ),
+            (
+                "index",
+                Box::new(|_: &Context<'_, '_, Config>, input: Input| -> Result<Output, String> {
+                    // Indexed by input length so the compiler can't prove it's
+                    // out of bounds and reject the test with `unconditional_panic`.
+                    let empty: Vec<u8> = Vec::new();
+                    let _ = empty[input.name.len()];
+                    unreachable!()
+                }),
+            ),
+        ] {
+            let host = MockHost::success("{}", "u1", serde_json::json!([]));
+            let host = HostApi_TO::from_value(host, TD_Opaque);
+            let result = invoke_handler::<Config, Input, Output, String, _>(
+                &host,
+                RStr::from_str(r#"{"name":"Ann"}"#),
+                handler,
+            );
+            match result {
+                RResult::ROk(_) => panic!("{label}: expected an error"),
+                RResult::RErr(e) => {
+                    let msg = e.into_string();
+                    assert!(
+                        msg.starts_with(apiplant_abi::INTERNAL_ERROR_PREFIX),
+                        "{label}: not marked internal: {msg}"
+                    );
+                    // "panicked" is the fallback for payloads with no text; these
+                    // both carry a real message, so seeing it means the downcast
+                    // erased the Box instead of its contents.
+                    assert_ne!(
+                        msg,
+                        format!("{}panicked", apiplant_abi::INTERNAL_ERROR_PREFIX),
+                        "{label}: panic message was lost"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A handler that merely *returns* an error keeps the plain (400) channel —
+    /// only faults get the internal marker.
+    #[test]
+    fn a_returned_error_is_not_marked_internal() {
+        let host = MockHost::success("{}", "u1", serde_json::json!([]));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+
+        let result = invoke_handler::<Config, Input, Output, String, _>(
+            &host,
+            RStr::from_str(r#"{"name":"Ann"}"#),
+            |_ctx, _input| Err("name is taken".to_string()),
+        );
+
+        match result {
+            RResult::ROk(_) => panic!("expected an error"),
+            RResult::RErr(e) => assert_eq!(e.into_string(), "name is taken"),
+        }
+    }
+
+    /// The whole point: the same panic driven through the `extern "C"` vtable
+    /// `abi_stable` builds. Before the firewall this aborted the test process.
+    #[test]
+    fn a_panic_does_not_cross_the_abi_boundary() {
+        let manifest = apiplant_abi::FunctionManifest {
+            name: "boom".into(),
+            version: "0.0.0".into(),
+            description: RString::new(),
+            visibility: apiplant_abi::Visibility::Public,
+            role: RString::new(),
+            method: apiplant_abi::HttpMethod::Post,
+            config_schema: RString::new(),
+            input_schema: RString::new(),
+            output_schema: RString::new(),
+        };
+        let exported = Exported::<Config, Input, Output, String, _>::new(
+            manifest,
+            |_ctx: &Context<'_, '_, Config>, _input: Input| -> Result<Output, String> {
+                panic!("handler exploded")
+            },
+        );
+
+        // Erase it exactly as a real library does, so `invoke` below travels
+        // through the generated `extern "C"` function pointer.
+        let boxed: apiplant_abi::BoxedFunction =
+            apiplant_abi::Function_TO::from_value(exported, TD_Opaque);
+        assert_eq!(boxed.manifest().name.as_str(), "boom");
+
+        let host = HostApi_TO::from_value(
+            MockHost::success("{}", "u1", serde_json::json!([])),
+            TD_Opaque,
+        );
+        match boxed.invoke(host, RStr::from_str(r#"{"name":"Ann"}"#)) {
+            RResult::ROk(v) => panic!("unexpected success: {}", v.into_string()),
+            RResult::RErr(e) => assert!(e
+                .into_string()
+                .starts_with(apiplant_abi::INTERNAL_ERROR_PREFIX)),
         }
     }
 

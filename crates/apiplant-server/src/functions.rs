@@ -95,9 +95,21 @@ impl FunctionRegistry {
     /// Load every function a library exports. One library commonly provides a
     /// set of related functions — a resource's lifecycle hooks, say — each with
     /// its own name and manifest.
+    ///
+    /// Two ABIs are accepted. A library built with `apiplant-function` exports an
+    /// [`abi_stable`] root module and is tried first; one written in C, Zig or Go
+    /// exports the [plain C symbols](apiplant_abi::c) instead. Both arrive here as
+    /// [`BoxedFunction`]s, so nothing downstream knows the difference.
     fn load_library(path: &Path) -> Result<Vec<LoadedFunction>, String> {
-        let module = Self::open(path)?;
-        let exported = module.new_functions()();
+        let exported = match Self::open(path) {
+            Ok(module) => module.new_functions()(),
+            Err(rust_abi_error) => match crate::cabi::load(path)? {
+                Some(functions) => functions.into(),
+                // Not a C-ABI library either, so the original failure is the
+                // one worth reporting.
+                None => return Err(rust_abi_error),
+            },
+        };
         if exported.is_empty() {
             return Err("library exports no functions".to_string());
         }

@@ -273,7 +273,7 @@ Ok(reply::proceed())
 | Hook names a function that isn't loaded | **500**, and the operation does not run. Hooks fail **closed** — silently skipping one would bypass validation. The server also logs this loudly at boot. |
 | Handler returns `Err(msg)` | **400** with `msg`. |
 | Hook returns invalid JSON | **500**. |
-| Hook panics | **500**. |
+| Hook panics | **500**, and the request is aborted — but the server keeps running. The panic message and backtrace go to the log; the caller gets a generic message, since a panic tends to name internals. See [when a function panics](functions.md#when-a-function-panics). |
 | Unknown key in `[hooks]` | The resource fails to load, so a typo like `befor_create` is caught at boot instead of silently never firing. |
 
 Boot logs one line per resolved hook:

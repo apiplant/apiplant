@@ -1,21 +1,28 @@
 //! Compiling function sources into loadable libraries.
 //!
-//! An app keeps its functions as **plain `.rs` files** next to their config:
+//! An app keeps its functions as **single source files** next to their config:
 //!
 //! ```text
 //! my-app/functions/
-//! ├── greet.rs          # source: one file, written as if it were a lib.rs
+//! ├── greet.rs          # Rust: one file, written as if it were a lib.rs
 //! ├── greet.toml        # that function's config
-//! └── libgreet.so       # ← produced by `apiplant build`
+//! ├── libgreet.so       # ← produced by `apiplant build`
+//! ├── hello.c           # C: implements the four `apiplant.h` symbols
+//! └── libhello.so       # ← also produced by `apiplant build`
 //! ```
 //!
-//! `apiplant build` scaffolds a throwaway cdylib crate around each source file
-//! and hands it to `cargo`, then copies the resulting library back beside the
-//! source. The scaffolding lives in `.apiplant-build/` inside the app directory,
-//! with one shared `target/` so dependencies are compiled once and rebuilds stay
-//! incremental.
+//! For a `.rs` source, `apiplant build` scaffolds a throwaway cdylib crate around
+//! the file and hands it to `cargo`, then copies the resulting library back beside
+//! the source. The scaffolding lives in `.apiplant-build/` inside the app
+//! directory, with one shared `target/` so dependencies are compiled once and
+//! rebuilds stay incremental.
 //!
-//! The only requirement is a working `cargo` on the machine.
+//! A `.c` source needs no scaffolding — it is a single translation unit exporting
+//! the C ABI symbols from `apiplant.h`, so `cc` goes straight from source to
+//! shared library.
+//!
+//! The only requirement is whichever toolchain the app's sources need: `cargo`
+//! for Rust, `cc` for C.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -63,13 +70,44 @@ lto = "fat"
 codegen-units = 1
 "#;
 
+/// What a source file is written in, which decides how it gets compiled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Language {
+    /// `.rs` — wrapped in a generated cdylib crate and handed to cargo.
+    Rust,
+    /// `.c` — compiled straight to a shared library by the system C compiler,
+    /// against the plain C ABI declared in `apiplant.h`.
+    C,
+}
+
+impl Language {
+    /// The language for a file extension, or `None` if it isn't a source file.
+    fn for_extension(ext: &str) -> Option<Language> {
+        match ext {
+            "rs" => Some(Language::Rust),
+            "c" => Some(Language::C),
+            _ => None,
+        }
+    }
+
+    /// What to call the toolchain in an error message.
+    fn tool(self) -> &'static str {
+        match self {
+            Language::Rust => "cargo",
+            Language::C => "a C compiler",
+        }
+    }
+}
+
 /// One function source found in an app's `functions/` directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {
-    /// The `.rs` file itself.
+    /// The source file itself.
     pub path: PathBuf,
     /// Crate name derived from the file stem (`post-hooks.rs` → `post_hooks`).
     pub crate_name: String,
+    /// How to compile it.
+    pub language: Language,
 }
 
 impl Source {
@@ -116,20 +154,26 @@ pub fn discover(functions_dir: &Path) -> Result<Vec<Source>> {
     let mut sources: Vec<Source> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        let Some(language) = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(Language::for_extension)
+        else {
             continue;
-        }
+        };
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
         sources.push(Source {
             crate_name: crate_name(stem),
             path,
+            language,
         });
     }
     sources.sort_by(|a, b| a.crate_name.cmp(&b.crate_name));
 
-    // Two files that differ only in punctuation would fight over one .so.
+    // Two files that differ only in punctuation — or a `greet.rs` beside a
+    // `greet.c` — would fight over one .so.
     for pair in sources.windows(2) {
         if pair[0].crate_name == pair[1].crate_name {
             bail!(
@@ -228,11 +272,22 @@ pub fn build(app_dir: &Path, options: Options) -> Result<Vec<String>> {
         return Ok(Vec::new());
     }
 
-    let function_crate = function_crate_path()?.canonicalize().ok().unwrap_or_else(
-        || function_crate_path().expect("checked above"),
-    );
     let build_dir = app_dir.join(BUILD_DIR);
     let target_dir = build_dir.join("target");
+
+    // Only Rust sources need the `apiplant-function` crate, so an app made
+    // entirely of C functions must not fail for want of a checkout to build
+    // against — it compiles against the header instead.
+    let function_crate = if sources.iter().any(|s| s.language == Language::Rust) {
+        Some(
+            function_crate_path()?
+                .canonicalize()
+                .ok()
+                .unwrap_or_else(|| function_crate_path().expect("checked above")),
+        )
+    } else {
+        None
+    };
 
     let mut built = Vec::new();
     for source in &sources {
@@ -243,18 +298,35 @@ pub fn build(app_dir: &Path, options: Options) -> Result<Vec<String>> {
         }
 
         tracing::info!(function = %source.crate_name, "compiling");
-        compile_one(source, &build_dir, &target_dir, &function_crate, options)?;
+        match source.language {
+            Language::Rust => {
+                let function_crate = function_crate.as_deref().expect("resolved above");
+                compile_rust(source, &build_dir, &target_dir, function_crate, options)?;
 
-        let profile = if options.release { "release" } else { "debug" };
-        let produced = target_dir.join(profile).join(source.library_name());
-        if !produced.is_file() {
+                let profile = if options.release { "release" } else { "debug" };
+                let produced = target_dir.join(profile).join(source.library_name());
+                if !produced.is_file() {
+                    bail!(
+                        "cargo reported success but {} was not produced",
+                        produced.display()
+                    );
+                }
+                std::fs::copy(&produced, &library).with_context(|| {
+                    format!("copying {} to {}", produced.display(), library.display())
+                })?;
+            }
+            // The C compiler writes straight to the destination, so there is no
+            // scaffold crate and nothing to copy afterwards.
+            Language::C => compile_c(source, &library, options)?,
+        }
+
+        if !library.is_file() {
             bail!(
-                "cargo reported success but {} was not produced",
-                produced.display()
+                "{} reported success but {} was not produced",
+                source.language.tool(),
+                library.display()
             );
         }
-        std::fs::copy(&produced, &library)
-            .with_context(|| format!("copying {} to {}", produced.display(), library.display()))?;
         tracing::info!(
             function = %source.crate_name,
             library = %library.display(),
@@ -265,8 +337,82 @@ pub fn build(app_dir: &Path, options: Options) -> Result<Vec<String>> {
     Ok(built)
 }
 
-/// Scaffold and compile one source file.
-fn compile_one(
+/// The directory holding `apiplant.h`, for compiling C functions.
+///
+/// Mirrors [`function_crate_path`]: an explicit override first, else the checkout
+/// this binary was built from.
+fn abi_include_path() -> Result<PathBuf> {
+    if let Some(configured) = std::env::var_os("APIPLANT_ABI_INCLUDE") {
+        let path = PathBuf::from(configured);
+        if !path.join("apiplant.h").is_file() {
+            bail!(
+                "APIPLANT_ABI_INCLUDE points at {}, which has no apiplant.h",
+                path.display()
+            );
+        }
+        return Ok(path);
+    }
+
+    let compiled_from = Path::new(env!("CARGO_MANIFEST_DIR")).join("../apiplant-abi/include");
+    if compiled_from.join("apiplant.h").is_file() {
+        return Ok(compiled_from);
+    }
+
+    bail!(
+        "cannot find `apiplant.h` to compile C functions against.\n\
+         Set APIPLANT_ABI_INCLUDE to the directory holding it."
+    )
+}
+
+/// Compile one `.c` source straight into `library`.
+///
+/// No scaffolding: a C function is a single translation unit implementing the
+/// four exported symbols, so the compiler goes from source to shared library in
+/// one step. `CC` and `CFLAGS` are honoured so an author can point at a
+/// different compiler or add their own includes and libraries.
+fn compile_c(source: &Source, library: &Path, options: Options) -> Result<()> {
+    let include = abi_include_path()?;
+    let mut cc = Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".into()));
+
+    cc.arg(if cfg!(target_os = "macos") {
+        "-dynamiclib"
+    } else {
+        "-shared"
+    })
+    // Required for a shared library on essentially every ELF target.
+    .arg("-fPIC")
+    .arg("-I")
+    .arg(&include);
+
+    if options.release {
+        cc.arg("-O2");
+    } else {
+        // Keep symbols and line numbers so a crash in a C function is legible;
+        // the result is still tiny compared with a Rust cdylib.
+        cc.arg("-O0").arg("-g");
+    }
+
+    if let Ok(flags) = std::env::var("CFLAGS") {
+        cc.args(flags.split_whitespace());
+    }
+
+    cc.arg("-o").arg(library).arg(&source.path);
+
+    let status = cc.status().with_context(|| {
+        "failed to run the C compiler — apiplant compiles `functions/*.c` with it, \
+         so `cc` must be installed and on PATH (or set CC)"
+    })?;
+    if !status.success() {
+        bail!(
+            "compiling {} failed; see the compiler's output above",
+            source.path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Scaffold and compile one Rust source file.
+fn compile_rust(
     source: &Source,
     build_dir: &Path,
     target_dir: &Path,
@@ -363,18 +509,53 @@ mod tests {
     }
 
     #[test]
-    fn discover_finds_only_rust_sources_in_a_stable_order() {
+    fn discover_finds_only_sources_in_a_stable_order() {
         let dir = temp_dir("discover");
         let functions = dir.join("functions");
         std::fs::write(functions.join("greet.rs"), "// fn").unwrap();
         std::fs::write(functions.join("audit.rs"), "// fn").unwrap();
         std::fs::write(functions.join("greet.toml"), "x = 1").unwrap();
         std::fs::write(functions.join("libold.so"), "binary").unwrap();
+        // Not sources: a header a C function includes, and its config.
+        std::fs::write(functions.join("shared.h"), "/* h */").unwrap();
 
         let found = discover(&functions).unwrap();
         let names: Vec<_> = found.iter().map(|s| s.crate_name.as_str()).collect();
         assert_eq!(names, vec!["audit", "greet"]);
         assert_eq!(found[1].library_name(), library_name("greet"));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// C and Rust functions live side by side in one `functions/` directory, and
+    /// each source has to be routed to the right toolchain.
+    #[test]
+    fn discover_tags_each_source_with_its_language() {
+        let dir = temp_dir("languages");
+        let functions = dir.join("functions");
+        std::fs::write(functions.join("greet.rs"), "// fn").unwrap();
+        std::fs::write(functions.join("hello.c"), "/* fn */").unwrap();
+
+        let found = discover(&functions).unwrap();
+        let languages: Vec<_> = found.iter().map(|s| (s.crate_name.as_str(), s.language)).collect();
+        assert_eq!(
+            languages,
+            vec![("greet", Language::Rust), ("hello", Language::C)]
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `greet.rs` and `greet.c` would both produce `libgreet.so`.
+    #[test]
+    fn discover_rejects_a_rust_and_a_c_source_with_the_same_stem() {
+        let dir = temp_dir("cross-collide");
+        let functions = dir.join("functions");
+        std::fs::write(functions.join("greet.rs"), "// fn").unwrap();
+        std::fs::write(functions.join("greet.c"), "/* fn */").unwrap();
+
+        let err = discover(&functions).unwrap_err().to_string();
+        assert!(err.contains("rename one"), "{err}");
 
         std::fs::remove_dir_all(dir).unwrap();
     }

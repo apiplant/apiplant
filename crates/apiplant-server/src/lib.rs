@@ -11,6 +11,7 @@
 mod auth_routes;
 mod crud;
 mod function_routes;
+pub mod cabi;
 pub mod functions;
 pub mod hooks;
 mod openapi;

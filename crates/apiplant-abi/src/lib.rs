@@ -31,6 +31,8 @@
 // impls that trip these lints; the naming/scoping conventions are the crate's.
 #![allow(non_camel_case_types, non_local_definitions)]
 
+pub mod c;
+
 use abi_stable::{
     declare_root_module_statics,
     library::RootModule,
@@ -146,6 +148,24 @@ pub trait HostApi: Send + Sync {
     fn hook(&self) -> RString;
 }
 
+/// Marks an [`Function::invoke`] error as *the function's own fault* — a panic
+/// or an internal fault — rather than a complaint about the caller's input.
+///
+/// The error channel is a bare string, so without a marker the host cannot tell
+/// "you sent me nonsense" (a `400`, and the message is safe to echo back) from
+/// "I broke" (a `500`, and the message may name internals the caller has no
+/// business seeing). A function prefixes the latter with this constant; the host
+/// strips it, logs the detail at `ERROR`, and answers with a generic `500`.
+///
+/// The leading `\x01` cannot occur in a JSON string or a `Display` message
+/// anyone writes deliberately, so an unprefixed error is unambiguous — which is
+/// what keeps this backward compatible with functions that never set it.
+///
+/// Functions built with `apiplant-function` get this for free: its generated
+/// `invoke` catches unwinding panics and prefixes them. Functions written
+/// against the raw ABI (in C, Zig, Go, …) should do the same.
+pub const INTERNAL_ERROR_PREFIX: &str = "\x01apiplant-internal:";
+
 /// A loaded function instance. Constructed once per library via
 /// [`FunctionMod::new_functions`] and reused across requests, so it must be
 /// `Send + Sync`.
@@ -156,7 +176,11 @@ pub trait Function: Send + Sync {
 
     /// Handle a single request. `input` is the request body as JSON; the return
     /// value is the JSON response body, or an error message the host turns into
-    /// a `400`/`500`.
+    /// a `400` — or a `500` when prefixed with [`INTERNAL_ERROR_PREFIX`].
+    ///
+    /// **Must not unwind.** This crosses an `extern "C"` boundary, so a panic
+    /// escaping it aborts the whole host process rather than failing the one
+    /// request; catch panics here and return [`INTERNAL_ERROR_PREFIX`] instead.
     fn invoke(
         &self,
         host: HostApi_TO<'_, abi_stable::std_types::RBox<()>>,

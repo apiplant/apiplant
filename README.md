@@ -267,6 +267,12 @@ with its own name and config. See
 [`examples/07-functions`](examples/07-functions) and the
 [Functions guide](docs/functions.md).
 
+A panic in a handler fails only that request (`500`) rather than taking the
+server down, and functions do not have to be Rust: a library can instead export
+[four plain C symbols](crates/apiplant-abi/include/apiplant.h), which is how you
+write one in C, Zig or Go. `apiplant build` compiles `functions/*.c` alongside
+the Rust sources — see [`examples/09-c-functions`](examples/09-c-functions).
+
 ## Lifecycle hooks: custom logic on CRUD
 
 Functions can also run *inside* a resource's request lifecycle. Point each event
@@ -361,7 +367,7 @@ lifecycle hooks, one concept at a time.
 
 ```
 apiplant [run] [APP_DIR]     serve the app (default command)
-apiplant build [APP_DIR]     compile functions/*.rs into loadable libraries
+apiplant build [APP_DIR]     compile functions/*.rs and *.c into libraries
 apiplant check [APP_DIR]     load and validate the app, then exit
 ```
 
