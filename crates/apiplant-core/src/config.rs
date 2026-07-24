@@ -179,3 +179,90 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let mut dir = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        dir.push(format!("apiplant-config-{label}-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn missing_main_toml_uses_defaults() {
+        let dir = temp_dir("defaults");
+        let config = Config::load(&dir).unwrap();
+
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.base_path, "");
+        assert_eq!(config.database.resolved_url(), "postgres://postgres:postgres@localhost:5432/apiplant");
+        assert!(config.auth.allow_registration);
+        assert!(config.docs.enabled);
+        assert_eq!(config.docs.path, "/docs");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn load_normalises_paths_and_prefers_explicit_database_url() {
+        let dir = temp_dir("normalise");
+        fs::write(
+            dir.join("main.toml"),
+            r#"
+[server]
+base_path = "api/"
+workers = 8
+
+[database]
+url = "postgres://db.example/custom"
+host = "ignored"
+port = 9999
+name = "ignored"
+user = "ignored"
+password = "ignored"
+
+[docs]
+path = "swagger"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load(&dir).unwrap();
+
+        assert_eq!(config.server.base_path, "/api");
+        assert_eq!(config.server.workers, Some(8));
+        assert_eq!(config.docs.path, "/swagger");
+        assert_eq!(config.database.resolved_url(), "postgres://db.example/custom");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn resolved_url_is_assembled_from_parts_when_url_is_empty() {
+        let config = DatabaseConfig {
+            url: String::new(),
+            host: "db".into(),
+            port: 5433,
+            name: "plants".into(),
+            user: "alice".into(),
+            password: "secret".into(),
+            max_connections: 16,
+            auto_migrate: true,
+        };
+
+        assert_eq!(
+            config.resolved_url(),
+            "postgres://alice:secret@db:5433/plants"
+        );
+    }
+}

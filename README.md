@@ -1,4 +1,4 @@
-# apiplant 🌱
+# apiplant
 
 **Ship one executable. Point it at a directory. Get a database-backed REST API.**
 

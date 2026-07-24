@@ -39,8 +39,9 @@ timestamps. `expand` also works on the single read endpoint.
 * Rows are flat JSON objects: `id`, your fields, and `created_at`/`updated_at`.
 * `hidden` fields never appear.
 * Timestamps are RFC 3339 strings; ids and references are UUID strings.
-* On create, server-managed columns (`id`, timestamps, owner column) are set for
-  you; supplying them is unnecessary (owner is always overwritten).
+* On create, server-managed columns (`id`, timestamps, owner column, and on
+  org-scoped resources `organization_id`) are set for you; supplying them is
+  unnecessary (owner and organisation are always overwritten).
 
 ## Authentication
 

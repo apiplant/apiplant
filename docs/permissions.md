@@ -34,21 +34,21 @@ The same `list` policy also governs the nested `GET /parent/{id}/res` endpoint
 | `public` | anyone, no authentication |
 | `authenticated` | any authenticated caller (session token or API key) |
 | `owner` | authenticated **and** the row belongs to them (see [Ownership](#ownership)) |
-| `role:<name>` | authenticated **and** holding the named role |
+| `role:<name>` | authenticated **and** holding the named role in the active organisation |
 | `private` | nobody — the endpoint isn't exposed (returns 404 / omitted from docs) |
 
 ## Defaults
 
 If you omit `[permissions]` entirely, or any individual key, these safe defaults
-apply — **readable by anyone, writable only when authenticated**:
+apply — **member-only within the active organisation**:
 
 | Action | Default |
 |--------|---------|
-| `list` | `public` |
-| `read` | `public` |
-| `create` | `authenticated` |
-| `update` | `authenticated` |
-| `delete` | `authenticated` |
+| `list` | `member` |
+| `read` | `member` |
+| `create` | `member` |
+| `update` | `member` |
+| `delete` | `member` |
 
 ## Decision model
 
@@ -88,22 +88,17 @@ delete = "role:admin"
 
 ## Roles
 
-Roles are just rows in the built-in `role` resource. A user references one via
-`role_id`. When a user logs in, their role name is baked into their session
-token; API-key callers get the role resolved by join. A `role:admin` policy
-passes only when the caller's role name equals `admin`.
+Roles live on the built-in `membership` resource, not on the user globally. A
+`role:admin` policy therefore means **admin of the active organisation**.
 
-Assigning roles is ordinary data management:
+When a request is authorised against an org-scoped resource, apiplant:
 
-```sql
-INSERT INTO apiplant_role (name) VALUES ('admin');
-UPDATE apiplant_user SET role_id =
-  (SELECT id FROM apiplant_role WHERE name = 'admin')
-  WHERE email = 'you@example.com';
-```
+1. resolves the active organisation,
+2. checks that the caller is a member of it,
+3. compares the membership's `role` to the requested `role:<name>`.
 
-(By default only an existing admin can create roles or assign them via the API —
-bootstrap the first admin with SQL.)
+That means the same user can be an admin in one organisation and a plain member
+in another. See [Multitenancy](multitenancy.md#roles-are-per-organisation).
 
 ## Worked examples
 
@@ -141,7 +136,8 @@ delete = "role:admin"
 
 * `Authorization: Bearer <jwt>` — a session token from login/register.
 * `Authorization: ApiKey <key>` or `X-Api-Key: <key>` — an API key; the request
-  then acts **as the key's owning user**, with that user's role.
+  then acts **as the key's owning user**, with that user's memberships and
+  permissions.
 * No/invalid credentials ⇒ anonymous (only `public` actions succeed).
 
 See [Authentication](authentication.md) for details.

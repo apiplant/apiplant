@@ -1,0 +1,909 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use apiplant_auth::Authenticator;
+use apiplant_core::App;
+use apiplant_db::Db;
+use ntex::http::header::CONTENT_TYPE;
+use ntex::web::{self, guard, test, App as WebApp};
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+use super::auth_routes;
+use super::crud;
+use super::docs_page;
+use super::functions::FunctionRegistry;
+use super::health;
+use super::openapi;
+use super::openapi_spec;
+use super::state::AppState;
+
+const ADMIN_DB_URL: &str = "postgres://postgres@127.0.0.1:55432/postgres";
+
+macro_rules! init_http_app {
+    ($state:expr) => {{
+        let state = $state.clone();
+        let base_path = state.app.config.server.base_path.clone();
+        let docs_enabled = state.app.config.docs.enabled;
+        let docs_path = state.app.config.docs.path.clone();
+        let domain = state.app.config.server.domain.clone();
+
+        test::init_service(WebApp::new().state(state.clone()).service({
+            let mut scope = web::scope(base_path.as_str());
+            if let Some(d) = &domain {
+                scope = scope.guard(guard::Host(d.clone()));
+            }
+            if docs_enabled {
+                scope = scope
+                    .route("/openapi.json", web::get().to(openapi_spec))
+                    .route(&docs_path, web::get().to(docs_page));
+            }
+            scope
+                .route("/_health", web::get().to(health))
+                .route("/auth/register", web::post().to(auth_routes::register))
+                .route("/auth/login", web::post().to(auth_routes::login))
+                .route("/auth/apikeys", web::post().to(auth_routes::create_api_key))
+                .route("/functions/{name}", web::route().to(super::function_routes::invoke))
+                .service(
+                    web::resource("/{resource}")
+                        .route(web::get().to(crud::list))
+                        .route(web::post().to(crud::create)),
+                )
+                .service(
+                    web::resource("/{resource}/{id}")
+                        .route(web::get().to(crud::get))
+                        .route(web::patch().to(crud::update))
+                        .route(web::put().to(crud::update))
+                        .route(web::delete().to(crud::delete)),
+                )
+                .route(
+                    "/{parent}/{id}/{child}",
+                    web::get().to(crud::nested_list),
+                )
+        }))
+        .await
+    }};
+}
+
+fn temp_dir(label: &str) -> PathBuf {
+    let mut dir = std::env::temp_dir();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    dir.push(format!(
+        "apiplant-server-test-{label}-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir_all(dir.join("models")).unwrap();
+    dir
+}
+
+fn write_files(root: &Path, files: &[(&str, &str)]) {
+    for (relative, contents) in files {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
+}
+
+struct TempDatabase {
+    name: String,
+    url: String,
+}
+
+impl TempDatabase {
+    async fn create(label: &str) -> Self {
+        let safe_label = label.replace('-', "_");
+        let name = format!("apiplant_{}_{}", safe_label, Uuid::new_v4().simple());
+        let admin = Db::connect(ADMIN_DB_URL, 4).await.unwrap();
+        admin
+            .raw_json(&format!("CREATE DATABASE {name}"), &[])
+            .await
+            .unwrap();
+
+        let url = format!("postgres://postgres@127.0.0.1:55432/{name}");
+        let db = Db::connect(&url, 4).await.unwrap();
+        db.raw_json("CREATE EXTENSION IF NOT EXISTS pgcrypto", &[])
+            .await
+            .unwrap();
+
+        TempDatabase { name, url }
+    }
+
+    async fn cleanup(&self) {
+        let admin = Db::connect(ADMIN_DB_URL, 4).await.unwrap();
+        let _ = admin
+            .raw_json(
+                &format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", self.name),
+                &[],
+            )
+            .await;
+    }
+}
+
+async fn load_state(root: &Path) -> AppState {
+    let app = App::load(root).unwrap();
+    let db = Db::connect(&app.config.database.resolved_url(), 8)
+        .await
+        .unwrap();
+    apiplant_db::migrate(db.connection(), &app).await.unwrap();
+
+    let functions = FunctionRegistry::load_dir(&app.functions_dir);
+    let spec = openapi::build(&app, &functions);
+
+    AppState {
+        app: Arc::new(app),
+        db,
+        auth: Authenticator::new(b"test-secret".to_vec(), 3600),
+        functions: Arc::new(functions),
+        openapi_json: Arc::new(serde_json::to_string(&spec).unwrap()),
+        docs_html: Arc::new(openapi::swagger_ui_html(
+            "/api/openapi.json",
+            "Test API",
+        )),
+    }
+}
+
+async fn read_json(resp: ntex::web::WebResponse) -> Value {
+    serde_json::from_slice(&test::read_body(resp).await).unwrap()
+}
+
+fn req_json(method: &str, uri: &str, body: Value) -> ntex::http::Request {
+    let req = match method {
+        "GET" => test::TestRequest::get(),
+        "POST" => test::TestRequest::post(),
+        "PATCH" => test::TestRequest::patch(),
+        "PUT" => test::TestRequest::put(),
+        "DELETE" => test::TestRequest::delete(),
+        other => panic!("unsupported method {other}"),
+    };
+    req.uri(uri)
+        .header(CONTENT_TYPE, "application/json")
+        .set_payload(body.to_string())
+        .to_request()
+}
+
+fn bearer(req: test::TestRequest, token: &str) -> test::TestRequest {
+    req.header("authorization", format!("Bearer {token}"))
+}
+
+#[ntex::test]
+async fn register_login_and_api_keys_work_with_custom_identity_fields() {
+    let db = TempDatabase::create("auth").await;
+    let root = temp_dir("auth");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    r#"
+[server]
+base_path = "/api"
+
+[database]
+url = "{}"
+"#,
+                    db.url
+                ),
+            ),
+            (
+                "models/users.toml",
+                r#"
+[resource]
+name = "user"
+scope = "global"
+
+[permissions]
+list = "authenticated"
+read = "owner"
+create = "public"
+update = "owner"
+delete = "private"
+
+[auth]
+identity_field = "username"
+password_field = "password_hash"
+
+[fields.username]
+type = "string"
+required = true
+unique = true
+
+[fields.password_hash]
+type = "string"
+hidden = true
+
+[fields.display_name]
+type = "string"
+"#,
+            ),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let mut app = init_http_app!(state);
+
+    let resp = test::call_service(
+        &mut app,
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({"username":"alice","password":"hunter2","display_name":"Alice"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let registered = read_json(resp).await;
+    let token = registered["token"].as_str().unwrap().to_string();
+    let user_id = registered["user"]["id"].as_str().unwrap().to_string();
+    assert_eq!(registered["user"]["username"], "alice");
+    assert!(registered["user"].get("password_hash").is_none());
+
+    let resp = test::call_service(
+        &mut app,
+        req_json(
+            "POST",
+            "/api/auth/login",
+            json!({"username":"alice","password":"hunter2"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200);
+    let login = read_json(resp).await;
+    assert!(login["token"].as_str().unwrap().len() > 10);
+
+    let resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/auth/apikeys")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"name":"ci"}).to_string()),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let api_key = read_json(resp).await;
+    let plaintext = api_key["api_key"].as_str().unwrap();
+
+    let resp = test::call_service(
+        &mut app,
+        test::TestRequest::get()
+            .uri(&format!("/api/user/{user_id}"))
+            .header("x-api-key", plaintext)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200);
+    let via_x_header = read_json(resp).await;
+    assert_eq!(via_x_header["id"], user_id);
+    assert!(via_x_header.get("password_hash").is_none());
+
+    let resp = test::call_service(
+        &mut app,
+        test::TestRequest::get()
+            .uri(&format!("/api/user/{user_id}"))
+            .header("authorization", format!("ApiKey {plaintext}"))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn registration_can_be_disabled() {
+    let db = TempDatabase::create("auth-disabled").await;
+    let root = temp_dir("auth-disabled");
+    write_files(
+        &root,
+        &[(
+            "main.toml",
+            &format!(
+                r#"
+[server]
+base_path = "/api"
+
+[database]
+url = "{}"
+
+[auth]
+allow_registration = false
+"#,
+                db.url
+            ),
+        )],
+    );
+
+    let state = load_state(&root).await;
+    let mut app = init_http_app!(state);
+
+    let resp = test::call_service(
+        &mut app,
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({"email":"nobody@example.com","password":"pw"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 403);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn multitenancy_relationships_permissions_and_constraints_work_end_to_end() {
+    let db = TempDatabase::create("multi").await;
+    let root = temp_dir("multi");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    r#"
+[server]
+base_path = "/api"
+
+[database]
+url = "{}"
+"#,
+                    db.url
+                ),
+            ),
+            (
+                "models/post.toml",
+                r#"
+[resource]
+name = "post"
+
+[permissions]
+list = "member"
+read = "member"
+create = "member"
+update = "owner"
+delete = "role:admin"
+
+[fields.title]
+type = "string"
+required = true
+unique = true
+
+[fields.owner_id]
+type = "reference"
+references = "user"
+"#,
+            ),
+            (
+                "models/comment.toml",
+                r#"
+[resource]
+name = "comment"
+
+[permissions]
+list = "member"
+read = "member"
+create = "member"
+update = "owner"
+delete = "role:admin"
+
+[fields.body]
+type = "text"
+required = true
+
+[fields.post_id]
+type = "reference"
+references = "post"
+required = true
+on_delete = "cascade"
+
+[fields.owner_id]
+type = "reference"
+references = "user"
+"#,
+            ),
+            (
+                "models/plan.toml",
+                r#"
+[resource]
+name = "plan"
+scope = "global"
+
+[permissions]
+list = "public"
+read = "public"
+create = "private"
+update = "private"
+delete = "private"
+
+[fields.name]
+type = "string"
+"#,
+            ),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let mut app = init_http_app!(state);
+
+    let alice_reg = test::call_service(
+        &mut app,
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({"email":"alice@example.com","password":"pw"}),
+        ),
+    )
+    .await;
+    let alice = read_json(alice_reg).await;
+    let alice_token = alice["token"].as_str().unwrap().to_string();
+    let alice_id = alice["user"]["id"].as_str().unwrap().to_string();
+
+    let org_a_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/organization")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"name":"Acme","slug":"acme"}).to_string()),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(org_a_resp.status().as_u16(), 201);
+    let org_a = read_json(org_a_resp).await;
+    let org_a_id = org_a["id"].as_str().unwrap().to_string();
+
+    let post_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/post")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(
+                    json!({
+                        "title":"hello",
+                        "owner_id": Uuid::new_v4(),
+                        "organization_id": Uuid::new_v4()
+                    })
+                    .to_string(),
+                ),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(post_resp.status().as_u16(), 201);
+    let post = read_json(post_resp).await;
+    let post_id = post["id"].as_str().unwrap().to_string();
+    assert_eq!(post["owner_id"], alice_id);
+    assert_eq!(post["organization_id"], org_a_id);
+
+    let second_post_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/post")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"title":"later"}).to_string()),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(second_post_resp.status().as_u16(), 201);
+    let second_post = read_json(second_post_resp).await;
+    let second_post_id = second_post["id"].as_str().unwrap().to_string();
+
+    let duplicate_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/post")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"title":"hello"}).to_string()),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(duplicate_resp.status().as_u16(), 409);
+
+    let comment_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/comment")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"body":"nice","post_id":post_id}).to_string()),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(comment_resp.status().as_u16(), 201);
+
+    let bad_comment_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/comment")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"body":"oops","post_id":Uuid::new_v4()}).to_string()),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(bad_comment_resp.status().as_u16(), 400);
+
+    let paged_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::get().uri("/api/post?limit=1&offset=1"),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(paged_resp.status().as_u16(), 200);
+    let paged = read_json(paged_resp).await;
+    let page = paged.as_array().unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0]["id"], post_id);
+
+    let update_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::put()
+                .uri(&format!("/api/post/{post_id}"))
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"title":"hello-updated"}).to_string()),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(update_resp.status().as_u16(), 200);
+    let updated = read_json(update_resp).await;
+    assert_eq!(updated["title"], "hello-updated");
+
+    let bob_reg = test::call_service(
+        &mut app,
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({"email":"bob@example.com","password":"pw"}),
+        ),
+    )
+    .await;
+    let bob = read_json(bob_reg).await;
+    let bob_token = bob["token"].as_str().unwrap().to_string();
+    let bob_id = bob["user"]["id"].as_str().unwrap().to_string();
+
+    let org_b_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/organization")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"name":"Beta","slug":"beta"}).to_string()),
+            &bob_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(org_b_resp.status().as_u16(), 201);
+    let org_b = read_json(org_b_resp).await;
+    let org_b_id = org_b["id"].as_str().unwrap().to_string();
+
+    let isolated_resp = test::call_service(
+        &mut app,
+        bearer(test::TestRequest::get().uri("/api/post"), &bob_token).to_request(),
+    )
+    .await;
+    assert_eq!(isolated_resp.status().as_u16(), 200);
+    assert_eq!(read_json(isolated_resp).await, json!([]));
+
+    let plan_resp = test::call_service(
+        &mut app,
+        test::TestRequest::get().uri("/api/plan").to_request(),
+    )
+    .await;
+    assert_eq!(plan_resp.status().as_u16(), 200);
+    assert_eq!(read_json(plan_resp).await, json!([]));
+
+    let membership_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/membership")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"user_id":bob_id,"role":"member"}).to_string()),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(membership_resp.status().as_u16(), 201);
+    let membership = read_json(membership_resp).await;
+    assert_eq!(membership["organization_id"], org_a_id);
+
+    let multi_org_resp = test::call_service(
+        &mut app,
+        bearer(test::TestRequest::get().uri("/api/post"), &bob_token).to_request(),
+    )
+    .await;
+    assert_eq!(multi_org_resp.status().as_u16(), 403);
+    assert_eq!(
+        read_json(multi_org_resp).await["error"],
+        "select an organisation with the X-Organization header"
+    );
+
+    let org_a_posts_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::get()
+                .uri("/api/post")
+                .header("x-organization", org_a_id.as_str()),
+            &bob_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(org_a_posts_resp.status().as_u16(), 200);
+    let org_a_posts = read_json(org_a_posts_resp).await;
+    assert_eq!(org_a_posts.as_array().unwrap().len(), 2);
+
+    let bob_update_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::patch()
+                .uri(&format!("/api/post/{post_id}"))
+                .header("x-organization", org_a_id.as_str())
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"title":"nope"}).to_string()),
+            &bob_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(bob_update_resp.status().as_u16(), 404);
+
+    let bob_membership_write_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/membership")
+                .header("x-organization", org_a_id.as_str())
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"user_id":alice_id,"role":"member"}).to_string()),
+            &bob_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(bob_membership_write_resp.status().as_u16(), 403);
+
+    let expand_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::get()
+                .uri(&format!("/api/comment?expand=post,owner&post_id={post_id}")),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(expand_resp.status().as_u16(), 200);
+    let expanded = read_json(expand_resp).await;
+    let comment = &expanded.as_array().unwrap()[0];
+    assert_eq!(comment["post"]["id"], post_id);
+    assert_eq!(comment["owner"]["id"], alice_id);
+    assert!(comment["owner"].get("password_hash").is_none());
+
+    let nested_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::get().uri(&format!("/api/post/{post_id}/comment")),
+            &alice_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(nested_resp.status().as_u16(), 200);
+    assert_eq!(read_json(nested_resp).await.as_array().unwrap().len(), 1);
+
+    let org_b_posts_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::get()
+                .uri("/api/post")
+                .header("x-organization", org_b_id.as_str()),
+            &bob_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(org_b_posts_resp.status().as_u16(), 200);
+    assert_eq!(read_json(org_b_posts_resp).await, json!([]));
+
+    assert_ne!(second_post_id, post_id);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn docs_and_host_filtering_work() {
+    let db = TempDatabase::create("docs").await;
+    let root = temp_dir("docs");
+    write_files(
+        &root,
+        &[(
+            "main.toml",
+            &format!(
+                r#"
+[server]
+base_path = "/api"
+domain = "api.example.test"
+
+[database]
+url = "{}"
+
+[docs]
+title = "Doc Test"
+"#,
+                db.url
+            ),
+        )],
+    );
+
+    let state = load_state(&root).await;
+    let mut app = init_http_app!(state);
+
+    let resp = test::call_service(
+        &mut app,
+        test::TestRequest::get().uri("/api/_health").to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 404);
+
+    let resp = test::call_service(
+        &mut app,
+        test::TestRequest::get()
+            .uri("/api/_health")
+            .header("host", "api.example.test")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(read_json(resp).await["status"], "ok");
+
+    let spec_resp = test::call_service(
+        &mut app,
+        test::TestRequest::get()
+            .uri("/api/openapi.json")
+            .header("host", "api.example.test")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(spec_resp.status().as_u16(), 200);
+    let spec = read_json(spec_resp).await;
+    assert_eq!(spec["info"]["title"], "Doc Test");
+    assert!(spec["paths"]["/auth/login"].is_object());
+
+    let docs_resp = test::call_service(
+        &mut app,
+        test::TestRequest::get()
+            .uri("/api/docs")
+            .header("host", "api.example.test")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(docs_resp.status().as_u16(), 200);
+    let body = String::from_utf8(test::read_body(docs_resp).await.to_vec()).unwrap();
+    assert!(body.contains("persistAuthorization"));
+    assert!(body.contains("/api/openapi.json"));
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn migrations_are_additive_for_existing_rows() {
+    let db = TempDatabase::create("migrate").await;
+    let root = temp_dir("migrate");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    r#"
+[database]
+url = "{}"
+"#,
+                    db.url
+                ),
+            ),
+            (
+                "models/note.toml",
+                r#"
+[resource]
+name = "note"
+scope = "global"
+
+[fields.title]
+type = "string"
+required = true
+"#,
+            ),
+        ],
+    );
+
+    let app_v1 = App::load(&root).unwrap();
+    let db_conn = Db::connect(&db.url, 4).await.unwrap();
+    apiplant_db::migrate(db_conn.connection(), &app_v1)
+        .await
+        .unwrap();
+    let note_v1 = app_v1.resources.get("note").unwrap();
+    db_conn
+        .create(note_v1, &serde_json::Map::from_iter([(
+            "title".to_string(),
+            Value::String("first".into()),
+        )]))
+        .await
+        .unwrap();
+
+    write_files(
+        &root,
+        &[(
+            "models/note.toml",
+            r#"
+[resource]
+name = "note"
+scope = "global"
+
+[fields.title]
+type = "string"
+required = true
+
+[fields.status]
+type = "string"
+required = true
+default = "draft"
+"#,
+        )],
+    );
+
+    let app_v2 = App::load(&root).unwrap();
+    apiplant_db::migrate(db_conn.connection(), &app_v2)
+        .await
+        .unwrap();
+    apiplant_db::migrate(db_conn.connection(), &app_v2)
+        .await
+        .unwrap();
+
+    let note_v2 = app_v2.resources.get("note").unwrap();
+    let rows = db_conn.list(note_v2, &[], 10, 0).await.unwrap();
+    let row = &rows.as_array().unwrap()[0];
+    assert_eq!(row["title"], "first");
+    assert_eq!(row["status"], "draft");
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}

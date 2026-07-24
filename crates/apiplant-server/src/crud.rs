@@ -540,3 +540,141 @@ pub async fn delete(
         Err(e) => db_error(e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apiplant_auth::OrgMembership;
+
+    fn parse_resource(src: &str) -> Resource {
+        let resource: Resource = toml::from_str(src).unwrap();
+        resource.validate().unwrap();
+        resource
+    }
+
+    fn caller_with_org(access_org: Uuid, role: Option<&str>) -> Caller {
+        Caller {
+            principal: Some(Principal {
+                user_id: Uuid::new_v4(),
+                organizations: vec![OrgMembership {
+                    org_id: access_org,
+                    role: role.map(str::to_string),
+                }],
+            }),
+            active_org: Some(access_org),
+        }
+    }
+
+    #[test]
+    fn authorize_org_scoped_member_and_owner_filters() {
+        let org = Uuid::new_v4();
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "post"
+
+[fields.owner_id]
+type = "reference"
+references = "user"
+"#,
+        );
+
+        let caller = caller_with_org(org, Some("member"));
+        let member = authorize(&Access::Member, &caller, &resource).unwrap();
+        assert!(matches!(
+            &member[0],
+            Filter::Eq { column, .. } if column == "organization_id"
+        ));
+
+        let owner = authorize(&Access::Owner, &caller, &resource).unwrap();
+        assert_eq!(owner.len(), 2);
+        assert!(matches!(
+            &owner[1],
+            Filter::Eq { column, .. } if column == "owner_id"
+        ));
+    }
+
+    #[test]
+    fn authorize_global_resources_honours_special_organization_rules() {
+        let org_a = Uuid::new_v4();
+        let org_b = Uuid::new_v4();
+        let caller = Caller {
+            principal: Some(Principal {
+                user_id: Uuid::new_v4(),
+                organizations: vec![
+                    OrgMembership {
+                        org_id: org_a,
+                        role: Some("admin".into()),
+                    },
+                    OrgMembership {
+                        org_id: org_b,
+                        role: Some("member".into()),
+                    },
+                ],
+            }),
+            active_org: None,
+        };
+
+        let organization = parse_resource(apiplant_core::defaults::ORGANIZATION_TOML);
+        let plan = parse_resource(
+            r#"
+[resource]
+name = "plan"
+scope = "global"
+
+[fields.name]
+type = "string"
+"#,
+        );
+
+        let org_filters = authorize(&Access::Member, &caller, &organization).unwrap();
+        assert!(matches!(
+            &org_filters[0],
+            Filter::In { column, values } if column == "id" && values.len() == 2
+        ));
+
+        let admin_filters = authorize(&Access::Role("admin".into()), &caller, &organization).unwrap();
+        assert!(matches!(
+            &admin_filters[0],
+            Filter::In { column, values } if column == "id" && values.len() == 1
+        ));
+
+        let err = match authorize(&Access::Role("admin".into()), &caller, &plan) {
+            Ok(_) => panic!("role-gated global resource should be rejected"),
+            Err(err) => err,
+        };
+        assert_eq!(err.status().as_u16(), 403);
+    }
+
+    #[test]
+    fn field_filters_ignore_unknown_keys_and_validate_types() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "post"
+
+[fields.published]
+type = "boolean"
+
+[fields.views]
+type = "integer"
+"#,
+        );
+        let params = parse_query("published=true&views=3&ignored=x");
+        let filters = field_filters(&resource, &params).unwrap();
+        assert_eq!(filters.len(), 2);
+
+        let bad = parse_query("views=not-a-number");
+        let err = match field_filters(&resource, &bad) {
+            Ok(_) => panic!("bad filter should fail"),
+            Err(err) => err,
+        };
+        assert_eq!(err.status().as_u16(), 400);
+    }
+
+    #[test]
+    fn expand_list_parses_csv_relations() {
+        let params = parse_query("expand=post, owner ,,author");
+        assert_eq!(expand_list(&params), vec!["post", "owner", "author"]);
+    }
+}

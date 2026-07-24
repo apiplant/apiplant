@@ -189,3 +189,48 @@ async fn existing_columns(
     }
     Ok(set)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apiplant_core::schema::OnDelete;
+
+    fn field(ty: FieldType) -> Field {
+        Field {
+            ty,
+            references: None,
+            required: false,
+            unique: false,
+            hidden: false,
+            default: None,
+            max_length: None,
+            on_delete: Some(OnDelete::Restrict),
+        }
+    }
+
+    #[test]
+    fn column_type_honours_max_length_and_json_types() {
+        let mut string = field(FieldType::String);
+        string.max_length = Some(320);
+        assert_eq!(column_type(&string), "varchar(320)");
+
+        assert_eq!(column_type(&field(FieldType::Reference)), "uuid");
+        assert_eq!(column_type(&field(FieldType::Json)), "jsonb");
+        assert_eq!(column_type(&field(FieldType::Timestamp)), "timestamptz");
+    }
+
+    #[test]
+    fn default_clause_renders_scalars_and_escapes_strings() {
+        let mut text = field(FieldType::String);
+        text.default = Some(serde_json::json!("O'Hara"));
+        assert_eq!(default_clause(&text), " DEFAULT 'O''Hara'");
+
+        let mut number = field(FieldType::Integer);
+        number.default = Some(serde_json::json!(42));
+        assert_eq!(default_clause(&number), " DEFAULT 42");
+
+        let mut structured = field(FieldType::Json);
+        structured.default = Some(serde_json::json!({ "nested": true }));
+        assert_eq!(default_clause(&structured), "");
+    }
+}

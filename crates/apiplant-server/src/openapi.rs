@@ -685,3 +685,153 @@ fn pascal(s: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_app_dir(label: &str) -> std::path::PathBuf {
+        let mut dir = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        dir.push(format!("apiplant-openapi-{label}-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(dir.join("models")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn input_schema_excludes_hidden_owner_and_organization_fields() {
+        let resource: Resource = toml::from_str(
+            r#"
+[resource]
+name = "post"
+
+[fields.title]
+type = "string"
+required = true
+
+[fields.owner_id]
+type = "reference"
+references = "user"
+required = true
+
+[fields.organization_id]
+type = "reference"
+references = "organization"
+required = true
+
+[fields.secret]
+type = "string"
+hidden = true
+"#,
+        )
+        .unwrap();
+
+        let schema = resource_input_schema(&resource);
+        let props = schema.get("properties").unwrap().as_object().unwrap();
+        assert!(props.contains_key("title"));
+        assert!(!props.contains_key("owner_id"));
+        assert!(!props.contains_key("organization_id"));
+        assert!(!props.contains_key("secret"));
+        assert_eq!(schema["required"], json!(["title"]));
+    }
+
+    #[test]
+    fn build_emits_nested_paths_auth_routes_and_security() {
+        let dir = temp_app_dir("build");
+        fs::write(
+            dir.join("main.toml"),
+            r#"
+[server]
+base_path = "/api"
+
+[docs]
+title = "Test API"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("models/post.toml"),
+            r#"
+[resource]
+name = "post"
+
+[permissions]
+list = "member"
+read = "member"
+create = "member"
+update = "owner"
+delete = "role:admin"
+
+[fields.title]
+type = "string"
+required = true
+
+[fields.owner_id]
+type = "reference"
+references = "user"
+required = true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("models/comment.toml"),
+            r#"
+[resource]
+name = "comment"
+
+[fields.body]
+type = "text"
+required = true
+
+[fields.post_id]
+type = "reference"
+references = "post"
+required = true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("models/plan.toml"),
+            r#"
+[resource]
+name = "plan"
+scope = "global"
+
+[permissions]
+list = "public"
+read = "public"
+create = "private"
+update = "private"
+delete = "private"
+
+[fields.name]
+type = "string"
+"#,
+        )
+        .unwrap();
+
+        let app = App::load(&dir).unwrap();
+        let spec = build(&app, &FunctionRegistry::default());
+
+        assert_eq!(spec["info"]["title"], "Test API");
+        assert_eq!(spec["servers"][0]["url"], "/api");
+        assert!(spec["paths"]["/post"].get("get").is_some());
+        assert!(spec["paths"]["/post/{id}/comment"].get("get").is_some());
+        assert!(spec["paths"]["/auth/register"].get("post").is_some());
+        assert!(spec["components"]["securitySchemes"]["bearerAuth"].is_object());
+
+        assert!(spec["paths"]["/post"]["get"]["security"].is_array());
+        assert!(spec["paths"]["/plan"]["get"].get("security").is_none());
+        assert_eq!(
+            spec["paths"]["/post/{id}"]["delete"]["description"],
+            "Requires the `admin` role in the active organisation."
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

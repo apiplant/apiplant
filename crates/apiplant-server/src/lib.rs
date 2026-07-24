@@ -14,6 +14,8 @@ pub mod functions;
 mod openapi;
 mod response;
 mod state;
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 

@@ -31,8 +31,9 @@ my-app/
 
 * A **resource** (`models/post.toml`) becomes a Postgres table and a set of
   RESTful endpoints, each gated by a per-action **permission**.
-* `user`, `role`, `api_key` and `oauth_connection` resources exist by default and
-  can be extended by dropping a file with the same name.
+* `organization`, `membership`, `user`, `api_key` and `oauth_connection`
+  resources exist by default and can be extended by dropping a file with the
+  same name.
 * **Relationships** come from `reference` fields — enforced with real foreign
   keys, navigable via nested endpoints, and inlinable with `?expand=`.
 * **Functions** are separately-compiled libraries mounted as endpoints, talking

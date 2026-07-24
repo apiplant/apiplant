@@ -28,7 +28,7 @@ Enable/configure via [`[docs]`](configuration.md#docs). Both are on by default.
   request/response schemas** (registered as `Fn<Name>Input` / `Fn<Name>Output`
   components), so their bodies render as typed forms rather than opaque objects.
 * Each operation carries a `description` stating its permission
-  (e.g. *"Requires the `admin` role."*).
+  (e.g. *"Requires the `admin` role in the active organisation."*).
 
 ## Auth in the UI
 

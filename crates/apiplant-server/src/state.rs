@@ -107,6 +107,19 @@ impl AppState {
     /// 2. otherwise the caller's only organisation (if they have exactly one),
     /// 3. otherwise `None` (a multi-org caller must pick one).
     pub fn active_org(&self, req: &HttpRequest, principal: &Option<Principal>) -> Option<Uuid> {
+        resolve_active_org(req, principal)
+    }
+
+    /// Quoted-safe physical table name for a resource by logical name.
+    fn table(&self, resource: &str) -> Option<String> {
+        self.app
+            .resources
+            .get(resource)
+            .map(|r| format!("\"{}\"", r.table_name()))
+    }
+}
+
+fn resolve_active_org(req: &HttpRequest, principal: &Option<Principal>) -> Option<Uuid> {
         let principal = principal.as_ref()?;
         if let Some(raw) = req.headers().get("x-organization").and_then(|v| v.to_str().ok()) {
             let org = Uuid::parse_str(raw.trim()).ok()?;
@@ -116,13 +129,53 @@ impl AppState {
             return Some(principal.organizations[0].org_id);
         }
         None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ntex::web::test;
+
+    fn principal(orgs: &[(Uuid, Option<&str>)]) -> Principal {
+        Principal {
+            user_id: Uuid::new_v4(),
+            organizations: orgs
+                .iter()
+                .map(|(org_id, role)| OrgMembership {
+                    org_id: *org_id,
+                    role: role.map(str::to_string),
+                })
+                .collect(),
+        }
     }
 
-    /// Quoted-safe physical table name for a resource by logical name.
-    fn table(&self, resource: &str) -> Option<String> {
-        self.app
-            .resources
-            .get(resource)
-            .map(|r| format!("\"{}\"", r.table_name()))
+    #[test]
+    fn active_org_prefers_valid_header() {
+        let wanted = Uuid::new_v4();
+        let req = test::TestRequest::default()
+            .header("x-organization", wanted.to_string())
+            .to_http_request();
+        let caller = Some(principal(&[
+            (wanted, Some("admin")),
+            (Uuid::new_v4(), Some("member")),
+        ]));
+
+        assert_eq!(resolve_active_org(&req, &caller), Some(wanted));
+    }
+
+    #[test]
+    fn active_org_falls_back_to_only_membership_and_requires_selection_otherwise() {
+        let only = Uuid::new_v4();
+        let req = test::TestRequest::default().to_http_request();
+
+        let one_org = Some(principal(&[(only, Some("member"))]));
+        let multi_org = Some(principal(&[
+            (only, Some("member")),
+            (Uuid::new_v4(), Some("admin")),
+        ]));
+
+        assert_eq!(resolve_active_org(&req, &one_org), Some(only));
+        assert_eq!(resolve_active_org(&req, &multi_org), None);
+        assert_eq!(resolve_active_org(&req, &None), None);
     }
 }

@@ -135,10 +135,11 @@ disable `auto_migrate`).
 
 ## Built-in resources
 
-`user`, `role`, `api_key` and `oauth_connection` exist in every app with sensible
-defaults. Drop a `models/<name>.toml` with the same `name` to **replace** the
-default and add fields or change permissions — the framework keeps using it for
-auth, ownership and key lookup. See [Authentication](authentication.md).
+`organization`, `membership`, `user`, `api_key`, and `oauth_connection` exist in
+every app with sensible defaults. Drop a `models/<name>.toml` with the same
+`name` to **replace** the default and add fields or change permissions — the
+framework keeps using it for auth, ownership, org resolution, and key lookup.
+See [Authentication](authentication.md).
 
 ## Validation
 

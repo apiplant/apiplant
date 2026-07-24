@@ -1,15 +1,16 @@
 # Authentication & authorization
 
 apiplant ships a complete identity system built out of ordinary resources.
-`user`, `role`, `api_key` and `oauth_connection` exist by default; you can extend
-any of them by dropping a same-named file in `models/`.
+`organization`, `membership`, `user`, `api_key`, and `oauth_connection` exist by
+default; you can extend any of them by dropping a same-named file in `models/`.
 
 ## Built-in resources
 
 | Resource | Purpose | Key fields |
 |----------|---------|-----------|
-| `user` | accounts | `email` (unique), `password_hash` (hidden), `display_name`, `role_id → role` |
-| `role` | named roles for `role:` permissions | `name` (unique), `description` |
+| `organization` | tenants | `name`, `slug` (unique) |
+| `membership` | joins users to organisations, carrying a per-org role | `user_id → user`, `organization_id → organization`, `role` |
+| `user` | accounts | `email` (unique), `password_hash` (hidden), `display_name` |
 | `api_key` | long-lived credentials | `name`, `token_hash` (hidden, unique), `owner_id → user` |
 | `oauth_connection` | linked third-party identities | `provider`, `provider_user_id`, `owner_id → user` |
 
@@ -42,9 +43,6 @@ hidden = true
 # add your own fields freely:
 [fields.display_name]
 type = "string"
-[fields.role_id]
-type = "reference"
-references = "role"
 ```
 
 Defaults if you don't provide `models/users.toml`: `identity_field = "email"`,
@@ -79,8 +77,8 @@ POST /api/auth/login
 ```
 
 The identity property name is whatever `identity_field` is set to. Returns
-`{ "token": "..." }` on success, `401` otherwise. The token embeds the user's id
-and role name.
+`{ "token": "..." }` on success, `401` otherwise. The token embeds the user's id;
+organisation memberships are loaded fresh on each request.
 
 ### Issue an API key
 
@@ -101,23 +99,26 @@ once** — only its SHA-256 is stored (`token_hash`). Delete a key by removing i
 | `Authorization: ApiKey <key>` | An API key. |
 | `X-Api-Key: <key>` | An API key (equivalent; used by the Swagger UI). |
 
-An API key **authenticates as its owning user** — same identity, same role, same
-permissions. This means a key inherits everything the user can do.
+An API key **authenticates as its owning user** — same identity, same
+organisation memberships, same permissions. This means a key inherits everything
+the user can do.
 
 ## How it works under the hood
 
 * **Passwords**: argon2id with a random salt (`argon2` crate). Verification is
   constant-time.
-* **Sessions**: HMAC-signed JWTs (`jsonwebtoken`) carrying `sub` (user id),
-  `role`, and `exp`. Signed with `auth.jwt_secret`; lifetime `session_ttl_secs`.
+* **Sessions**: HMAC-signed JWTs (`jsonwebtoken`) carrying `sub` (user id) and
+  `exp`. Signed with `auth.jwt_secret`; lifetime `session_ttl_secs`.
+  Memberships are resolved fresh from the database on each request so role/org
+  changes take effect immediately.
 * **API keys**: random 32-byte tokens prefixed `apik_`, stored as SHA-256 for
   O(1) indexed lookup (argon2 would prevent lookup). Never recoverable.
 
 ## Roles
 
-A user's `role_id` points at a `role` row. The role **name** drives `role:<name>`
-permissions (see [Permissions](permissions.md#roles)). Bootstrap the first admin
-with SQL, then manage roles through the API.
+Roles are per-organisation. The built-in `membership` resource carries a
+member's `role`, so `role:admin` means **admin of the active organisation**.
+Create or update memberships through the API to assign roles.
 
 ## OAuth
 

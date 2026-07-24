@@ -326,3 +326,180 @@ macro_rules! function {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use abi_stable::sabi_trait::TD_Opaque;
+    use abi_stable::std_types::{RResult, RStr, RString};
+    use apiplant_abi::{HostApi, HostApi_TO, LogLevel};
+    use serde::{Deserialize, Serialize};
+    use std::sync::Mutex;
+
+    struct MockHost {
+        config_json: String,
+        principal_id: String,
+        query_result: Result<String, String>,
+        requests: Mutex<Vec<String>>,
+        logs: Mutex<Vec<(LogLevel, String)>>,
+    }
+
+    impl MockHost {
+        fn success(config_json: &str, principal_id: &str, response: serde_json::Value) -> Self {
+            Self {
+                config_json: config_json.into(),
+                principal_id: principal_id.into(),
+                query_result: Ok(response.to_string()),
+                requests: Mutex::new(Vec::new()),
+                logs: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl HostApi for MockHost {
+        fn query(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push(request.as_str().to_string());
+            match &self.query_result {
+                Ok(json) => RResult::ROk(RString::from(json.as_str())),
+                Err(err) => RResult::RErr(RString::from(err.as_str())),
+            }
+        }
+
+        fn log(&self, level: LogLevel, message: RStr<'_>) {
+            self.logs
+                .lock()
+                .unwrap()
+                .push((level, message.as_str().to_string()));
+        }
+
+        fn config(&self) -> RString {
+            self.config_json.clone().into()
+        }
+
+        fn principal_id(&self) -> RString {
+            self.principal_id.clone().into()
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct Config {
+        greeting: String,
+    }
+
+    impl Default for Config {
+        fn default() -> Self {
+            Self {
+                greeting: "Hello".into(),
+            }
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct Input {
+        name: String,
+    }
+
+    #[derive(Serialize, serde::Deserialize, schemars::JsonSchema)]
+    struct Output {
+        message: String,
+    }
+
+    #[test]
+    fn context_bridges_queries_execution_and_principal_id() {
+        let host = MockHost::success("{}", "user-123", serde_json::json!([{ "n": 1 }]));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+        let ctx = Context::__new(&host, (), "user-123".into());
+
+        let rows = ctx
+            .query("SELECT count(*) AS n", &[serde_json::json!(true)])
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(ctx.principal_id(), "user-123");
+
+        let request = &host
+            .config()
+            .into_string();
+        assert_eq!(request, "{}");
+    }
+
+    #[test]
+    fn context_execute_and_logging_use_host_bridge() {
+        let host = MockHost::success("{}", "user-123", serde_json::json!({ "rows_affected": 3 }));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+        let ctx = Context::__new(&host, (), "user-123".into());
+
+        assert_eq!(
+            ctx.execute("DELETE FROM apiplant_post", &[]).unwrap(),
+            3
+        );
+        ctx.warn("careful");
+    }
+
+    #[test]
+    fn invoke_handler_uses_default_config_when_host_config_is_invalid() {
+        let host = MockHost::success("{not-json", "u1", serde_json::json!([]));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+
+        let result = invoke_handler::<Config, Input, Output, String, _>(
+            &host,
+            RStr::from_str(r#"{"name":"Ann"}"#),
+            |ctx, input| {
+                Ok(Output {
+                    message: format!("{}, {}!", ctx.config().greeting, input.name),
+                })
+            },
+        );
+
+        let json = match result {
+            RResult::ROk(v) => v.into_string(),
+            RResult::RErr(e) => panic!("unexpected error: {}", e.into_string()),
+        };
+        assert!(json.contains("Hello, Ann!"));
+    }
+
+    #[test]
+    fn invoke_handler_rejects_invalid_input_json() {
+        let host = MockHost::success("{}", "u1", serde_json::json!([]));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+
+        let result = invoke_handler::<Config, Input, Output, String, _>(
+            &host,
+            RStr::from_str("{"),
+            |_ctx, _input| Ok(Output {
+                message: "never".into(),
+            }),
+        );
+
+        match result {
+            RResult::ROk(v) => panic!("unexpected success: {}", v.into_string()),
+            RResult::RErr(e) => assert!(e.into_string().contains("invalid input")),
+        }
+    }
+
+    #[derive(Deserialize, schemars::JsonSchema)]
+    struct SchemaInput {
+        name: String,
+    }
+
+    #[derive(Serialize, schemars::JsonSchema)]
+    struct SchemaOutput {
+        ok: bool,
+    }
+
+    #[test]
+    fn schema_generation_is_typed() {
+        let handler = |_ctx: &Context<'_, '_, ()>, input: SchemaInput| -> Result<SchemaOutput, String> {
+            Ok(SchemaOutput { ok: !input.name.is_empty() })
+        };
+
+        let input_schema = input_schema_json::<(), SchemaInput, SchemaOutput, String, _>(&handler);
+        let output_schema =
+            output_schema_json::<(), SchemaInput, SchemaOutput, String, _>(&handler);
+
+        assert!(input_schema.contains("\"name\""));
+        assert!(output_schema.contains("\"ok\""));
+    }
+}

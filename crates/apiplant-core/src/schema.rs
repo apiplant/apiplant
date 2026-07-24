@@ -342,3 +342,121 @@ impl Default for AuthSpec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_resource(src: &str) -> Resource {
+        let resource: Resource = toml::from_str(src).unwrap();
+        resource.validate().unwrap();
+        resource
+    }
+
+    #[test]
+    fn access_parser_and_permissions_defaults_match_org_membership_model() {
+        assert_eq!(Access::parse("public"), Access::Public);
+        assert_eq!(Access::parse("authenticated"), Access::Authenticated);
+        assert_eq!(Access::parse("member"), Access::Member);
+        assert_eq!(Access::parse("owner"), Access::Owner);
+        assert_eq!(Access::parse("role:admin"), Access::Role("admin".into()));
+        assert_eq!(Access::parse("wat"), Access::Private);
+
+        let defaults = Permissions::default();
+        assert_eq!(defaults.list, Access::Member);
+        assert_eq!(defaults.read, Access::Member);
+        assert_eq!(defaults.create, Access::Member);
+        assert_eq!(defaults.update, Access::Member);
+        assert_eq!(defaults.delete, Access::Member);
+    }
+
+    #[test]
+    fn validate_rejects_reserved_id_and_dangling_reference_definition() {
+        let reserved_id: Resource = toml::from_str(
+            r#"
+[resource]
+name = "bad"
+
+[fields.id]
+type = "string"
+"#,
+        )
+        .unwrap();
+        assert!(reserved_id.validate().is_err());
+
+        let missing_target: Resource = toml::from_str(
+            r#"
+[resource]
+name = "bad_ref"
+
+[fields.owner_id]
+type = "reference"
+"#,
+        )
+        .unwrap();
+        assert!(missing_target.validate().is_err());
+    }
+
+    #[test]
+    fn references_derive_relation_names_and_default_on_delete() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "comment"
+
+[fields.post_id]
+type = "reference"
+references = "post"
+required = true
+
+[fields.author_id]
+type = "reference"
+references = "user"
+on_delete = "cascade"
+"#,
+        );
+
+        assert_eq!(relation_name("owner_id"), "owner");
+        assert_eq!(relation_name("slug"), "slug");
+
+        let refs = resource.references();
+        assert_eq!(refs.len(), 2);
+        let post = refs.iter().find(|rf| rf.field == "post_id").unwrap();
+        assert_eq!(post.target, "post");
+        assert_eq!(post.relation, "post");
+        assert_eq!(post.on_delete, OnDelete::Restrict);
+        assert!(post.required);
+
+        let author = resource.reference_by_relation("author").unwrap();
+        assert_eq!(author.field, "author_id");
+        assert_eq!(author.on_delete, OnDelete::Cascade);
+    }
+
+    #[test]
+    fn org_column_reflects_resource_scope() {
+        let org_scoped = parse_resource(
+            r#"
+[resource]
+name = "post"
+
+[fields.title]
+type = "string"
+"#,
+        );
+        let global = parse_resource(
+            r#"
+[resource]
+name = "plan"
+scope = "global"
+
+[fields.name]
+type = "string"
+"#,
+        );
+        let organization = parse_resource(crate::defaults::ORGANIZATION_TOML);
+
+        assert_eq!(org_scoped.org_column(), Some("organization_id"));
+        assert_eq!(global.org_column(), None);
+        assert_eq!(organization.org_column(), Some("id"));
+    }
+}
