@@ -7,22 +7,32 @@
 //! ├── greet.rs          # Rust: one file, written as if it were a lib.rs
 //! ├── greet.toml        # that function's config
 //! ├── libgreet.so       # ← produced by `apiplant build`
-//! ├── hello.c           # C: implements the four `apiplant.h` symbols
+//! ├── hello.c           # C, Zig or Go: implements the `apiplant.h` symbols
 //! └── libhello.so       # ← also produced by `apiplant build`
 //! ```
 //!
-//! For a `.rs` source, `apiplant build` scaffolds a throwaway cdylib crate around
-//! the file and hands it to `cargo`, then copies the resulting library back beside
-//! the source. The scaffolding lives in `.apiplant-build/` inside the app
-//! directory, with one shared `target/` so dependencies are compiled once and
-//! rebuilds stay incremental.
+//! Four languages, and the difference between them is only how much scaffolding
+//! the toolchain insists on:
 //!
-//! A `.c` source needs no scaffolding — it is a single translation unit exporting
-//! the C ABI symbols from `apiplant.h`, so `cc` goes straight from source to
-//! shared library.
+//! | Source | Built with | Scaffolding |
+//! |--------|------------|-------------|
+//! | `.rs`  | `cargo build` | a generated cdylib crate |
+//! | `.c`   | `cc -shared -fPIC` | none |
+//! | `.zig` | `zig build-lib -dynamic -lc` | none |
+//! | `.go`  | `go build -buildmode=c-shared` | a generated `go.mod` |
 //!
-//! The only requirement is whichever toolchain the app's sources need: `cargo`
-//! for Rust, `cc` for C.
+//! Scaffolding lives in `.apiplant-build/` inside the app directory. Rust gets a
+//! throwaway crate around the file plus one shared `target/`, so dependencies are
+//! compiled once and rebuilds stay incremental; Go gets a module, because
+//! `go build` will not work without one. C and Zig are single translation units
+//! that go straight from source to shared library.
+//!
+//! Everything except Rust targets the plain C ABI declared in `apiplant.h`, so the
+//! host loads them all through the same path — see `apiplant_abi::c`.
+//!
+//! The only requirement is whichever toolchain the app's own sources need. Each is
+//! overridable through the variable its ecosystem already uses: `CARGO`, `CC`,
+//! `ZIG`, `GO`, plus `CFLAGS`, `ZIGFLAGS` and `CGO_CFLAGS` for extra flags.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -71,13 +81,19 @@ codegen-units = 1
 "#;
 
 /// What a source file is written in, which decides how it gets compiled.
+///
+/// Everything except [`Rust`](Language::Rust) targets the plain C ABI declared in
+/// `apiplant.h`, so the host loads them all through the same path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     /// `.rs` — wrapped in a generated cdylib crate and handed to cargo.
     Rust,
-    /// `.c` — compiled straight to a shared library by the system C compiler,
-    /// against the plain C ABI declared in `apiplant.h`.
+    /// `.c` — compiled straight to a shared library by the system C compiler.
     C,
+    /// `.zig` — `zig build-lib -dynamic`, which needs no scaffolding either.
+    Zig,
+    /// `.go` — `go build -buildmode=c-shared`, which needs a module around it.
+    Go,
 }
 
 impl Language {
@@ -86,8 +102,21 @@ impl Language {
         match ext {
             "rs" => Some(Language::Rust),
             "c" => Some(Language::C),
+            "zig" => Some(Language::Zig),
+            "go" => Some(Language::Go),
             _ => None,
         }
+    }
+
+    /// The executable this language is built with, honouring the usual override.
+    fn command(self) -> String {
+        let (var, default) = match self {
+            Language::Rust => ("CARGO", "cargo"),
+            Language::C => ("CC", "cc"),
+            Language::Zig => ("ZIG", "zig"),
+            Language::Go => ("GO", "go"),
+        };
+        std::env::var(var).unwrap_or_else(|_| default.into())
     }
 
     /// What to call the toolchain in an error message.
@@ -95,6 +124,8 @@ impl Language {
         match self {
             Language::Rust => "cargo",
             Language::C => "a C compiler",
+            Language::Zig => "zig",
+            Language::Go => "go",
         }
     }
 }
@@ -315,9 +346,12 @@ pub fn build(app_dir: &Path, options: Options) -> Result<Vec<String>> {
                     format!("copying {} to {}", produced.display(), library.display())
                 })?;
             }
-            // The C compiler writes straight to the destination, so there is no
-            // scaffold crate and nothing to copy afterwards.
+            // `cc` and `zig` write straight to the destination — a single
+            // translation unit needs no scaffolding. `go` needs a module built
+            // around it, so it goes through `build_dir` like Rust does.
             Language::C => compile_c(source, &library, options)?,
+            Language::Zig => compile_zig(source, &library, &build_dir, options)?,
+            Language::Go => compile_go(source, &library, &build_dir, options)?,
         }
 
         if !library.is_file() {
@@ -398,13 +432,141 @@ fn compile_c(source: &Source, library: &Path, options: Options) -> Result<()> {
 
     cc.arg("-o").arg(library).arg(&source.path);
 
-    let status = cc.status().with_context(|| {
-        "failed to run the C compiler — apiplant compiles `functions/*.c` with it, \
-         so `cc` must be installed and on PATH (or set CC)"
+    run(cc, source)
+}
+
+/// Compile one `.zig` source straight into `library`.
+///
+/// Like C, a Zig function is one file exporting the four ABI symbols, so no
+/// scaffolding is needed. `@cImport`ing `apiplant.h` is what `-lc` and the
+/// include path are for.
+///
+/// Both profiles keep Zig's **safety checks on**. `ReleaseFast`/`ReleaseSmall`
+/// would shave a few KB, but a bounds or overflow check that silently becomes
+/// undefined behaviour inside the host process is a far worse trade than the
+/// difference between 8 KB and 4 KB. Note that a Zig safety failure *panics*,
+/// which aborts the host — see the module docs on faults in C-ABI functions.
+fn compile_zig(source: &Source, library: &Path, build_dir: &Path, options: Options) -> Result<()> {
+    let include = abi_include_path()?;
+    let mut zig = Command::new(Language::Zig.command());
+
+    zig.arg("build-lib")
+        .arg("-dynamic")
+        // Zig functions reach the ABI through `@cImport`, which needs libc.
+        .arg("-lc")
+        .arg("-I")
+        .arg(&include)
+        // Keep zig's build cache inside .apiplant-build instead of dropping a
+        // .zig-cache into the app's functions/ directory.
+        .arg("--cache-dir")
+        .arg(build_dir.join("zig-cache"))
+        .arg("--name")
+        .arg(&source.crate_name);
+
+    if options.release {
+        zig.arg("-O").arg("ReleaseSafe").arg("-fstrip");
+    } else {
+        // Debug keeps the safety checks *and* the stack traces that make a Zig
+        // panic legible. It is bulky (~8 MB) because that machinery is compiled
+        // in, not because of DWARF, so stripping would cost the traces and save
+        // comparatively little. Release is what you ship, and that is ~8 KB.
+        zig.arg("-O").arg("Debug");
+    }
+
+    if let Ok(flags) = std::env::var("ZIGFLAGS") {
+        zig.args(flags.split_whitespace());
+    }
+
+    // `-femit-bin` names the output exactly, so nothing needs copying after.
+    let mut emit = std::ffi::OsString::from("-femit-bin=");
+    emit.push(library);
+    zig.arg(emit).arg(&source.path);
+
+    run(zig, source)
+}
+
+/// Build one `.go` source into `library` via a generated module.
+///
+/// Unlike C and Zig, `go build` insists on a module, so this scaffolds one under
+/// `.apiplant-build/<name>/` — the same shape as the generated cdylib crate for
+/// Rust. `-buildmode=c-shared` also emits a header next to its output, which is
+/// why the build lands in the scaffold and only the library is copied across.
+fn compile_go(source: &Source, library: &Path, build_dir: &Path, options: Options) -> Result<()> {
+    let include = abi_include_path()?;
+    let module_dir = build_dir.join(&source.crate_name);
+    std::fs::create_dir_all(&module_dir)
+        .with_context(|| format!("creating {}", module_dir.display()))?;
+
+    let file_name = format!("{}.go", source.crate_name);
+    std::fs::copy(&source.path, module_dir.join(&file_name))
+        .with_context(|| format!("copying {}", source.path.display()))?;
+    std::fs::write(module_dir.join("go.mod"), go_mod(&source.crate_name))
+        .with_context(|| format!("writing {}/go.mod", module_dir.display()))?;
+
+    let produced = module_dir.join(source.library_name());
+    let mut go = Command::new(Language::Go.command());
+    go.current_dir(&module_dir)
+        .arg("build")
+        .arg("-buildmode=c-shared")
+        .arg("-o")
+        .arg(source.library_name())
+        // cgo needs to find apiplant.h. Appending keeps any flags the author set.
+        .env(
+            "CGO_CFLAGS",
+            match std::env::var("CGO_CFLAGS") {
+                Ok(existing) => format!("-I{} {existing}", include.display()),
+                Err(_) => format!("-I{}", include.display()),
+            },
+        )
+        // The whole approach depends on cgo, so a cross-compiling environment
+        // with it switched off should fail loudly here rather than mysteriously.
+        .env("CGO_ENABLED", "1");
+
+    if options.release {
+        // Drop the symbol table and DWARF; a Go library is ~2 MB either way,
+        // most of it runtime, but this takes a few hundred KB off. `-s -w` is one
+        // argument to `-ldflags`, not two arguments to `go`.
+        go.args(["-ldflags", "-s -w"]);
+    }
+
+    // The package to build goes last: `go` reads flags only until the first
+    // non-flag argument, so anything after `.` is taken as another import path.
+    go.arg(".");
+
+    run(go, source)?;
+
+    std::fs::copy(&produced, library)
+        .with_context(|| format!("copying {} to {}", produced.display(), library.display()))?;
+    Ok(())
+}
+
+/// `go.mod` for a generated Go function module.
+fn go_mod(crate_name: &str) -> String {
+    format!(
+        "// Generated by `apiplant build` — edits are overwritten.\n\
+         module {crate_name}\n\
+         \n\
+         go 1.21\n"
+    )
+}
+
+/// Run a compiler and turn a non-zero exit into a useful error.
+fn run(mut command: Command, source: &Source) -> Result<()> {
+    let tool = source.language.tool();
+    let status = command.status().with_context(|| {
+        format!(
+            "failed to run `{tool}` — apiplant compiles `{}` with it, \
+             so it must be installed and on PATH",
+            source
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        )
     })?;
     if !status.success() {
         bail!(
-            "compiling {} failed; see the compiler's output above",
+            "compiling {} failed; see {tool}'s output above",
             source.path.display()
         );
     }
@@ -433,7 +595,7 @@ fn compile_rust(
     )
     .with_context(|| format!("writing {}/Cargo.toml", crate_dir.display()))?;
 
-    let mut cargo = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    let mut cargo = Command::new(Language::Rust.command());
     cargo
         .arg("build")
         .arg("--manifest-path")
@@ -527,23 +689,60 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// C and Rust functions live side by side in one `functions/` directory, and
-    /// each source has to be routed to the right toolchain.
+    /// Functions in all four languages live side by side in one `functions/`
+    /// directory, and each source has to be routed to the right toolchain.
     #[test]
     fn discover_tags_each_source_with_its_language() {
         let dir = temp_dir("languages");
         let functions = dir.join("functions");
         std::fs::write(functions.join("greet.rs"), "// fn").unwrap();
         std::fs::write(functions.join("hello.c"), "/* fn */").unwrap();
+        std::fs::write(functions.join("speedy.zig"), "// fn").unwrap();
+        std::fs::write(functions.join("gopher.go"), "// fn").unwrap();
+        // Neither of these is a source file.
+        std::fs::write(functions.join("shared.h"), "/* h */").unwrap();
+        std::fs::write(functions.join("go.mod"), "module x").unwrap();
 
         let found = discover(&functions).unwrap();
-        let languages: Vec<_> = found.iter().map(|s| (s.crate_name.as_str(), s.language)).collect();
+        let languages: Vec<_> = found
+            .iter()
+            .map(|s| (s.crate_name.as_str(), s.language))
+            .collect();
         assert_eq!(
             languages,
-            vec![("greet", Language::Rust), ("hello", Language::C)]
+            vec![
+                ("gopher", Language::Go),
+                ("greet", Language::Rust),
+                ("hello", Language::C),
+                ("speedy", Language::Zig),
+            ]
         );
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Each toolchain is overridable the way its ecosystem expects, so a pinned
+    /// or vendored compiler can be used without patching apiplant.
+    #[test]
+    fn each_language_names_its_own_toolchain() {
+        assert_eq!(Language::Rust.tool(), "cargo");
+        assert_eq!(Language::Zig.tool(), "zig");
+        assert_eq!(Language::Go.tool(), "go");
+
+        // Defaults when nothing is set. `command()` reads the environment, so
+        // only assert on a variable this test controls.
+        std::env::set_var("ZIG", "/opt/zig-0.16/zig");
+        assert_eq!(Language::Zig.command(), "/opt/zig-0.16/zig");
+        std::env::remove_var("ZIG");
+    }
+
+    /// `go build` needs a module, so one is scaffolded next to the copied source.
+    #[test]
+    fn generated_go_module_is_minimal_and_named_after_the_function() {
+        let go_mod = go_mod("post_hooks");
+        assert!(go_mod.contains("module post_hooks"), "{go_mod}");
+        assert!(go_mod.contains("go 1.21"), "{go_mod}");
+        assert!(go_mod.starts_with("// Generated by"), "{go_mod}");
     }
 
     /// `greet.rs` and `greet.c` would both produce `libgreet.so`.

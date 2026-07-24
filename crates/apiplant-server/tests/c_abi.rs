@@ -6,8 +6,13 @@
 //! can check manifest parsing, but only a real shared library exercises the
 //! marshalling and the allocator boundary.
 //!
-//! Skipped (not failed) when there is no C compiler, since one is not otherwise
-//! needed to build or test apiplant.
+//! The last two tests build the *same* contract from Zig and Go, which is the
+//! only way to know the ABI is genuinely language-agnostic rather than
+//! accidentally C-shaped. Go is the interesting one: its runtime has to survive
+//! being `dlopen`ed and called from the host's blocking thread pool.
+//!
+//! Every test skips (rather than fails) when its toolchain is missing, since none
+//! of them are needed to build or test apiplant itself.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -446,6 +451,269 @@ fn a_c_library_missing_the_other_symbols_is_an_error_not_a_miss() {
     // not `Ok(None)`, which would hide it behind the abi_stable error instead.
     let err = load_error(&library);
     assert!(err.contains("apiplant_manifest"), "{err}");
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+// ---- the same contract, from other languages -------------------------------
+
+/// A Zig function reaching the ABI through `@cImport`.
+const ZIG_FIXTURE: &str = r#"
+const std = @import("std");
+const c = @cImport({ @cInclude("apiplant.h"); });
+
+const manifest = "[{\"name\":\"zecho\",\"version\":\"3.0.0\",\"visibility\":\"public\"}]";
+
+export fn apiplant_abi_version() u32 { return c.APIPLANT_ABI_VERSION; }
+export fn apiplant_manifest() [*:0]const u8 { return manifest; }
+export fn apiplant_free(s: ?[*:0]u8) void { if (s) |p| std.c.free(p); }
+
+fn toHost(text: []const u8) ?[*:0]u8 {
+    const buf = std.heap.c_allocator.allocSentinel(u8, text.len, 0) catch return null;
+    @memcpy(buf, text);
+    return buf.ptr;
+}
+
+export fn apiplant_invoke(
+    name: [*:0]const u8,
+    input: [*:0]const u8,
+    host: *const c.ApiplantHost,
+    out: *?[*:0]u8,
+) i32 {
+    out.* = null;
+    _ = name;
+
+    if (std.mem.eql(u8, std.mem.span(input), "\"bad\"")) {
+        out.* = toHost("zig says no");
+        return c.APIPLANT_ERR_REQUEST;
+    }
+
+    host.log.?(host.ctx, c.APIPLANT_WARN, "zig was here");
+
+    // Round-trip every host string, freeing each as the contract requires.
+    const config = host.config.?(host.ctx);
+    defer host.free_string.?(host.ctx, config);
+    const principal = host.principal_id.?(host.ctx);
+    defer host.free_string.?(host.ctx, principal);
+    const rows = host.query.?(host.ctx, "{\"sql\":\"SELECT 1\",\"params\":[]}");
+    defer host.free_string.?(host.ctx, rows);
+
+    const body = std.fmt.allocPrint(
+        std.heap.c_allocator,
+        "{{\"config\":{s},\"principal\":\"{s}\",\"rows\":{s}}}",
+        .{ std.mem.span(config), std.mem.span(principal), std.mem.span(rows) },
+    ) catch return c.APIPLANT_ERR_INTERNAL;
+    defer std.heap.c_allocator.free(body);
+
+    out.* = toHost(body);
+    return c.APIPLANT_OK;
+}
+"#;
+
+/// A Go function reaching the ABI through cgo. `recover()` is what keeps a Go
+/// panic from unwinding into the host.
+const GO_FIXTURE: &str = r#"
+package main
+
+/*
+#define APIPLANT_NO_PROTOTYPES
+#include <apiplant.h>
+#include <stdlib.h>
+static char *ap_query(const ApiplantHost *h, const char *r) { return h->query(h->ctx, r); }
+static void  ap_log(const ApiplantHost *h, int32_t l, const char *m) { h->log(h->ctx, l, m); }
+static char *ap_config(const ApiplantHost *h) { return h->config(h->ctx); }
+static char *ap_principal(const ApiplantHost *h) { return h->principal_id(h->ctx); }
+static void  ap_free(const ApiplantHost *h, char *s) { h->free_string(h->ctx, s); }
+*/
+import "C"
+
+import (
+	"fmt"
+	"unsafe"
+)
+
+var manifestC *C.char
+
+func init() {
+	manifestC = C.CString(`[{"name":"gecho","version":"4.0.0","visibility":"public"}]`)
+}
+
+//export apiplant_abi_version
+func apiplant_abi_version() C.uint32_t { return C.uint32_t(C.APIPLANT_ABI_VERSION) }
+
+//export apiplant_manifest
+func apiplant_manifest() *C.char { return manifestC }
+
+//export apiplant_free
+func apiplant_free(s *C.char) { C.free(unsafe.Pointer(s)) }
+
+func take(host *C.ApiplantHost, raw *C.char) string {
+	if raw == nil {
+		return ""
+	}
+	defer C.ap_free(host, raw)
+	return C.GoString(raw)
+}
+
+//export apiplant_invoke
+func apiplant_invoke(name, input *C.char, host *C.ApiplantHost, out **C.char) C.int32_t {
+	*out = nil
+
+	body, status := "", int32(C.APIPLANT_ERR_INTERNAL)
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				body, status = fmt.Sprintf("panic: %v", r), int32(C.APIPLANT_ERR_INTERNAL)
+			}
+		}()
+
+		switch in := C.GoString(input); in {
+		case `"bad"`:
+			body, status = "go says no", C.APIPLANT_ERR_REQUEST
+		case `"boom"`:
+			panic("go exploded")
+		default:
+			msg := C.CString("go was here")
+			C.ap_log(host, C.APIPLANT_WARN, msg)
+			C.free(unsafe.Pointer(msg))
+
+			req := C.CString(`{"sql":"SELECT 1","params":[]}`)
+			rows := take(host, C.ap_query(host, req))
+			C.free(unsafe.Pointer(req))
+
+			body = fmt.Sprintf(`{"config":%s,"principal":"%s","rows":%s}`,
+				take(host, C.ap_config(host)),
+				take(host, C.ap_principal(host)),
+				rows)
+			status = C.APIPLANT_OK
+		}
+	}()
+
+	*out = C.CString(body)
+	return C.int32_t(status)
+}
+
+func main() {}
+"#;
+
+/// Build a Zig fixture, or `None` when zig isn't installed.
+fn compile_zig(dir: &Path, source: &str) -> Option<PathBuf> {
+    let zig_file = dir.join("fixture.zig");
+    let library = dir.join("libfixture.so");
+    std::fs::write(&zig_file, source).unwrap();
+
+    let output = Command::new(std::env::var("ZIG").unwrap_or_else(|_| "zig".into()))
+        .arg("build-lib")
+        .arg("-dynamic")
+        .arg("-lc")
+        .arg("-I")
+        .arg(include_dir())
+        .arg("--cache-dir")
+        .arg(dir.join("cache"))
+        .arg("--name")
+        .arg("fixture")
+        .arg("-O")
+        .arg("ReleaseSafe")
+        .arg(format!("-femit-bin={}", library.display()))
+        .arg(&zig_file)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        panic!(
+            "zig fixture failed to compile:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Some(library)
+}
+
+/// Build a Go fixture, or `None` when go isn't installed.
+fn compile_go(dir: &Path, source: &str) -> Option<PathBuf> {
+    std::fs::write(dir.join("fixture.go"), source).unwrap();
+    std::fs::write(dir.join("go.mod"), "module fixture\n\ngo 1.21\n").unwrap();
+
+    let output = Command::new(std::env::var("GO").unwrap_or_else(|_| "go".into()))
+        .current_dir(dir)
+        .arg("build")
+        .arg("-buildmode=c-shared")
+        .arg("-o")
+        .arg("libfixture.so")
+        .arg(".")
+        .env("CGO_ENABLED", "1")
+        .env("CGO_CFLAGS", format!("-I{}", include_dir().display()))
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        panic!(
+            "go fixture failed to compile:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Some(dir.join("libfixture.so"))
+}
+
+#[test]
+fn a_zig_library_speaks_the_same_abi() {
+    let dir = scratch("zig");
+    let Some(library) = compile_zig(&dir, ZIG_FIXTURE) else {
+        eprintln!("skipping: zig not installed");
+        return;
+    };
+
+    let echo = load_one(&library, "zecho");
+    assert_eq!(echo.manifest().version.as_str(), "3.0.0");
+    assert_eq!(echo.manifest().visibility, apiplant_abi::Visibility::Public);
+
+    let body = invoke(&echo, MockHost::new(), r#"{"name":"Ann"}"#).expect("should succeed");
+    let body: serde_json::Value = serde_json::from_str(&body).expect("valid JSON came back");
+    assert_eq!(body["config"], serde_json::json!({ "greeting": "Ciao" }));
+    assert_eq!(body["principal"], "user-42");
+    assert_eq!(body["rows"], serde_json::json!([{ "n": 7 }]));
+
+    // The caller-fault channel works the same from Zig.
+    let err = invoke(&echo, MockHost::new(), r#""bad""#).unwrap_err();
+    assert_eq!(err, "zig says no");
+    assert!(!err.starts_with(apiplant_abi::INTERNAL_ERROR_PREFIX));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_go_library_speaks_the_same_abi_and_survives_dlopen() {
+    let dir = scratch("go");
+    let Some(library) = compile_go(&dir, GO_FIXTURE) else {
+        eprintln!("skipping: go not installed");
+        return;
+    };
+
+    let echo = load_one(&library, "gecho");
+    assert_eq!(echo.manifest().version.as_str(), "4.0.0");
+
+    let body = invoke(&echo, MockHost::new(), r#"{"name":"Ann"}"#).expect("should succeed");
+    let body: serde_json::Value = serde_json::from_str(&body).expect("valid JSON came back");
+    assert_eq!(body["config"], serde_json::json!({ "greeting": "Ciao" }));
+    assert_eq!(body["principal"], "user-42");
+    assert_eq!(body["rows"], serde_json::json!([{ "n": 7 }]));
+
+    let err = invoke(&echo, MockHost::new(), r#""bad""#).unwrap_err();
+    assert_eq!(err, "go says no");
+
+    // A Go panic must be recovered on the Go side. Without the `recover()` in the
+    // fixture this would abort the test process rather than fail one call.
+    let err = invoke(&echo, MockHost::new(), r#""boom""#).unwrap_err();
+    let detail = err
+        .strip_prefix(apiplant_abi::INTERNAL_ERROR_PREFIX)
+        .expect("a recovered panic must be marked internal");
+    assert!(detail.contains("go exploded"), "{detail}");
+
+    // Go's runtime is the part most likely to object to being called repeatedly
+    // from a foreign host, so hammer it a little.
+    for i in 0..50 {
+        let body = invoke(&echo, MockHost::new(), &format!(r#"{{"i":{i}}}"#)).unwrap();
+        assert!(body.contains("user-42"), "{body}");
+    }
 
     std::fs::remove_dir_all(dir).unwrap();
 }

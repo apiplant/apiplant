@@ -269,9 +269,11 @@ with its own name and config. See
 
 A panic in a handler fails only that request (`500`) rather than taking the
 server down, and functions do not have to be Rust: a library can instead export
-[four plain C symbols](crates/apiplant-abi/include/apiplant.h), which is how you
-write one in C, Zig or Go. `apiplant build` compiles `functions/*.c` alongside
-the Rust sources — see [`examples/09-c-functions`](examples/09-c-functions).
+[four plain C symbols](crates/apiplant-abi/include/apiplant.h). `apiplant build`
+compiles `.rs` with cargo, `.c` with cc, `.zig` with zig and `.go` with go, all
+from the same `functions/` directory — see the same two endpoints written in
+[C](examples/09-c-functions), [Zig](examples/10-zig-functions) and
+[Go](examples/11-go-functions).
 
 ## Lifecycle hooks: custom logic on CRUD
 
@@ -367,7 +369,7 @@ lifecycle hooks, one concept at a time.
 
 ```
 apiplant [run] [APP_DIR]     serve the app (default command)
-apiplant build [APP_DIR]     compile functions/*.rs and *.c into libraries
+apiplant build [APP_DIR]     compile functions/* into loadable libraries
 apiplant check [APP_DIR]     load and validate the app, then exit
 ```
 

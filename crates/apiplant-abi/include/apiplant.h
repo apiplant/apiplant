@@ -57,6 +57,15 @@ typedef struct ApiplantHost {
 
 /* ---- what your library must export ---------------------------------------- */
 
+/* Define APIPLANT_NO_PROTOTYPES before including this header to get only the
+ * types and constants above, without the four declarations below.
+ *
+ * Needed when your toolchain emits its own prototypes for the symbols it
+ * exports and they collide with these — cgo, for instance, generates
+ * `char *apiplant_manifest(void)`, which conflicts with the `const` here. Go
+ * bindings should define this macro; C and Zig should not. */
+#ifndef APIPLANT_NO_PROTOTYPES
+
 /* Return APIPLANT_ABI_VERSION. */
 uint32_t apiplant_abi_version(void);
 
@@ -79,6 +88,8 @@ int32_t apiplant_invoke(const char *name, const char *input_json,
 
 /* Release a string you produced in apiplant_invoke. */
 void apiplant_free(char *string);
+
+#endif /* APIPLANT_NO_PROTOTYPES */
 
 #ifdef __cplusplus
 } /* extern "C" */

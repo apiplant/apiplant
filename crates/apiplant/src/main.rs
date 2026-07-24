@@ -2,13 +2,14 @@
 //!
 //! ```text
 //! apiplant [run] [APP_DIR]     # serve the app in APP_DIR (default: current dir)
-//! apiplant build [APP_DIR]     # compile functions/*.rs and *.c into libraries
+//! apiplant build [APP_DIR]     # compile functions/* into loadable libraries
 //! apiplant check [APP_DIR]     # load & validate the app, then exit
 //! ```
 //!
 //! An *app directory* holds an optional `main.toml`, an optional `models/`
 //! directory of resource definitions, an optional `functions/` directory of
-//! function sources (Rust or C) and their compiled libraries, and — to enable TLS — an
+//! function sources (Rust, C, Zig or Go) and their compiled libraries, and — to
+//! enable TLS — an
 //! `https/` directory with a certificate and key. Every piece is optional; an
 //! empty directory is a valid (if bare) app.
 
@@ -19,7 +20,7 @@ use apiplant_core::App;
 const USAGE: &str = "\
 usage:
   apiplant [run] [APP_DIR]     serve the app (default command, default dir `.`)
-  apiplant build [APP_DIR]     compile functions/*.rs and *.c into libraries
+  apiplant build [APP_DIR]     compile functions/* into loadable libraries
   apiplant check [APP_DIR]     load and validate the app, then exit
 
 options:
@@ -28,8 +29,8 @@ options:
   --force           (build) rebuild even when the library is up to date
   -h, --help        show this message
 
-`build` shells out to cargo for .rs sources and to cc for .c ones, so it needs
-whichever of those your functions use installed and on PATH.
+`build` shells out to a toolchain per language — cargo for .rs, cc for .c, zig
+for .zig, go for .go — so whichever your functions use must be on PATH.
 ";
 
 /// What the user asked for.

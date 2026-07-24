@@ -22,7 +22,7 @@ number of functions.
 ## Building
 
 ```bash
-apiplant build my-app          # compile every functions/*.rs and functions/*.c
+apiplant build my-app          # compile every source in functions/
 apiplant build my-app --release
 apiplant build my-app --force  # ignore up-to-date libraries
 apiplant run my-app --build    # build, then serve
@@ -39,9 +39,8 @@ crate depends on `apiplant-function`, `abi_stable`, `serde`, `serde_json` and
 `schemars`; the `apiplant-function` path is taken from the checkout the binary was
 built from, or from `APIPLANT_FUNCTION_CRATE` if you set it.
 
-C sources need a `cc` on `PATH` instead and are compiled straight to a shared
-library, with no scaffolding — see
-[writing a function in C](#writing-a-function-in-c-zig-or-go).
+C, Zig and Go sources need their own toolchain on `PATH` instead — see
+[writing a function in C, Zig or Go](#writing-a-function-in-c-zig-or-go).
 
 ### Library size
 
@@ -58,7 +57,8 @@ A one-page function comes out around **2.3 MB** in `dev` and **600 KB** with
 `--release`, of which ~1 KB is the function's own code. Ship `--release`
 libraries.
 
-A C function links nothing but libc and comes out around **21 KB**.
+A C function links nothing but libc and comes out around **16 KB**; Zig ~288 KB
+and Go ~2.2 MB. See [sizes](#sizes).
 
 If you'd rather manage the crate yourself, you can — see
 [Cargo setup](#cargo-setup) below. `apiplant build` just automates it.
@@ -368,18 +368,73 @@ int32_t      apiplant_invoke(const char *name, const char *input_json,
 void         apiplant_free(char *string); /* free what apiplant_invoke produced */
 ```
 
-`apiplant build` compiles every `.c` file in `functions/` with `cc`, so C
-functions use the same workflow as Rust ones:
+`apiplant build` compiles all four languages, so nothing about the workflow
+changes:
+
+| Source | Built with | Scaffolding |
+|---|---|---|
+| `.rs` | `cargo build` | a generated cdylib crate |
+| `.c` | `cc -shared -fPIC` | none — one translation unit |
+| `.zig` | `zig build-lib -dynamic -lc` | none |
+| `.go` | `go build -buildmode=c-shared` | a generated `go.mod` |
 
 ```bash
-apiplant build my-app            # .rs via cargo, .c via cc
+apiplant build my-app            # every .rs, .c, .zig and .go in functions/
 apiplant build my-app --release
 ```
 
-`CC` and `CFLAGS` are honoured if you need a different compiler, extra includes
-or a JSON library. For Zig or Go, build the shared library yourself — `zig
-build-lib -dynamic`, or `go build -buildmode=c-shared` — and drop it in
-`functions/`; only `.c` is compiled automatically.
+Each toolchain is overridable — `CARGO`, `CC`, `ZIG`, `GO` pick the executable,
+and `CFLAGS`, `ZIGFLAGS` and `CGO_CFLAGS` are passed through for extra includes
+or libraries. Anything else with a C ABI works too; build the shared library
+yourself and drop it in `functions/`.
+
+Worked examples: [C](../examples/09-c-functions),
+[Zig](../examples/10-zig-functions), [Go](../examples/11-go-functions). All three
+serve the same two endpoints, so they read as a direct comparison.
+
+### Language notes
+
+**Zig** reaches the ABI with `@cImport`, so the header is the binding and there is
+no second declaration to keep in sync. `defer` is what makes the `free_string`
+pairing hard to get wrong. `apiplant build` keeps safety checks on in both
+profiles (`Debug` and `ReleaseSafe`) — turning a bounds check into undefined
+behaviour inside the host process is not worth the few KB.
+
+**Go** needs three cgo accommodations, all in the file's preamble: define
+`APIPLANT_NO_PROTOTYPES` before including the header (cgo emits its own
+prototypes, which disagree about `const`); wrap each host callback in a
+`static` one-liner (cgo cannot call a C function pointer); and `recover()` your
+panics (see below). In exchange you get `encoding/json` and the rest of the
+standard library. A `dlopen`ed Go runtime does work — it is covered by the
+tests — but every library embeds the runtime, so Go artifacts start around 2 MB.
+
+### Faults in a non-Rust function
+
+`apiplant-function` catches panics for Rust handlers because Rust can unwind.
+**C, Zig and Go cannot be rescued from outside**, so each has to contain its own
+faults:
+
+* **C** — return `APIPLANT_ERR_INTERNAL`. There is nothing to catch; avoid
+  undefined behaviour.
+* **Zig** — a failed safety check calls the panic handler and aborts the host,
+  with no unwinding to intercept. Handle errors and return the status code.
+* **Go** — `recover()` in `apiplant_invoke`. A panic escaping an exported cgo
+  function crashes the process; nine lines of `defer` turn it into a `500`.
+
+### Sizes
+
+Same two endpoints, `--release`, same machine:
+
+| Language | Size |
+|---|---|
+| C | ~16 KB |
+| Zig | ~288 KB |
+| Rust | ~600 KB |
+| Go | ~2.2 MB |
+
+Rust carries its own `std`, `serde_json` and `schemars` — the self-containment
+that keeps the Rust ABI stable across compilers. Go carries its runtime and GC. C
+and Zig carry almost nothing.
 
 ### The manifest
 
@@ -417,8 +472,7 @@ side and answers with a JSON array of rows, `{"rows_affected": n}`, or
 `{"error": …}` when the query failed.
 
 See [`examples/09-c-functions`](../examples/09-c-functions) for a working app —
-two endpoints in one `.c` file, one of them querying Postgres. It compiles to
-about 21 KB, against 600 KB for the Rust equivalent.
+two endpoints in one `.c` file, one of them querying Postgres.
 
 ## Without the macro (the raw ABI)
 
