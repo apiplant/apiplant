@@ -39,6 +39,21 @@ The only requirement is `cargo` on `PATH`. Every generated crate depends on
 `apiplant-function` path is taken from the checkout the binary was built from, or
 from `APIPLANT_FUNCTION_CRATE` if you set it.
 
+### Library size
+
+Each library statically links its own copy of `std`, `serde_json` and
+`schemars` — that self-containment is what makes the ABI stable across
+compilers, so it is a feature rather than bloat, and the libraries cannot share
+the host's copies. What *is* avoidable is debug info and dead code, so the
+generated manifest carries its own profiles: `dev` drops DWARF but keeps the
+symbol table for legible backtraces, and `--release` strips fully and applies
+fat LTO over a single codegen unit so the linker can discard everything the
+function never reaches.
+
+A one-page function comes out around **2.3 MB** in `dev` and **600 KB** with
+`--release`, of which ~1 KB is the function's own code. Ship `--release`
+libraries.
+
 If you'd rather manage the crate yourself, you can — see
 [Cargo setup](#cargo-setup) below. `apiplant build` just automates it.
 
