@@ -26,6 +26,16 @@ pub struct LoadedFunction {
 }
 
 impl LoadedFunction {
+    /// Wrap an already-constructed function instance. Used by [`FunctionRegistry::load_dir`]
+    /// and by hosts that link functions in statically instead of loading `.so`s.
+    pub fn new(func: BoxedFunction, config_json: String) -> Self {
+        LoadedFunction {
+            manifest: func.manifest(),
+            config_json,
+            func,
+        }
+    }
+
     /// Invoke the function. Must be called from a blocking context (see
     /// [`FunctionRegistry`] docs) because the host bridge blocks on the DB.
     pub fn invoke(&self, bridge: HostBridge, input: &str) -> Result<String, String> {
@@ -103,6 +113,13 @@ impl FunctionRegistry {
         })
     }
 
+    /// Add a function that wasn't loaded from disk, replacing any function of
+    /// the same name. Lets a host embed functions directly.
+    pub fn register(&mut self, func: BoxedFunction, config_json: String) {
+        let loaded = LoadedFunction::new(func, config_json);
+        self.functions.insert(loaded.manifest.name.to_string(), loaded);
+    }
+
     pub fn get(&self, name: &str) -> Option<&LoadedFunction> {
         self.functions.get(name)
     }
@@ -122,6 +139,8 @@ pub struct HostBridge {
     handle: tokio::runtime::Handle,
     config_json: String,
     principal_id: String,
+    /// Lifecycle-hook context JSON, or empty for a plain HTTP invocation.
+    hook_json: String,
 }
 
 impl HostBridge {
@@ -136,7 +155,14 @@ impl HostBridge {
             handle,
             config_json,
             principal_id,
+            hook_json: String::new(),
         }
+    }
+
+    /// Mark this invocation as a resource lifecycle hook and attach its context.
+    pub fn with_hook(mut self, hook_json: String) -> Self {
+        self.hook_json = hook_json;
+        self
     }
 }
 
@@ -178,5 +204,9 @@ impl HostApi for HostBridge {
 
     fn principal_id(&self) -> RString {
         self.principal_id.clone().into()
+    }
+
+    fn hook(&self) -> RString {
+        self.hook_json.clone().into()
     }
 }

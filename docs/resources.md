@@ -34,6 +34,9 @@ default = false
 [fields.owner_id]
 type       = "reference"
 references = "user"
+
+[hooks]                      # see hooks.md — optional custom logic per operation
+before_create = "post_guard"
 ```
 
 This publishes:
@@ -113,6 +116,24 @@ type    = "string"
 default = "draft"
 ```
 
+## `[hooks]`
+
+An optional section binding a [function](functions.md) to points in the
+resource's request lifecycle, so you can validate, rewrite or observe each
+operation:
+
+```toml
+[hooks]
+before_create = "post_guard"    # validate/normalise, or reject the request
+after_create  = "post_audit"    # record it, or reshape the response
+after_list    = "post_redact"
+```
+
+Available keys are `before_`/`after_` × `list`, `read`, `create`, `update`,
+`delete`. Unknown keys are rejected at load time. Full details, including the
+data each hook receives and what it can return, are in
+[Lifecycle hooks](hooks.md).
+
 ## Migrations
 
 There are **no migration files**. Your resource definitions are the desired
@@ -146,7 +167,8 @@ See [Authentication](authentication.md).
 A resource fails to load (and the server refuses to start) if:
 
 * a field is named `id`,
-* a `reference` field has no `references` target.
+* a `reference` field has no `references` target,
+* `[hooks]` contains an unknown key or an empty function name.
 
 Invalid SQL identifiers (table/column names outside `[A-Za-z_][A-Za-z0-9_]*`)
 are rejected at query build time.

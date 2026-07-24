@@ -69,6 +69,22 @@ See [Authentication](authentication.md).
 
 See [Functions](functions.md).
 
+## Lifecycle hooks
+
+A resource with a `[hooks]` section runs functions around its CRUD operations,
+which can change what these endpoints do:
+
+* a `before_*` hook may reject the request with **any** `4xx`/`5xx` status it
+  chooses (`400` when it returns a plain error), so an endpoint can answer with
+  codes not listed below;
+* a `before_create`/`before_update` hook may rewrite the body that gets stored;
+* an `after_*` hook may replace the response body — including turning the usual
+  `204` from `DELETE` into a `200` with content;
+* a hook naming a function that isn't loaded makes its operation fail with
+  `500`, and nothing is written.
+
+See [Lifecycle hooks](hooks.md).
+
 ## Utility endpoints
 
 | Method | Path | Purpose |
@@ -90,9 +106,10 @@ See [Functions](functions.md).
 | `404` | resource/route/row not found (also: a `private` action, or an owned row you don't own) |
 | `405` | wrong HTTP method for a function |
 | `409` | uniqueness conflict |
-| `500` | unexpected server/database error |
+| `500` | unexpected server/database error, or a declared hook whose function isn't loaded |
 
-Errors are JSON: `{ "error": "<message>" }`.
+Errors are JSON: `{ "error": "<message>" }`. A [hook](hooks.md) can return any
+status in `400..=599` with its own message.
 
 ## Domain / host filtering
 

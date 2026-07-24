@@ -1,8 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use abi_stable::sabi_trait::TD_Opaque;
+use abi_stable::std_types::{RBox, RResult, RStr, RString};
+use apiplant_abi::{
+    BoxedFunction, Function, FunctionManifest, Function_TO, HostApi_TO, HttpMethod, Visibility,
+};
 use apiplant_auth::Authenticator;
 use apiplant_core::App;
 use apiplant_db::Db;
@@ -126,14 +131,120 @@ impl TempDatabase {
     }
 }
 
+/// A function defined inline for tests, so hook behaviour can be exercised
+/// without compiling and dynamically loading a `.so`.
+///
+/// `handler` receives the host (for database access), the hook context JSON
+/// (empty for a plain HTTP call) and the input body, and returns the JSON reply.
+struct TestFunction {
+    name: String,
+    visibility: Visibility,
+    handler: fn(&HostApi_TO<'_, RBox<()>>, &str, &str) -> Result<String, String>,
+}
+
+impl Function for TestFunction {
+    fn manifest(&self) -> FunctionManifest {
+        FunctionManifest {
+            name: RString::from(self.name.as_str()),
+            version: RString::from("0.0.0"),
+            description: RString::from("test function"),
+            visibility: self.visibility,
+            role: RString::new(),
+            method: HttpMethod::Post,
+            config_schema: RString::new(),
+            input_schema: RString::new(),
+            output_schema: RString::new(),
+        }
+    }
+
+    fn invoke(&self, host: HostApi_TO<'_, RBox<()>>, input: RStr<'_>) -> RResult<RString, RString> {
+        match (self.handler)(&host, host.hook().as_str(), input.as_str()) {
+            Ok(reply) => RResult::ROk(RString::from(reply)),
+            Err(message) => RResult::RErr(RString::from(message)),
+        }
+    }
+}
+
+fn test_function(
+    name: &str,
+    visibility: Visibility,
+    handler: fn(&HostApi_TO<'_, RBox<()>>, &str, &str) -> Result<String, String>,
+) -> BoxedFunction {
+    Function_TO::from_value(
+        TestFunction {
+            name: name.to_string(),
+            visibility,
+            handler,
+        },
+        TD_Opaque,
+    )
+}
+
+/// A hook function that only records the context it saw and lets the request
+/// continue untouched.
+fn observer(
+    _host: &HostApi_TO<'_, RBox<()>>,
+    hook: &str,
+    _input: &str,
+) -> Result<String, String> {
+    record(hook);
+    Ok(json!({}).to_string())
+}
+
+/// Hook contexts observed during the lifecycle test, in firing order.
+static HOOK_LOG: Mutex<Vec<Value>> = Mutex::new(Vec::new());
+
+fn record(hook: &str) {
+    let context: Value = serde_json::from_str(hook).expect("hooks always receive a context");
+    HOOK_LOG.lock().unwrap().push(context);
+}
+
+/// The first recorded context for an event.
+fn recorded(event: &str) -> Value {
+    let found = HOOK_LOG
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|c| c["event"] == event)
+        .cloned();
+    found.unwrap_or_else(|| panic!("`{event}` never fired; saw {:?}", events()))
+}
+
+/// How many times an event fired.
+fn fired(event: &str) -> usize {
+    HOOK_LOG
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c["event"] == event)
+        .count()
+}
+
+fn events() -> Vec<String> {
+    HOOK_LOG
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|c| c["event"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
 async fn load_state(root: &Path) -> AppState {
+    load_state_with(root, Vec::new()).await
+}
+
+async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState {
     let app = App::load(root).unwrap();
     let db = Db::connect(&app.config.database.resolved_url(), 8)
         .await
         .unwrap();
     apiplant_db::migrate(db.connection(), &app).await.unwrap();
 
-    let functions = FunctionRegistry::load_dir(&app.functions_dir);
+    let mut functions_registry = FunctionRegistry::load_dir(&app.functions_dir);
+    for function in functions {
+        functions_registry.register(function, "{}".to_string());
+    }
+    let functions = functions_registry;
     let spec = openapi::build(&app, &functions);
     let spec_url = format!("{}/openapi.json", app.config.server.base_path);
 
@@ -1448,6 +1559,537 @@ default = "queued"
         spec["paths"]["/deployment"]["post"]["description"],
         "Requires the `ops` role in the active organisation."
     );
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+// --- lifecycle hooks --------------------------------------------------------
+
+/// `before_create`: rejects a blank title, and normalises the one it accepts.
+fn post_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+    record(hook);
+    let mut data: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let title = data["title"].as_str().unwrap_or_default().to_string();
+    if title.trim().is_empty() {
+        return Ok(json!({ "error": { "status": 422, "message": "title is required" } }).to_string());
+    }
+    data["title"] = json!(title.to_uppercase());
+    Ok(json!({ "data": data }).to_string())
+}
+
+/// `after_create`: writes an audit row through the host's database bridge.
+fn post_audit(host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+    record(hook);
+    let context: Value = serde_json::from_str(hook).map_err(|e| e.to_string())?;
+    let row: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let request = json!({
+        "sql": "INSERT INTO apiplant_audit (event, detail) VALUES ($1, $2)",
+        "params": [context["event"], row["title"]],
+    })
+    .to_string();
+    match host.query(RStr::from_str(&request)) {
+        RResult::ROk(_) => Ok(json!({}).to_string()),
+        RResult::RErr(e) => Err(e.into_string()),
+    }
+}
+
+/// `after_list`: wraps the rows in an envelope, replacing the response body.
+fn list_wrap(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+    record(hook);
+    let rows: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    let count = rows.as_array().map(Vec::len).unwrap_or(0);
+    Ok(json!({ "data": { "count": count, "rows": rows } }).to_string())
+}
+
+/// `before_read`: refuses the request when the caller asks for `?blocked=1`.
+fn read_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, _input: &str) -> Result<String, String> {
+    record(hook);
+    let context: Value = serde_json::from_str(hook).map_err(|e| e.to_string())?;
+    if context["query"]["blocked"] == "1" {
+        return Ok(json!({ "error": { "status": 403, "message": "read blocked" } }).to_string());
+    }
+    Ok(json!({}).to_string())
+}
+
+/// `after_read`: annotates the row that was fetched.
+fn read_stamp(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+    record(hook);
+    let context: Value = serde_json::from_str(hook).map_err(|e| e.to_string())?;
+    let mut row: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    row["hooked_url"] = context["url"].clone();
+    Ok(json!({ "data": row }).to_string())
+}
+
+/// `before_update`: rewrites the submitted body.
+fn update_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+    record(hook);
+    let mut data: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    data["body"] = json!("normalised by hook");
+    Ok(json!({ "data": data }).to_string())
+}
+
+/// `before_delete`: protects locked rows, using the row the host pre-fetched.
+fn delete_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+    record(hook);
+    let row: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    if row["locked"] == json!(true) {
+        return Ok(json!({ "error": { "status": 409, "message": "post is locked" } }).to_string());
+    }
+    Ok(json!({}).to_string())
+}
+
+/// `after_delete`: answers with the row that was removed instead of a bare 204.
+fn delete_echo(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+    record(hook);
+    let row: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    Ok(json!({ "data": { "deleted": row["title"] } }).to_string())
+}
+
+const HOOKED_POST_MODEL: &str = r#"
+[resource]
+name = "post"
+
+[permissions]
+list = "member"
+read = "member"
+create = "member"
+update = "member"
+delete = "member"
+
+[hooks]
+before_list = "list_watch"
+after_list = "list_wrap"
+before_read = "read_guard"
+after_read = "read_stamp"
+before_create = "post_guard"
+after_create = "post_audit"
+before_update = "update_guard"
+after_update = "update_stamp"
+before_delete = "delete_guard"
+after_delete = "delete_echo"
+
+[fields.title]
+type = "string"
+required = true
+
+[fields.body]
+type = "text"
+
+[fields.locked]
+type = "boolean"
+"#;
+
+const AUDIT_MODEL: &str = r#"
+[resource]
+name = "audit"
+scope = "global"
+
+[permissions]
+list = "authenticated"
+read = "authenticated"
+create = "private"
+update = "private"
+delete = "private"
+
+[fields.event]
+type = "string"
+
+[fields.detail]
+type = "text"
+"#;
+
+#[ntex::test]
+async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
+    let db = TempDatabase::create("hooks").await;
+    let root = temp_dir("hooks");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!("\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n", db.url),
+            ),
+            ("models/post.toml", HOOKED_POST_MODEL),
+            ("models/audit.toml", AUDIT_MODEL),
+        ],
+    );
+
+    let state = load_state_with(
+        &root,
+        vec![
+            // Private functions are unreachable over HTTP but callable as hooks.
+            test_function("list_watch", Visibility::Private, observer),
+            test_function("list_wrap", Visibility::Private, list_wrap),
+            test_function("read_guard", Visibility::Private, read_guard),
+            test_function("read_stamp", Visibility::Private, read_stamp),
+            test_function("post_guard", Visibility::Private, post_guard),
+            test_function("post_audit", Visibility::Private, post_audit),
+            test_function("update_guard", Visibility::Private, update_guard),
+            test_function("update_stamp", Visibility::Private, observer),
+            test_function("delete_guard", Visibility::Private, delete_guard),
+            test_function("delete_echo", Visibility::Private, delete_echo),
+        ],
+    )
+    .await;
+    let mut app = init_http_app!(state);
+
+    let registration = read_json(
+        test::call_service(
+            &mut app,
+            req_json(
+                "POST",
+                "/api/auth/register",
+                json!({"email":"ada@example.com","password":"pw"}),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let token = registration["token"].as_str().unwrap().to_string();
+    let user_id = registration["user"]["id"].as_str().unwrap().to_string();
+
+    let org = read_json(
+        test::call_service(
+            &mut app,
+            bearer(
+                test::TestRequest::post()
+                    .uri("/api/organization")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({"name":"Acme","slug":"acme"}).to_string()),
+                &token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    let org_id = org["id"].as_str().unwrap().to_string();
+
+    // --- create: the before hook rewrites the body, the after hook audits it.
+    let created_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/post")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"title":"hello","body":"first"}).to_string()),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(created_resp.status().as_u16(), 201);
+    let created = read_json(created_resp).await;
+    assert_eq!(created["title"], "HELLO", "before_create should normalise");
+    let post_id = created["id"].as_str().unwrap().to_string();
+
+    // The after_create hook reached the database through the host bridge.
+    let audits = read_json(
+        test::call_service(
+            &mut app,
+            bearer(test::TestRequest::get().uri("/api/audit"), &token).to_request(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(audits.as_array().unwrap().len(), 1);
+    assert_eq!(audits[0]["event"], "after_create");
+    assert_eq!(audits[0]["detail"], "HELLO");
+
+    // --- create: the before hook can reject outright.
+    let rejected = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/post")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"title":"   ","body":"nope"}).to_string()),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(rejected.status().as_u16(), 422);
+    assert_eq!(read_json(rejected).await["error"], "title is required");
+
+    // --- list: the after hook replaces the response body wholesale.
+    let listed_resp = test::call_service(
+        &mut app,
+        bearer(test::TestRequest::get().uri("/api/post?limit=10"), &token).to_request(),
+    )
+    .await;
+    assert_eq!(listed_resp.status().as_u16(), 200);
+    let listed = read_json(listed_resp).await;
+    assert_eq!(listed["count"], 1);
+    assert_eq!(listed["rows"][0]["title"], "HELLO");
+
+    // --- read: the after hook annotates the fetched row.
+    let read_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::get().uri(&format!("/api/post/{post_id}")),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(read_resp.status().as_u16(), 200);
+    let fetched = read_json(read_resp).await;
+    assert_eq!(fetched["title"], "HELLO");
+    assert_eq!(fetched["hooked_url"], format!("/api/post/{post_id}"));
+
+    // --- read: the before hook can veto on request context alone.
+    let blocked = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::get().uri(&format!("/api/post/{post_id}?blocked=1")),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(blocked.status().as_u16(), 403);
+    assert_eq!(read_json(blocked).await["error"], "read blocked");
+
+    // --- update: the before hook rewrites the submitted body.
+    let updated_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::patch()
+                .uri(&format!("/api/post/{post_id}"))
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"body":"typed by hand"}).to_string()),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(updated_resp.status().as_u16(), 200);
+    let updated = read_json(updated_resp).await;
+    assert_eq!(updated["body"], "normalised by hook");
+
+    // --- delete: the before hook sees the row it is about to lose.
+    let lock_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::patch()
+                .uri(&format!("/api/post/{post_id}"))
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"locked": true}).to_string()),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(lock_resp.status().as_u16(), 200);
+
+    let locked_delete = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::delete().uri(&format!("/api/post/{post_id}")),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(locked_delete.status().as_u16(), 409);
+    assert_eq!(read_json(locked_delete).await["error"], "post is locked");
+
+    let unlock_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::patch()
+                .uri(&format!("/api/post/{post_id}"))
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"locked": false}).to_string()),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(unlock_resp.status().as_u16(), 200);
+
+    // --- delete: the after hook turns the usual 204 into a body.
+    let deleted_resp = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::delete().uri(&format!("/api/post/{post_id}")),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(deleted_resp.status().as_u16(), 200);
+    assert_eq!(read_json(deleted_resp).await["deleted"], "HELLO");
+
+    // --- every event fired, carrying the caller and the row in play.
+    let seen = events();
+    for event in [
+        "before_list",
+        "after_list",
+        "before_read",
+        "after_read",
+        "before_create",
+        "after_create",
+        "before_update",
+        "after_update",
+        "before_delete",
+        "after_delete",
+    ] {
+        assert!(seen.contains(&event.to_string()), "`{event}` never fired");
+    }
+
+    // A vetoing `before_*` hook stops the operation, so its `after_*` twin
+    // never runs: two reads and two deletes were attempted, one of each denied.
+    assert_eq!(fired("before_read"), 2);
+    assert_eq!(fired("after_read"), 1);
+    assert_eq!(fired("before_delete"), 2);
+    assert_eq!(fired("after_delete"), 1);
+    // The rejected create never reached the database or the after hook.
+    assert_eq!(fired("before_create"), 2);
+    assert_eq!(fired("after_create"), 1);
+
+    let create = recorded("before_create");
+    assert_eq!(create["resource"], "post");
+    assert_eq!(create["action"], "create");
+    assert_eq!(create["phase"], "before");
+    assert_eq!(create["method"], "POST");
+    assert_eq!(create["url"], "/api/post");
+    assert_eq!(create["authenticated"], true);
+    assert_eq!(create["principal_id"], user_id);
+    assert_eq!(create["organization_id"], org_id);
+    assert_eq!(create["role"], "admin");
+    assert!(create["record_id"].is_null(), "create has no record id yet");
+    assert_eq!(create["data"]["title"], "hello", "before_create sees the submitted body");
+    assert!(create["row"].is_null());
+
+    let audit = recorded("after_create");
+    assert_eq!(audit["row"]["title"], "HELLO", "after_create sees the stored row");
+    assert_eq!(audit["row"]["organization_id"], org_id);
+    assert!(audit["data"].is_null());
+
+    let watched = recorded("before_list");
+    assert_eq!(watched["url"], "/api/post?limit=10");
+    assert_eq!(watched["query"]["limit"], "10");
+    assert!(watched["rows"].is_null());
+
+    let wrapped = recorded("after_list");
+    assert_eq!(wrapped["rows"].as_array().unwrap().len(), 1);
+
+    let read = recorded("after_read");
+    assert_eq!(read["record_id"], post_id);
+    assert_eq!(read["row"]["id"], post_id);
+
+    let update = recorded("before_update");
+    assert_eq!(update["record_id"], post_id);
+    assert_eq!(update["data"]["body"], "typed by hand");
+
+    let removal = recorded("after_delete");
+    assert_eq!(removal["record_id"], post_id);
+    assert_eq!(removal["row"]["title"], "HELLO");
+
+    // Hook functions stay invisible over HTTP.
+    let direct = test::call_service(
+        &mut app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/functions/post_guard")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"title":"x"}).to_string()),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(direct.status().as_u16(), 404);
+
+    HOOK_LOG.lock().unwrap().clear();
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+/// A function called over HTTP gets no hook context, and a resource pointing at
+/// a function that isn't loaded fails closed rather than skipping the hook.
+#[ntex::test]
+async fn functions_see_no_hook_over_http_and_missing_hooks_fail_closed() {
+    fn echo_hook(
+        _host: &HostApi_TO<'_, RBox<()>>,
+        hook: &str,
+        input: &str,
+    ) -> Result<String, String> {
+        Ok(json!({ "hook_was_empty": hook.is_empty(), "echoed": input }).to_string())
+    }
+
+    let db = TempDatabase::create("hookless").await;
+    let root = temp_dir("hookless");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!("\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n", db.url),
+            ),
+            (
+                "models/note.toml",
+                r#"
+[resource]
+name = "note"
+scope = "global"
+
+[permissions]
+list = "public"
+read = "public"
+create = "public"
+update = "public"
+delete = "public"
+
+[hooks]
+before_create = "nowhere"
+
+[fields.title]
+type = "string"
+"#,
+            ),
+        ],
+    );
+
+    let state = load_state_with(
+        &root,
+        vec![test_function("echo", Visibility::Public, echo_hook)],
+    )
+    .await;
+    let mut app = init_http_app!(state);
+
+    let called = read_json(
+        test::call_service(
+            &mut app,
+            req_json("POST", "/api/functions/echo", json!({"hello":"world"})),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(called["hook_was_empty"], true);
+    assert_eq!(called["echoed"], json!({"hello":"world"}).to_string());
+
+    let blocked = test::call_service(
+        &mut app,
+        req_json("POST", "/api/note", json!({"title":"unreachable hook"})),
+    )
+    .await;
+    assert_eq!(blocked.status().as_u16(), 500);
+    assert!(read_json(blocked).await["error"]
+        .as_str()
+        .unwrap()
+        .contains("not loaded"));
+
+    // The row must not have been written despite the hook being unavailable.
+    let listed = read_json(
+        test::call_service(&mut app, test::TestRequest::get().uri("/api/note").to_request())
+            .await,
+    )
+    .await;
+    assert_eq!(listed.as_array().unwrap().len(), 0);
 
     fs::remove_dir_all(root).unwrap();
     db.cleanup().await;

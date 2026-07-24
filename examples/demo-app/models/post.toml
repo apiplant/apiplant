@@ -34,3 +34,16 @@ default = false
 [fields.owner_id]
 type = "reference"
 references = "user"
+
+# Lifecycle hooks: run a function around each operation. Uncomment after
+# building the example and dropping it in — a hook whose function isn't loaded
+# fails its requests closed with a 500, on purpose.
+#
+#   cargo build -p function-post-hooks
+#   cp target/debug/libfunction_post_hooks.so examples/demo-app/functions/
+#
+# [hooks]
+# before_create = "post_hooks"   # validate & normalise the title
+# before_update = "post_hooks"
+# after_create  = "post_hooks"   # log who created the post
+# after_list    = "post_hooks"   # envelope the list, hide drafts from anonymous callers

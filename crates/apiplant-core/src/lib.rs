@@ -15,5 +15,6 @@ pub use app::{App, TlsPaths};
 pub use config::Config;
 pub use error::{Error, Result};
 pub use schema::{
-    relation_name, Access, Field, FieldType, OnDelete, Permissions, Reference, Resource, Scope,
+    relation_name, Access, Field, FieldType, HookEvent, Hooks, OnDelete, Permissions, Reference,
+    Resource, Scope,
 };

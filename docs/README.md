@@ -16,6 +16,7 @@ These guides cover everything the framework does.
 | [Relationships](relationships.md) | references, `has_many`, expansion, filtering, `on_delete` |
 | [Authentication](authentication.md) | users, organisations, API keys, sessions, extending `user` |
 | [Functions](functions.md) | writing & loading compiled plugins over the stable ABI |
+| [Lifecycle hooks](hooks.md) | running functions before/after every CRUD operation |
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](openapi.md) | the generated spec and interactive docs |
 
@@ -38,6 +39,9 @@ my-app/
   keys, navigable via nested endpoints, and inlinable with `?expand=`.
 * **Functions** are separately-compiled libraries mounted as endpoints, talking
   to the host over a stable C ABI.
+* **Hooks** attach those functions to a resource's lifecycle (`before_create`,
+  `after_list`, …) so custom logic can validate, rewrite or observe every CRUD
+  operation.
 * Migrations are automatic and additive: your schemas *are* the desired state.
 
 Everything is optional. An empty directory is a valid (bare) app.

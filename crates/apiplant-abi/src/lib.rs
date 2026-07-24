@@ -122,6 +122,26 @@ pub trait HostApi: Send + Sync {
     /// Id of the authenticated principal calling this function, or empty when
     /// the endpoint is [`Visibility::Public`] and the caller is anonymous.
     fn principal_id(&self) -> RString;
+
+    /// Lifecycle-hook context as a JSON object when this invocation is a
+    /// resource hook, or empty when the function was called over HTTP.
+    ///
+    /// The object carries the event (`"before_create"`, `"after_list"`, …), the
+    /// resource it fired for, the request URL and method, the caller's auth
+    /// status, and the subject of the operation — the submitted `data`, the
+    /// `row` created/fetched/deleted, or the `rows` a list returned:
+    ///
+    /// ```json
+    /// {
+    ///   "event": "after_create", "action": "create", "phase": "after",
+    ///   "resource": "post", "url": "/api/post", "method": "POST",
+    ///   "query": {}, "authenticated": true,
+    ///   "principal_id": "…", "organization_id": "…", "role": "admin",
+    ///   "record_id": null,
+    ///   "data": null, "row": { "id": "…", "title": "…" }, "rows": null
+    /// }
+    /// ```
+    fn hook(&self) -> RString;
 }
 
 /// A loaded function instance. Constructed once per library via

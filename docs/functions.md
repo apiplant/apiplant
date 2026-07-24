@@ -124,6 +124,7 @@ During a call your handler gets a `&Context<Config>`:
 |--------|---------|---------|
 | `config()` | `&Config` | Your typed configuration. |
 | `principal_id()` | `&str` | The caller's user id, or `""` when anonymous. |
+| `hook()` | `Option<&Hook>` | The lifecycle context when called as a [hook](hooks.md); `None` over HTTP. |
 | `query(sql, params)` | `Result<Vec<Value>, String>` | Run a `SELECT`/`WITH`; rows as JSON objects. |
 | `query_one(sql, params)` | `Result<Option<Value>, String>` | First row, if any. |
 | `execute(sql, params)` | `Result<u64, String>` | Run a write; rows affected. |
@@ -152,6 +153,41 @@ it before your handler runs:
 | `Authenticated` | any authenticated caller | `401` |
 | `RoleGated` | caller holding `role` | `403` |
 | `Private` | nobody over HTTP (hidden from routing & docs) | `404` |
+
+Visibility governs the **HTTP endpoint** only. A function attached to a
+resource's lifecycle still runs whatever its visibility — which is why hook
+functions are usually `Private`.
+
+## Running as a lifecycle hook
+
+The same function can be wired into a resource's CRUD lifecycle from
+`models/<name>.toml`:
+
+```toml
+[hooks]
+before_create = "post_guard"
+after_create  = "post_audit"
+```
+
+When invoked that way, `ctx.hook()` carries the operation's context — the event,
+the row created or fetched, the rows a list returned, the request URL, the
+caller's auth status — and the handler's return value tells the host what to do
+next (continue, replace the payload, or reject the request):
+
+```rust
+fn post_guard(ctx: &Context<()>, mut input: serde_json::Value) -> Result<serde_json::Value, String> {
+    let Some(hook) = ctx.hook() else { return Ok(reply::proceed()) };
+    ctx.info(&format!("{} on {}", hook.event, hook.resource));
+    if input["title"].as_str().unwrap_or_default().is_empty() {
+        return Ok(reply::abort(422, "title is required"));
+    }
+    input["title"] = serde_json::json!(input["title"].as_str().unwrap().to_uppercase());
+    Ok(reply::replace(input))
+}
+```
+
+See [Lifecycle hooks](hooks.md) for the events, the payload each one receives,
+and the full reply protocol.
 
 ## Configuration
 

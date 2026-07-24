@@ -13,11 +13,14 @@ at boot.
 Functions are separately compiled shared libraries (`.so`/`.dylib`/`.dll`) that
 talk to the host across a stable C ABI (via [`abi_stable`]), so you can write
 them in any language, ship them independently, and never recompile the server.
+They can be mounted as their own endpoints *and* attached to a resource's
+lifecycle as **hooks**, running before or after any CRUD operation.
 
 ```
 $ apiplant ./my-app
   INFO apiplant_server: running migrations
   INFO apiplant_server:   fn greet -> /api/functions/greet
+  INFO apiplant_server:   hook post.before_create -> post_guard
   INFO apiplant_server: apiplant listening on http://127.0.0.1:8099/api
 ```
 
@@ -34,6 +37,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Relationships](docs/relationships.md) | references, `has_many`, expansion, filtering, `on_delete` |
 | [Authentication](docs/authentication.md) | users, API keys, sessions, OAuth, extending `user` |
 | [Functions](docs/functions.md) | writing & loading compiled plugins over the stable ABI |
+| [Lifecycle hooks](docs/hooks.md) | running functions before/after every CRUD operation |
 | [API reference](docs/api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](docs/openapi.md) | the generated spec and interactive docs |
 
@@ -255,6 +259,45 @@ a blocking worker with a [`Context`] giving it the database, config, and caller
 identity. See [`examples/function-greet`](examples/function-greet) and the
 [Functions guide](docs/functions.md).
 
+## Lifecycle hooks: custom logic on CRUD
+
+The same functions can run *inside* a resource's request lifecycle. Point an
+event at a function name and it fires around the generated endpoints:
+
+```toml
+# models/post.toml
+[hooks]
+before_create = "post_guard"     # validate & normalise, or reject the request
+after_create  = "post_audit"     # record it, notify, reshape the response
+after_list    = "post_redact"
+```
+
+There is a `before_` and an `after_` for every operation — `list`, `read`,
+`create`, `update`, `delete`. A hook receives the operation's payload plus a
+context describing it, and its return value decides what happens next:
+
+```rust
+fn post_guard(ctx: &Context<()>, mut input: serde_json::Value) -> Result<serde_json::Value, String> {
+    let Some(hook) = ctx.hook() else { return Ok(reply::proceed()) };
+    //  hook.event / .resource / .url / .method / .query
+    //  hook.authenticated / .principal_id / .organization_id / .role
+    //  hook.data() — submitted body   hook.row() — row created, fetched or deleted
+    //  hook.rows() — rows a list returned
+    if input["title"].as_str().unwrap_or_default().trim().is_empty() {
+        return Ok(reply::abort(422, "title is required"));   // stop the request
+    }
+    input["published"] = serde_json::json!(false);
+    Ok(reply::replace(input))                                 // rewrite what gets stored
+}
+```
+
+`before_*` hooks run after the permission check but before anything is written,
+so they can validate, rewrite the payload, or abort; `after_*` hooks see the
+resulting row (or rows) and can replace the response body. Hooks ignore a
+function's `visibility`, so hook functions are usually `Private` — invisible
+over HTTP, fully wired into the lifecycle. Details in the
+[Hooks guide](docs/hooks.md).
+
 ## Workspace layout
 
 | Crate                  | Responsibility                                                    |
@@ -267,6 +310,7 @@ identity. See [`examples/function-greet`](examples/function-greet) and the
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
 | `apiplant`             | the executable                                                     |
 | `examples/function-greet` | an example function compiled to a cdylib                       |
+| `examples/function-post-hooks` | an example function used as a resource lifecycle hook    |
 | `examples/demo-app`    | a ready-to-run app directory                                      |
 
 ## Quickstart

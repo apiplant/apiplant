@@ -1,0 +1,19 @@
+[package]
+name = "function-post-hooks"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Example apiplant function used as a resource lifecycle hook"
+
+[lib]
+name = "function_post_hooks"
+crate-type = ["cdylib"]
+
+[dependencies]
+apiplant-function.workspace = true
+# Needed only so the `function!` macro's exported root-module glue resolves; you
+# never reference it directly.
+abi_stable.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+schemars.workspace = true

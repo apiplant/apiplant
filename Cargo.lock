@@ -803,6 +803,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "function-post-hooks"
+version = "0.1.0"
+dependencies = [
+ "abi_stable",
+ "apiplant-function",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"

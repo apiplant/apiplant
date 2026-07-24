@@ -9,17 +9,23 @@
 //!
 //! Also supported on list/read: `?field=value` filtering, `?expand=` relation
 //! inlining, and nested `GET /parent/{id}/child` collections.
+//!
+//! Every action additionally runs the resource's [lifecycle hooks](crate::hooks)
+//! when it declares any: a `before_*` hook after authorization but before the
+//! database call, an `after_*` hook on the way out.
 
 use std::collections::HashMap;
 
 use apiplant_auth::Principal;
 use apiplant_core::schema::Access;
-use apiplant_core::Resource;
+use apiplant_core::{HookEvent, Resource};
 use apiplant_db::{value, Filter};
 use ntex::web::types::{Json, Path, State};
 use ntex::web::{HttpRequest, HttpResponse};
+use serde_json::json;
 use uuid::Uuid;
 
+use crate::hooks::{self, HookRequest};
 use crate::response::{db_error, error, ok};
 use crate::state::AppState;
 
@@ -39,6 +45,17 @@ impl AppState {
             principal,
             active_org,
         }
+    }
+}
+
+impl Caller {
+    /// The request-scoped context this handler's hooks will see.
+    fn hook_request(
+        &self,
+        req: &HttpRequest,
+        params: &HashMap<String, String>,
+    ) -> HookRequest {
+        HookRequest::new(req, params, self.principal.as_ref(), self.active_org)
     }
 }
 
@@ -278,20 +295,32 @@ pub async fn list(req: HttpRequest, state: State<AppState>, path: Path<String>) 
         .unwrap_or(0)
         .max(0);
 
+    let hook_req = caller.hook_request(&req, &params);
+    if let Err(resp) = hooks::run(&state, r, HookEvent::BeforeList, &hook_req, json!({})).await {
+        return resp;
+    }
+
     let result = match state.db.list(r, &filters, limit, offset).await {
         Ok(rows) => rows,
         Err(e) => return db_error(e),
     };
 
     let relations = expand_list(&params);
-    if relations.is_empty() {
-        return ok(&result);
+    let listed = if relations.is_empty() {
+        result
+    } else {
+        let mut rows = result.as_array().cloned().unwrap_or_default();
+        if let Err(resp) = expand_relations(&state, r, &mut rows, &relations).await {
+            return resp;
+        }
+        serde_json::Value::Array(rows)
+    };
+
+    match hooks::run(&state, r, HookEvent::AfterList, &hook_req, listed.clone()).await {
+        Ok(Some(replacement)) => ok(&replacement),
+        Ok(None) => ok(&listed),
+        Err(resp) => resp,
     }
-    let mut rows = result.as_array().cloned().unwrap_or_default();
-    if let Err(resp) = expand_relations(&state, r, &mut rows, &relations).await {
-        return resp;
-    }
-    ok(&serde_json::Value::Array(rows))
 }
 
 pub async fn get(
@@ -314,20 +343,33 @@ pub async fn get(
         Ok(f) => f,
         Err(resp) => return resp,
     };
-    match state.db.get(r, id, &filters).await {
-        Ok(Some(row)) => {
-            let relations = expand_list(&params);
-            if relations.is_empty() {
-                return ok(&row);
-            }
-            let mut rows = vec![row];
-            if let Err(resp) = expand_relations(&state, r, &mut rows, &relations).await {
-                return resp;
-            }
-            ok(&rows.into_iter().next().unwrap_or(serde_json::Value::Null))
+
+    let hook_req = caller.hook_request(&req, &params).with_record(id);
+    if let Err(resp) = hooks::run(&state, r, HookEvent::BeforeRead, &hook_req, json!({})).await {
+        return resp;
+    }
+
+    let row = match state.db.get(r, id, &filters).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return error(404, "not found"),
+        Err(e) => return db_error(e),
+    };
+
+    let relations = expand_list(&params);
+    let fetched = if relations.is_empty() {
+        row
+    } else {
+        let mut rows = vec![row];
+        if let Err(resp) = expand_relations(&state, r, &mut rows, &relations).await {
+            return resp;
         }
-        Ok(None) => error(404, "not found"),
-        Err(e) => db_error(e),
+        rows.into_iter().next().unwrap_or(serde_json::Value::Null)
+    };
+
+    match hooks::run(&state, r, HookEvent::AfterRead, &hook_req, fetched.clone()).await {
+        Ok(Some(replacement)) => ok(&replacement),
+        Ok(None) => ok(&fetched),
+        Err(resp) => resp,
     }
 }
 
@@ -395,9 +437,22 @@ pub async fn nested_list(
         .unwrap_or(0)
         .max(0);
 
-    match state.db.list(child, &filters, limit, offset).await {
-        Ok(rows) => ok(&rows),
-        Err(e) => db_error(e),
+    // The rows returned are the child's, so the child's list hooks apply.
+    let hook_req = caller.hook_request(&req, &params);
+    if let Err(resp) = hooks::run(&state, child, HookEvent::BeforeList, &hook_req, json!({})).await
+    {
+        return resp;
+    }
+
+    let rows = match state.db.list(child, &filters, limit, offset).await {
+        Ok(rows) => rows,
+        Err(e) => return db_error(e),
+    };
+
+    match hooks::run(&state, child, HookEvent::AfterList, &hook_req, rows.clone()).await {
+        Ok(Some(replacement)) => ok(&replacement),
+        Ok(None) => ok(&rows),
+        Err(resp) => resp,
     }
 }
 
@@ -416,7 +471,31 @@ pub async fn create(
         return resp;
     }
 
+    let params = parse_query(req.query_string());
+    let hook_req = caller.hook_request(&req, &params);
+
+    // The hook sees exactly what the client sent, and any body it returns is
+    // stamped below — so a hook can never spoof the organisation or owner.
     let mut data = body.into_inner();
+    match hooks::run(
+        &state,
+        r,
+        HookEvent::BeforeCreate,
+        &hook_req,
+        serde_json::Value::Object(data.clone()),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => {
+            let hook = r.hook(HookEvent::BeforeCreate).unwrap_or_default();
+            match hooks::replacement_object(replacement, hook) {
+                Ok(map) => data = map,
+                Err(resp) => return resp,
+            }
+        }
+        Ok(None) => {}
+        Err(resp) => return resp,
+    }
 
     // Auto-stamp the organisation on org-scoped resources (never client-set).
     if r.is_org_scoped() {
@@ -451,7 +530,11 @@ pub async fn create(
         }
     }
 
-    HttpResponse::Created().json(&created)
+    match hooks::run(&state, r, HookEvent::AfterCreate, &hook_req, created.clone()).await {
+        Ok(Some(replacement)) => HttpResponse::Created().json(&replacement),
+        Ok(None) => HttpResponse::Created().json(&created),
+        Err(resp) => resp,
+    }
 }
 
 /// After an organisation is created, add the creator as an `admin` member.
@@ -508,10 +591,41 @@ pub async fn update(
         Ok(f) => f,
         Err(resp) => return resp,
     };
-    match state.db.update(r, id, &body.into_inner(), &filters).await {
-        Ok(Some(row)) => ok(&row),
-        Ok(None) => error(404, "not found"),
-        Err(e) => db_error(e),
+
+    let params = parse_query(req.query_string());
+    let hook_req = caller.hook_request(&req, &params).with_record(id);
+
+    let mut data = body.into_inner();
+    match hooks::run(
+        &state,
+        r,
+        HookEvent::BeforeUpdate,
+        &hook_req,
+        serde_json::Value::Object(data.clone()),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => {
+            let hook = r.hook(HookEvent::BeforeUpdate).unwrap_or_default();
+            match hooks::replacement_object(replacement, hook) {
+                Ok(map) => data = map,
+                Err(resp) => return resp,
+            }
+        }
+        Ok(None) => {}
+        Err(resp) => return resp,
+    }
+
+    let updated = match state.db.update(r, id, &data, &filters).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return error(404, "not found"),
+        Err(e) => return db_error(e),
+    };
+
+    match hooks::run(&state, r, HookEvent::AfterUpdate, &hook_req, updated.clone()).await {
+        Ok(Some(replacement)) => ok(&replacement),
+        Ok(None) => ok(&updated),
+        Err(resp) => resp,
     }
 }
 
@@ -534,10 +648,46 @@ pub async fn delete(
         Ok(f) => f,
         Err(resp) => return resp,
     };
+
+    let params = parse_query(req.query_string());
+    let hook_req = caller.hook_request(&req, &params).with_record(id);
+
+    // A delete hook needs the row it is about to lose, so fetch it first — but
+    // only when one is actually declared.
+    let has_delete_hook = r.hook(HookEvent::BeforeDelete).is_some()
+        || r.hook(HookEvent::AfterDelete).is_some();
+    let doomed = if has_delete_hook {
+        match state.db.get(r, id, &filters).await {
+            Ok(Some(row)) => row,
+            Ok(None) => return error(404, "not found"),
+            Err(e) => return db_error(e),
+        }
+    } else {
+        serde_json::Value::Null
+    };
+    let payload = || {
+        if doomed.is_null() {
+            json!({})
+        } else {
+            doomed.clone()
+        }
+    };
+
+    if let Err(resp) = hooks::run(&state, r, HookEvent::BeforeDelete, &hook_req, payload()).await {
+        return resp;
+    }
+
     match state.db.delete(r, id, &filters).await {
-        Ok(true) => HttpResponse::NoContent().finish(),
-        Ok(false) => error(404, "not found"),
-        Err(e) => db_error(e),
+        Ok(true) => {}
+        Ok(false) => return error(404, "not found"),
+        Err(e) => return db_error(e),
+    }
+
+    match hooks::run(&state, r, HookEvent::AfterDelete, &hook_req, payload()).await {
+        // A replacement turns the usual empty `204` into a `200` with a body.
+        Ok(Some(replacement)) => ok(&replacement),
+        Ok(None) => HttpResponse::NoContent().finish(),
+        Err(resp) => resp,
     }
 }
 

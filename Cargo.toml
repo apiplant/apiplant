@@ -9,6 +9,7 @@ members = [
     "crates/apiplant-server",
     "crates/apiplant",
     "examples/function-greet",
+    "examples/function-post-hooks",
 ]
 
 [workspace.package]

@@ -19,6 +19,9 @@ pub struct Resource {
     pub fields: BTreeMap<String, Field>,
     #[serde(default)]
     pub permissions: Permissions,
+    /// Named functions to run around each CRUD operation.
+    #[serde(default)]
+    pub hooks: Hooks,
     /// Optional auth configuration; only meaningful on the `user` resource.
     #[serde(default)]
     pub auth: Option<AuthSpec>,
@@ -60,8 +63,21 @@ impl Resource {
             .unwrap_or_else(|| format!("apiplant_{}", self.meta.name))
     }
 
+    /// The function bound to a lifecycle event, if any.
+    pub fn hook(&self, event: HookEvent) -> Option<&str> {
+        self.hooks.get(event)
+    }
+
     /// Validate internal consistency (called after loading).
     pub fn validate(&self) -> crate::Result<()> {
+        for (event, function) in self.hooks.iter() {
+            if function.trim().is_empty() {
+                return Err(crate::Error::Schema {
+                    resource: self.meta.name.clone(),
+                    message: format!("hook `{}` names an empty function", event.as_str()),
+                });
+            }
+        }
         for (fname, field) in &self.fields {
             if fname == "id" {
                 return Err(crate::Error::Schema {
@@ -321,6 +337,140 @@ impl From<PermissionsRaw> for Permissions {
     }
 }
 
+/// One point in a resource's request lifecycle at which a function may run.
+///
+/// `before_*` hooks run after the permission check but before the database is
+/// touched, so they can validate, rewrite the submitted payload, or abort the
+/// request. `after_*` hooks run once the operation succeeded and can rewrite the
+/// response body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum HookEvent {
+    BeforeList,
+    AfterList,
+    BeforeRead,
+    AfterRead,
+    BeforeCreate,
+    AfterCreate,
+    BeforeUpdate,
+    AfterUpdate,
+    BeforeDelete,
+    AfterDelete,
+}
+
+impl HookEvent {
+    /// Every event, in lifecycle order.
+    pub const ALL: [HookEvent; 10] = [
+        HookEvent::BeforeList,
+        HookEvent::AfterList,
+        HookEvent::BeforeRead,
+        HookEvent::AfterRead,
+        HookEvent::BeforeCreate,
+        HookEvent::AfterCreate,
+        HookEvent::BeforeUpdate,
+        HookEvent::AfterUpdate,
+        HookEvent::BeforeDelete,
+        HookEvent::AfterDelete,
+    ];
+
+    /// The TOML key / wire name, e.g. `"before_create"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HookEvent::BeforeList => "before_list",
+            HookEvent::AfterList => "after_list",
+            HookEvent::BeforeRead => "before_read",
+            HookEvent::AfterRead => "after_read",
+            HookEvent::BeforeCreate => "before_create",
+            HookEvent::AfterCreate => "after_create",
+            HookEvent::BeforeUpdate => "before_update",
+            HookEvent::AfterUpdate => "after_update",
+            HookEvent::BeforeDelete => "before_delete",
+            HookEvent::AfterDelete => "after_delete",
+        }
+    }
+
+    /// The operation this event belongs to (`"create"`, `"list"`, …).
+    pub fn action(self) -> &'static str {
+        match self {
+            HookEvent::BeforeList | HookEvent::AfterList => "list",
+            HookEvent::BeforeRead | HookEvent::AfterRead => "read",
+            HookEvent::BeforeCreate | HookEvent::AfterCreate => "create",
+            HookEvent::BeforeUpdate | HookEvent::AfterUpdate => "update",
+            HookEvent::BeforeDelete | HookEvent::AfterDelete => "delete",
+        }
+    }
+
+    /// `"before"` or `"after"`.
+    pub fn phase(self) -> &'static str {
+        if self.is_before() {
+            "before"
+        } else {
+            "after"
+        }
+    }
+
+    /// Whether this event fires ahead of the database operation.
+    pub fn is_before(self) -> bool {
+        matches!(
+            self,
+            HookEvent::BeforeList
+                | HookEvent::BeforeRead
+                | HookEvent::BeforeCreate
+                | HookEvent::BeforeUpdate
+                | HookEvent::BeforeDelete
+        )
+    }
+}
+
+/// The `[hooks]` section of a resource: a function name per lifecycle event.
+///
+/// Unknown keys are rejected so a typo (`befor_create`) fails at load time
+/// instead of silently never firing.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Hooks {
+    pub before_list: Option<String>,
+    pub after_list: Option<String>,
+    pub before_read: Option<String>,
+    pub after_read: Option<String>,
+    pub before_create: Option<String>,
+    pub after_create: Option<String>,
+    pub before_update: Option<String>,
+    pub after_update: Option<String>,
+    pub before_delete: Option<String>,
+    pub after_delete: Option<String>,
+}
+
+impl Hooks {
+    /// The function bound to an event, if any.
+    pub fn get(&self, event: HookEvent) -> Option<&str> {
+        let slot = match event {
+            HookEvent::BeforeList => &self.before_list,
+            HookEvent::AfterList => &self.after_list,
+            HookEvent::BeforeRead => &self.before_read,
+            HookEvent::AfterRead => &self.after_read,
+            HookEvent::BeforeCreate => &self.before_create,
+            HookEvent::AfterCreate => &self.after_create,
+            HookEvent::BeforeUpdate => &self.before_update,
+            HookEvent::AfterUpdate => &self.after_update,
+            HookEvent::BeforeDelete => &self.before_delete,
+            HookEvent::AfterDelete => &self.after_delete,
+        };
+        slot.as_deref()
+    }
+
+    /// Every declared `(event, function)` pair, in lifecycle order.
+    pub fn iter(&self) -> impl Iterator<Item = (HookEvent, &str)> {
+        HookEvent::ALL
+            .into_iter()
+            .filter_map(|event| self.get(event).map(|name| (event, name)))
+    }
+
+    /// Whether any hook at all is declared.
+    pub fn is_empty(&self) -> bool {
+        self.iter().next().is_none()
+    }
+}
+
 /// Auth configuration carried in a `[auth]` section on the `user` resource.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -430,6 +580,98 @@ on_delete = "cascade"
         let author = resource.reference_by_relation("author").unwrap();
         assert_eq!(author.field, "author_id");
         assert_eq!(author.on_delete, OnDelete::Cascade);
+    }
+
+    #[test]
+    fn hooks_parse_per_event_and_iterate_in_lifecycle_order() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "post"
+
+[fields.title]
+type = "string"
+
+[hooks]
+before_create = "validate_post"
+after_create = "notify"
+after_list = "redact"
+"#,
+        );
+
+        assert_eq!(resource.hook(HookEvent::BeforeCreate), Some("validate_post"));
+        assert_eq!(resource.hook(HookEvent::AfterCreate), Some("notify"));
+        assert_eq!(resource.hook(HookEvent::AfterList), Some("redact"));
+        assert_eq!(resource.hook(HookEvent::BeforeUpdate), None);
+        assert!(!resource.hooks.is_empty());
+
+        let declared: Vec<_> = resource.hooks.iter().collect();
+        assert_eq!(
+            declared,
+            vec![
+                (HookEvent::AfterList, "redact"),
+                (HookEvent::BeforeCreate, "validate_post"),
+                (HookEvent::AfterCreate, "notify"),
+            ]
+        );
+    }
+
+    #[test]
+    fn hook_events_expose_wire_names_actions_and_phases() {
+        assert_eq!(HookEvent::BeforeCreate.as_str(), "before_create");
+        assert_eq!(HookEvent::BeforeCreate.action(), "create");
+        assert_eq!(HookEvent::BeforeCreate.phase(), "before");
+        assert!(HookEvent::BeforeCreate.is_before());
+
+        assert_eq!(HookEvent::AfterList.as_str(), "after_list");
+        assert_eq!(HookEvent::AfterList.action(), "list");
+        assert_eq!(HookEvent::AfterList.phase(), "after");
+        assert!(!HookEvent::AfterList.is_before());
+
+        // Every event round-trips through the `[hooks]` section under its own key.
+        for event in HookEvent::ALL {
+            let resource = parse_resource(&format!(
+                "[resource]\nname = \"post\"\n\n[hooks]\n{} = \"h\"\n",
+                event.as_str()
+            ));
+            assert_eq!(resource.hook(event), Some("h"), "{}", event.as_str());
+            assert_eq!(resource.hooks.iter().count(), 1);
+        }
+    }
+
+    #[test]
+    fn hooks_reject_typos_and_empty_function_names() {
+        let typo = toml::from_str::<Resource>(
+            r#"
+[resource]
+name = "post"
+
+[hooks]
+befor_create = "oops"
+"#,
+        );
+        assert!(typo.is_err(), "unknown hook keys must not be ignored");
+
+        let empty: Resource = toml::from_str(
+            r#"
+[resource]
+name = "post"
+
+[hooks]
+after_delete = "  "
+"#,
+        )
+        .unwrap();
+        assert!(empty.validate().is_err());
+    }
+
+    #[test]
+    fn resources_have_no_hooks_by_default() {
+        let resource = parse_resource("[resource]\nname = \"post\"\n");
+        assert!(resource.hooks.is_empty());
+        assert!(HookEvent::ALL
+            .into_iter()
+            .all(|event| resource.hook(event).is_none()));
     }
 
     #[test]

@@ -5,12 +5,14 @@
 //! * generic CRUD routes for every resource (`<base>/<resource>[/<id>]`),
 //! * built-in auth routes (`<base>/auth/...`),
 //! * one route per loaded function (`<base>/functions/<name>`),
+//! * [lifecycle hooks](hooks) running functions around each CRUD operation,
 //! * TLS inferred from the app's `https/` directory.
 
 mod auth_routes;
 mod crud;
 mod function_routes;
 pub mod functions;
+pub mod hooks;
 mod openapi;
 mod response;
 mod state;
@@ -79,7 +81,30 @@ pub async fn run(app: App) -> anyhow::Result<()> {
         );
     }
 
-    // 4. Generate the OpenAPI document + Swagger UI (once; static per boot).
+    // 4. Report the resource hooks, loudly flagging any that can't resolve —
+    //    a missing hook function fails its requests closed at runtime.
+    for resource in app.resources.values() {
+        for (event, function) in resource.hooks.iter() {
+            if registry.get(function).is_some() {
+                tracing::info!(
+                    "  hook {}.{} -> {}",
+                    resource.meta.name,
+                    event.as_str(),
+                    function
+                );
+            } else {
+                tracing::error!(
+                    resource = %resource.meta.name,
+                    hook = event.as_str(),
+                    function = function,
+                    "hook function is not loaded — this resource's {} requests will fail with 500",
+                    event.action()
+                );
+            }
+        }
+    }
+
+    // 5. Generate the OpenAPI document + Swagger UI (once; static per boot).
     let base_path = app.config.server.base_path.clone();
     let docs_enabled = app.config.docs.enabled;
     let docs_path = app.config.docs.path.clone();
@@ -93,7 +118,7 @@ pub async fn run(app: App) -> anyhow::Result<()> {
         );
     }
 
-    // 5. Assemble shared state and pull out what the closure needs.
+    // 6. Assemble shared state and pull out what the closure needs.
     let host = app.config.server.host.clone();
     let port = app.config.server.port;
     let workers = app.config.server.workers;
