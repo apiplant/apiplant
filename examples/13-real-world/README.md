@@ -61,7 +61,7 @@ all next door.
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_real_world
-cargo run -p apiplant -- examples/13-real-world
+cargo run -p apiplant -- run examples/13-real-world
 ```
 
 First boot creates 25 tables — these 20 plus the five built-ins — and 56 foreign

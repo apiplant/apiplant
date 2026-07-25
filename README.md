@@ -17,7 +17,7 @@ They can be mounted as their own endpoints *and* attached to a resource's
 lifecycle as **hooks**, running before or after any CRUD operation.
 
 ```
-$ apiplant ./my-app
+$ apiplant run ./my-app
   INFO apiplant_server: running migrations
   INFO apiplant_server:   fn greet -> /api/functions/greet
   INFO apiplant_server:   hook post.before_create -> post_before_create
@@ -363,7 +363,7 @@ docker run -d --name apiplant-postgres \
 
 # 2. Start with the smallest example: config only, no models.
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hello
-cargo run -p apiplant -- examples/01-hello-world
+cargo run -p apiplant -- run examples/01-hello-world
 
 curl -s localhost:8099/api/_health
 curl -s -XPOST localhost:8099/api/auth/register \
@@ -373,7 +373,7 @@ curl -s -XPOST localhost:8099/api/auth/register \
 # 3. Then work up through the others — each adds one idea.
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_functions
 cargo run -p apiplant -- build examples/07-functions   # compiles functions/*.rs
-cargo run -p apiplant -- examples/07-functions
+cargo run -p apiplant -- run examples/07-functions
 
 curl -s -XPOST localhost:8099/api/functions/greet \
   -H 'content-type: application/json' -d '{"name":"World"}'
@@ -388,7 +388,7 @@ lifecycle hooks, one concept at a time — and
 ## The CLI
 
 ```
-apiplant [run] [APP_DIR]     serve the app (default command)
+apiplant run [APP_DIR]       serve the app (APP_DIR defaults to `.`)
 apiplant build [APP_DIR]     compile functions/* into loadable libraries
 apiplant check [APP_DIR]     load and validate the app, then exit
 apiplant admin [APP_DIR]     emit a static admin panel for the app
@@ -398,6 +398,10 @@ apiplant studio              serve the visual editor from this binary
 `run` takes `--build` to compile out-of-date sources first; `build` takes
 `--release` and `--force`; `admin` takes `--api <domain-or-base-url>` and
 optionally `--out <dir>`; `studio` takes `--host` and `--port`.
+
+The command is always spelled out — `apiplant ./my-app` is an error that tells
+you to write `apiplant run ./my-app` — and an app directory that doesn't exist
+is refused rather than served as an empty app.
 
 ### The admin dashboard
 

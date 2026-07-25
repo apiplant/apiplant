@@ -25,7 +25,7 @@ so they run around the generated CRUD endpoints — that's a **hook**.
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hooks
 cargo run -p apiplant -- build examples/08-hooks   # needs cargo on PATH
-cargo run -p apiplant -- examples/08-hooks
+cargo run -p apiplant -- run examples/08-hooks
 ```
 
 The build step is required: `models/post.toml` declares hooks, and a hook whose

@@ -30,7 +30,7 @@ function can serve as a [lifecycle hook](../08-hooks) too.
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_c_functions
 
 cargo run -p apiplant -- build examples/09-c-functions   # compiles functions/*.c with cc
-cargo run -p apiplant -- examples/09-c-functions
+cargo run -p apiplant -- run examples/09-c-functions
 ```
 
 ```bash

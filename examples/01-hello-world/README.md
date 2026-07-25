@@ -15,7 +15,7 @@ serves interactive docs, and exposes the built-in resources every app gets
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hello
-cargo run -p apiplant -- examples/01-hello-world
+cargo run -p apiplant -- run examples/01-hello-world
 ```
 
 ```bash

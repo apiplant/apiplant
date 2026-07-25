@@ -27,7 +27,7 @@ the query.
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_tenancy
-cargo run -p apiplant -- examples/04-multitenancy
+cargo run -p apiplant -- run examples/04-multitenancy
 ```
 
 ```bash

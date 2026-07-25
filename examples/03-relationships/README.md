@@ -15,7 +15,7 @@ directions for free.
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_relationships
-cargo run -p apiplant -- examples/03-relationships
+cargo run -p apiplant -- run examples/03-relationships
 ```
 
 ```bash

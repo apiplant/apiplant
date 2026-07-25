@@ -125,7 +125,7 @@ resource — is [`examples/08-hooks`](../examples/08-hooks):
 
 ```bash
 cargo run -p apiplant -- build examples/08-hooks
-cargo run -p apiplant -- examples/08-hooks
+cargo run -p apiplant -- run examples/08-hooks
 ```
 
 It shows all five in the boot log and enforces them on `/api/post`: titles are

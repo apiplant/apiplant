@@ -19,7 +19,7 @@ for login, ownership, API keys and organisation membership.
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_auth
-cargo run -p apiplant -- examples/05-auth
+cargo run -p apiplant -- run examples/05-auth
 ```
 
 **Register** — `identity_field = "username"`, so that's what registration takes:

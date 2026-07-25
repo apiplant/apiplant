@@ -14,7 +14,7 @@ No migrations to write, no handlers to implement.
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_resources
-cargo run -p apiplant -- examples/02-resources
+cargo run -p apiplant -- run examples/02-resources
 ```
 
 `models/note.toml` publishes:

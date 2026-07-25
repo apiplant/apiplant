@@ -1,7 +1,7 @@
 //! The `apiplant` executable.
 //!
 //! ```text
-//! apiplant [run] [APP_DIR]     # serve the app in APP_DIR (default: current dir)
+//! apiplant run [APP_DIR]       # serve the app in APP_DIR (default: current dir)
 //! apiplant build [APP_DIR]     # compile functions/* into loadable libraries
 //! apiplant check [APP_DIR]     # load & validate the app, then exit
 //! apiplant admin [APP_DIR]     # emit a static admin panel for the app
@@ -23,7 +23,7 @@ use apiplant_server::admin;
 
 const USAGE: &str = "\
 usage:
-  apiplant [run] [APP_DIR]     serve the app (default command, default dir `.`)
+  apiplant run [APP_DIR]       serve the app (default dir `.`)
   apiplant build [APP_DIR]     compile functions/* into loadable libraries
   apiplant check [APP_DIR]     load and validate the app, then exit
   apiplant admin [APP_DIR]     emit a static admin panel for the app
@@ -63,10 +63,17 @@ struct Args {
     dir: String,
 }
 
-/// Parse the command line. The first non-flag argument is the command when it
-/// names one, otherwise it's the app directory — so `apiplant ./my-app` still
-/// serves, as it always has.
+/// Parse the command line.
+///
+/// The command is required and comes first: `apiplant ./my-app` is an error,
+/// not a shorthand for `run`, because a typo'd directory should never quietly
+/// start a server. The directory after it is optional and defaults to `.`.
 fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
+    // A bare `apiplant` asks what it can do rather than doing something.
+    if argv.is_empty() {
+        return Ok(None);
+    }
+
     let mut command = None;
     let mut dir = None;
     let mut build_first = false;
@@ -127,6 +134,11 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
                 });
             }
             flag if flag.starts_with('-') => return Err(format!("unknown option `{flag}`")),
+            other if command.is_none() => {
+                return Err(format!(
+                    "`{other}` is not a command — did you mean `apiplant run {other}`?"
+                ))
+            }
             other if dir.is_none() => dir = Some(other.to_string()),
             other => return Err(format!("unexpected argument `{other}`")),
         }
@@ -136,7 +148,11 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
         return Err(format!("missing value for `{flag}`"));
     }
 
-    let command = match command.unwrap_or("run") {
+    let Some(command) = command else {
+        return Err("a command is required".into());
+    };
+
+    let command = match command {
         "build" => {
             if build_first {
                 return Err("`--build` only applies to `run`".into());
@@ -222,6 +238,22 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let dir = std::path::Path::new(&args.dir);
+
+    // Every command but `studio` reads an app directory. A missing one is a
+    // typo, not an empty app: serving it would start a server for nothing, and
+    // building it would report "nothing to build" and look like success.
+    if !matches!(args.command, Command::Studio { .. }) && !dir.is_dir() {
+        eprintln!(
+            "{}: {}",
+            if dir.exists() {
+                "not a directory"
+            } else {
+                "no such app directory"
+            },
+            dir.display()
+        );
+        std::process::exit(2);
+    }
 
     match args.command {
         Command::Build { release, force } => {
@@ -309,16 +341,18 @@ mod tests {
     }
 
     #[test]
-    fn bare_directory_still_runs_the_app() {
-        let parsed = args(&["./my-app"]);
-        assert!(matches!(
-            parsed.command,
-            Command::Run { build_first: false }
-        ));
-        assert_eq!(parsed.dir, "./my-app");
+    fn the_command_is_required_and_a_bare_directory_is_a_mistake() {
+        // `apiplant ./my-app` used to serve; now it says what it should have
+        // been, because guessing "run" from a stray argument is how a typo
+        // becomes a running server.
+        let err = parse(vec!["./my-app".to_string()]).unwrap_err();
+        assert!(err.contains("apiplant run ./my-app"), "{err}");
 
-        // No arguments at all serves the current directory.
-        assert_eq!(args(&[]).dir, ".");
+        // No arguments at all is a request for the usage message.
+        assert!(parse(Vec::new()).unwrap().is_none());
+
+        // The directory itself stays optional.
+        assert_eq!(args(&["run"]).dir, ".");
     }
 
     #[test]

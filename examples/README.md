@@ -26,7 +26,7 @@ Each example owns its database, so create that once, then run:
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_resources
-cargo run -p apiplant -- examples/02-resources
+cargo run -p apiplant -- run examples/02-resources
 ```
 
 Examples 07–12 and 14 have functions, so build them first. Rust functions need
@@ -36,7 +36,7 @@ example 12 needs all four:
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hooks
 cargo run -p apiplant -- build examples/08-hooks
-cargo run -p apiplant -- examples/08-hooks
+cargo run -p apiplant -- run examples/08-hooks
 ```
 
 A function can be a single source file or a whole directory (a crate, a module, a

@@ -63,7 +63,7 @@ Build only the languages you have by removing the other directories.
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_function_deps
 
 cargo run -p apiplant -- build --release examples/12-function-dependencies
-cargo run -p apiplant -- examples/12-function-dependencies
+cargo run -p apiplant -- run examples/12-function-dependencies
 ```
 
 ```bash

@@ -28,7 +28,7 @@ Omit a key and it defaults to `member`, i.e. multitenant-by-default.
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_permissions
-cargo run -p apiplant -- examples/06-permissions
+cargo run -p apiplant -- run examples/06-permissions
 ```
 
 **`plan` — public reads, no writes.**

@@ -22,7 +22,7 @@ they ship independently and never require recompiling the server.
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_functions
 cargo run -p apiplant -- build examples/07-functions   # needs cargo on PATH
-cargo run -p apiplant -- examples/07-functions
+cargo run -p apiplant -- run examples/07-functions
 ```
 
 `apiplant build` wraps each `.rs` file in a generated cdylib crate, hands it to

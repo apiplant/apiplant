@@ -27,7 +27,7 @@ slices, `defer` and error unions instead of raw pointers and manual frees.
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_zig_functions
 
 cargo run -p apiplant -- build examples/10-zig-functions   # zig build-lib -dynamic
-cargo run -p apiplant -- examples/10-zig-functions
+cargo run -p apiplant -- run examples/10-zig-functions
 ```
 
 ```bash
