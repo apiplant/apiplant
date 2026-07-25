@@ -1,17 +1,17 @@
 /** Shared presentational pieces. Nothing here knows about apiplant. */
 
 import { For, Show, createSignal, createUniqueId, splitProps, type JSX, type ParentProps } from "solid-js";
+import { theme, toggleTheme } from "../lib/theme";
 
 // ---- buttons ----------------------------------------------------------------
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
-  primary:
-    "bg-accent text-[#04241a] hover:bg-[#4ade9f] active:bg-accent-dim shadow-[0_1px_0_rgba(255,255,255,0.18)_inset,0_6px_20px_-8px_rgba(52,211,153,0.7)] font-semibold",
+  primary: "bg-accent text-on-accent hover:bg-accent-dim active:bg-accent-dim font-semibold",
   secondary: "bg-surface-2 text-ink border border-line hover:border-line-strong hover:bg-surface-3",
   ghost: "text-muted hover:text-ink hover:bg-surface-2",
-  danger: "bg-transparent text-danger border border-[#3c2323] hover:bg-[#2a1616] hover:border-[#5a2f2f]",
+  danger: "bg-transparent text-danger border border-danger-line hover:bg-danger-soft",
 };
 
 export function Button(
@@ -65,10 +65,10 @@ export function Badge(
 ) {
   const tones = {
     neutral: "bg-surface-3 text-muted border-line",
-    accent: "bg-[#0d2b21] text-accent border-[#1c4c3b]",
-    warn: "bg-[#2c2413] text-warn border-[#4a3c1a]",
-    danger: "bg-[#2c1818] text-danger border-[#4a2626]",
-    info: "bg-[#132330] text-[#7dd3fc] border-[#1e3d52]",
+    accent: "bg-accent-soft text-accent border-accent-line",
+    warn: "bg-warn-soft text-warn border-warn-line",
+    danger: "bg-danger-soft text-danger border-danger-line",
+    info: "bg-accent-soft text-accent border-accent-line",
   };
   return (
     <span
@@ -197,12 +197,12 @@ export function Toggle(props: { checked: boolean; onChange: (value: boolean) => 
       class={[
         "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors duration-100",
         props.checked
-          ? "border-[#1c4c3b] bg-[#0d2b21] text-accent"
+          ? "border-accent-line bg-accent-soft text-accent"
           : "border-line bg-surface-2 text-faint hover:border-line-strong hover:text-muted",
       ].join(" ")}
     >
       <span
-        class={`h-1.5 w-1.5 rounded-full ${props.checked ? "bg-accent" : "bg-[#2f3f39]"}`}
+        class={`h-1.5 w-1.5 rounded-full ${props.checked ? "bg-accent" : "bg-line-strong"}`}
         aria-hidden="true"
       />
       {props.label}
@@ -220,13 +220,16 @@ export function Switch(props: { checked: boolean; onChange: (value: boolean) => 
       class="inline-flex items-center gap-2 text-[0.8125rem] text-ink"
     >
       <span
-        class={`relative h-5 w-9 rounded-full border transition-colors duration-150 ${
-          props.checked ? "border-[#1c4c3b] bg-accent-dim/80" : "border-line bg-surface-3"
+        class={`relative h-5 w-9 shrink-0 rounded-full border transition-colors duration-150 ${
+          props.checked ? "border-accent-line bg-accent" : "border-line bg-surface-3"
         }`}
       >
+        {/* `left` is explicit because a button centres its text, and an
+            absolutely-positioned child with no `left` inherits that as its
+            static position. */}
         <span
-          class={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-ink transition-transform duration-150 ${
-            props.checked ? "translate-x-[1.125rem]" : "translate-x-0.5"
+          class={`absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full transition-transform duration-150 ${
+            props.checked ? "translate-x-4 bg-on-accent" : "translate-x-0 bg-faint"
           }`}
         />
       </span>
@@ -269,72 +272,8 @@ export function Tabs<T extends string>(props: {
   );
 }
 
-// ---- code editor ------------------------------------------------------------
-
-/**
- * A textarea that behaves like an editor: monospace, tab inserts a tab, and a
- * gutter that scrolls with the text. Deliberately not a full editor component —
- * the studio's job is the structure around the code, not another IDE.
- */
-export function CodeEditor(props: {
-  value: string;
-  onInput?: (value: string) => void;
-  readOnly?: boolean;
-  minHeight?: string;
-  language?: string;
-}) {
-  let textarea: HTMLTextAreaElement | undefined;
-  let gutter: HTMLDivElement | undefined;
-
-  const lines = () => Math.max(props.value.split("\n").length, 1);
-
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== "Tab" || !textarea || props.readOnly) return;
-    event.preventDefault();
-    const { selectionStart, selectionEnd, value } = textarea;
-    const next = `${value.slice(0, selectionStart)}    ${value.slice(selectionEnd)}`;
-    props.onInput?.(next);
-    requestAnimationFrame(() => {
-      if (!textarea) return;
-      textarea.selectionStart = textarea.selectionEnd = selectionStart + 4;
-    });
-  };
-
-  return (
-    <div
-      class="relative flex overflow-hidden rounded-lg border border-line bg-[#0a100e]"
-      style={{ "min-height": props.minHeight ?? "24rem" }}
-    >
-      <div
-        ref={gutter}
-        class="code w-12 shrink-0 select-none overflow-hidden border-r border-line bg-surface/60 py-3 text-right text-faint"
-        aria-hidden="true"
-      >
-        <For each={Array.from({ length: lines() }, (_, index) => index + 1)}>
-          {(line) => <div class="pr-2">{line}</div>}
-        </For>
-      </div>
-      <textarea
-        ref={textarea}
-        class="code w-full resize-none bg-transparent px-3 py-3 text-ink outline-none"
-        style={{ "min-height": props.minHeight ?? "24rem" }}
-        spellcheck={false}
-        readOnly={props.readOnly}
-        value={props.value}
-        onKeyDown={onKeyDown}
-        onScroll={(event) => {
-          if (gutter) gutter.scrollTop = event.currentTarget.scrollTop;
-        }}
-        onInput={(event) => props.onInput?.(event.currentTarget.value)}
-      />
-      <Show when={props.language}>
-        <span class="pointer-events-none absolute right-2 top-2 rounded border border-line bg-surface/90 px-1.5 py-0.5 text-[0.625rem] uppercase tracking-wide text-faint">
-          {props.language}
-        </span>
-      </Show>
-    </div>
-  );
-}
+// The editor lives on its own because CodeMirror brings its own world with it.
+export { CodeEditor } from "./CodeEditor";
 
 // ---- overlays ---------------------------------------------------------------
 
@@ -394,19 +333,41 @@ export function EmptyState(props: ParentProps<{ title: string; description: stri
 
 // ---- misc -------------------------------------------------------------------
 
-export function Leaf(props: { class?: string }) {
+/**
+ * The apiplant mark — masked in dark mode, swapped to the rendered light asset
+ * in light mode.
+ */
+export function HeadMark(props: { class?: string }) {
+  return <span class={`logo-head ${props.class ?? ""}`} role="img" aria-label="apiplant" />;
+}
+
+/** The light/dark switch: sun and moon, current state filled in. */
+export function ThemeToggle() {
   return (
-    <svg viewBox="0 0 32 32" class={props.class} fill="none" aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="currentColor" />
-      <path
-        d="M16 25V13m0 0c0-3.3 2.7-6 6-6h3v2.5c0 3-2.5 5.5-5.5 5.5H16zm0 4.5h-2.2A5.3 5.3 0 0 1 8.5 14v-2h2.7c2.9 0 5.3 2.4 5.3 5.3v.2z"
-        fill="none"
-        stroke="#052e1b"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-    </svg>
+    <button
+      type="button"
+      onClick={toggleTheme}
+      title={theme() === "dark" ? "Switch to light" : "Switch to dark"}
+      aria-label={theme() === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      class="rounded-lg p-1.5 text-faint transition-colors hover:bg-surface-2 hover:text-ink"
+    >
+      <Show
+        when={theme() === "dark"}
+        fallback={
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <path d="M13.2 9.6A5.4 5.4 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z" stroke-linejoin="round" />
+          </svg>
+        }
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+          <circle cx="8" cy="8" r="3.1" />
+          <path
+            d="M8 1.4v1.5M8 13.1v1.5M14.6 8h-1.5M2.9 8H1.4M12.67 3.33l-1.06 1.06M4.39 11.61l-1.06 1.06M12.67 12.67l-1.06-1.06M4.39 4.39L3.33 3.33"
+            stroke-linecap="round"
+          />
+        </svg>
+      </Show>
+    </button>
   );
 }
 

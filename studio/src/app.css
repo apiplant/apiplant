@@ -1,32 +1,93 @@
 @import "tailwindcss";
 
-/* The studio is dark-only on purpose: it sits next to a terminal all day. */
+/*
+ * The apiplant.com palette, both themes.
+ *
+ * The names are semantic (canvas/surface/line/ink) so components never mention
+ * a theme; `:root.light` swaps the values underneath and every Tailwind utility
+ * follows, because v4 emits `var(--color-*)` rather than literals.
+ */
 @theme {
-  --color-canvas: #080b0a;
-  --color-surface: #0e1413;
-  --color-surface-2: #131b18;
-  --color-surface-3: #18211e;
-  --color-line: #1d2925;
-  --color-line-strong: #2b3b35;
-  --color-ink: #e8f1ec;
-  --color-muted: #8ba096;
-  --color-faint: #5f736b;
-  --color-accent: #34d399;
-  --color-accent-dim: #10b981;
+  /* dark — the site's default */
+  --color-canvas: #171a21;
+  --color-surface: #1e2129;
+  --color-surface-2: #262a33;
+  --color-surface-3: #2f343f;
+  --color-line: #30363d;
+  --color-line-strong: #3d444d;
+  --color-ink: #ffffff;
+  --color-muted: #c9d1d9;
+  --color-faint: #8b949e;
+  --color-accent: #4a9eff;
+  --color-accent-dim: #2b7de9;
+  --color-on-accent: #08182c;
+  --color-accent-soft: #16273c;
+  --color-accent-line: #274d75;
   --color-danger: #f87171;
-  --color-warn: #fbbf24;
+  --color-danger-soft: #2a1a1c;
+  --color-danger-line: #4c2b2e;
+  --color-warn: #facc15;
+  --color-warn-soft: #2a2413;
+  --color-warn-line: #4c421f;
+  --color-success: #4ade80;
 
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* syntax — GitHub's two themes, which is where the neutrals come from */
+  --color-syn-keyword: #ff7b72;
+  --color-syn-string: #a5d6ff;
+  --color-syn-number: #79c0ff;
+  --color-syn-comment: #8b949e;
+  --color-syn-type: #ffa657;
+  --color-syn-func: #d2a8ff;
+  --color-syn-name: #c9d1d9;
+  --color-editor-bg: #12151b;
+  --color-editor-gutter: #6e7681;
+  --color-editor-active: #ffffff08;
+  --color-editor-select: #2b5b8f66;
+
+  --font-sans: "Open Sans", Helvetica, Arial, sans-serif;
   --font-mono:
-    "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* The one typo-proof way to keep the two palettes in sync is to list them
+   together; anything not repeated here is shared. */
+:root.light {
+  --color-canvas: #f2f5fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #e8ecf1;
+  --color-surface-3: #dde3ea;
+  --color-line: #d0d7de;
+  --color-line-strong: #b7c0ca;
+  --color-ink: #1f2328;
+  --color-muted: #424a53;
+  --color-faint: #57606a;
+  --color-accent: #2b7de9;
+  --color-accent-dim: #1c62be;
+  --color-on-accent: #ffffff;
+  --color-accent-soft: #e3eefc;
+  --color-accent-line: #b6d3f7;
+  --color-danger: #cf222e;
+  --color-danger-soft: #fdeced;
+  --color-danger-line: #f3c5c9;
+  --color-warn: #9a6700;
+  --color-warn-soft: #fdf5e3;
+  --color-warn-line: #eddcb0;
+  --color-success: #1a7f37;
+
+  --color-syn-keyword: #cf222e;
+  --color-syn-string: #0a3069;
+  --color-syn-number: #0550ae;
+  --color-syn-comment: #6e7781;
+  --color-syn-type: #953800;
+  --color-syn-func: #8250df;
+  --color-syn-name: #1f2328;
+  --color-editor-bg: #ffffff;
+  --color-editor-gutter: #8c959f;
+  --color-editor-active: #1f232808;
+  --color-editor-select: #b6d3f799;
 }
 
 @layer base {
-  html {
-    color-scheme: dark;
-  }
-
   body {
     background-color: var(--color-canvas);
     color: var(--color-ink);
@@ -36,20 +97,20 @@
     min-height: 100vh;
   }
 
-  /* A single soft light source from the top-left, so panels have somewhere to sit. */
+  /* A soft blue light source from the top, matching the site's hero. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     pointer-events: none;
     background:
-      radial-gradient(70rem 40rem at 12% -10%, rgba(52, 211, 153, 0.07), transparent 60%),
-      radial-gradient(50rem 30rem at 95% 0%, rgba(56, 189, 248, 0.045), transparent 55%);
+      radial-gradient(70rem 40rem at 12% -10%, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 60%),
+      radial-gradient(50rem 30rem at 95% 0%, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 55%);
     z-index: 0;
   }
 
   ::selection {
-    background: rgba(52, 211, 153, 0.28);
+    background: color-mix(in srgb, var(--color-accent) 32%, transparent);
   }
 
   * {
@@ -68,12 +129,12 @@
     background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #3a4f47;
+    background: var(--color-faint);
     background-clip: content-box;
   }
 
   :focus-visible {
-    outline: 2px solid color-mix(in oklab, var(--color-accent) 70%, transparent);
+    outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
     outline-offset: 2px;
   }
 
@@ -86,6 +147,35 @@
 }
 
 @layer components {
+  /*
+   * The dark mark is a monochrome mask; the light mark is a full rendered PNG.
+   */
+  .logo-head {
+    display: inline-block;
+    aspect-ratio: 238 / 320;
+    background-color: currentColor;
+    background-image: none;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+    -webkit-mask-image: url("/head.png");
+    mask-image: url("/head.png");
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+  }
+
+  :root.light .logo-head {
+    aspect-ratio: 724 / 985;
+    background-color: transparent;
+    background-image: url("/head-inverted.png");
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
   .card {
     background-color: var(--color-surface);
     border: 1px solid var(--color-line);
@@ -121,14 +211,17 @@
     border-color: var(--color-line-strong);
   }
   .input:focus {
-    border-color: color-mix(in oklab, var(--color-accent) 55%, var(--color-line-strong));
+    border-color: color-mix(in srgb, var(--color-accent) 60%, var(--color-line-strong));
     outline: none;
-    background-color: var(--color-surface-3);
+    background-color: var(--color-surface);
+  }
+  .input:disabled {
+    opacity: 0.55;
   }
 
   select.input {
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238ba096' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238b949e' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.5rem center;
     background-size: 0.75rem;
@@ -141,13 +234,45 @@
     line-height: 1.7;
     tab-size: 4;
   }
-
-  .scroll-fade {
-    mask-image: linear-gradient(to bottom, transparent, black 12px);
-  }
 }
 
-/* Solid's <Transition>-free fade for panels that mount. */
+/* ---- CodeMirror ------------------------------------------------------------
+ * Structure only; every colour comes from the variables above, so the editor
+ * follows the theme switch without being rebuilt. */
+.cm-editor {
+  height: 100%;
+  background-color: var(--color-editor-bg);
+  font-family: var(--font-mono);
+  font-size: 0.78125rem;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+.cm-scroller {
+  font-family: inherit;
+  line-height: 1.7;
+}
+
+.cm-gutters {
+  background-color: color-mix(in srgb, var(--color-editor-bg) 92%, var(--color-canvas));
+  border-right: 1px solid var(--color-line);
+  color: var(--color-editor-gutter);
+}
+
+.cm-panels {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  border-color: var(--color-line) !important;
+}
+
+.cm-panel input,
+.cm-panel button {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+}
+
 @keyframes rise {
   from {
     opacity: 0;

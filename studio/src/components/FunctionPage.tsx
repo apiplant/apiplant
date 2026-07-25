@@ -188,7 +188,7 @@ export function FunctionPage(props: { entry: FunctionEntry }) {
             </div>
           </Card>
 
-          <Card class="border-[#3c2323]">
+          <Card class="border-danger-line">
             <div class="flex items-center justify-between gap-2 px-3 py-3">
               <span class="text-xs text-muted">Delete function</span>
               <Show

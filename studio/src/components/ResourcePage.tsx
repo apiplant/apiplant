@@ -56,12 +56,14 @@ const ACCESS_OPTIONS = [
   { value: "private", label: "private — not exposed" },
 ] as const;
 
+// `{res}` is substituted with `<base_path>/<resource>`, which already carries a
+// leading slash — so these must not add one of their own.
 const ACTION_ENDPOINT: Record<Action, string> = {
-  list: "GET /{res}",
-  read: "GET /{res}/{id}",
-  create: "POST /{res}",
-  update: "PATCH /{res}/{id}",
-  delete: "DELETE /{res}/{id}",
+  list: "GET {res}",
+  read: "GET {res}/{id}",
+  create: "POST {res}",
+  update: "PATCH {res}/{id}",
+  delete: "DELETE {res}/{id}",
 };
 
 const SCALAR_DEFAULTABLE: FieldType[] = ["string", "text", "integer", "big_int", "float", "boolean"];
@@ -153,7 +155,7 @@ export function ResourcePage(props: { entry: ResourceEntry }) {
         </Show>
 
         <Show when={issues().length}>
-          <ul class="mt-3 space-y-1 rounded-lg border border-[#4a2626] bg-[#2c1818]/50 px-3 py-2">
+          <ul class="mt-3 space-y-1 rounded-lg border border-danger-line bg-danger-soft px-3 py-2">
             <For each={issues()}>
               {(issue) => <li class="text-xs leading-relaxed text-danger">{issue}</li>}
             </For>
@@ -161,7 +163,7 @@ export function ResourcePage(props: { entry: ResourceEntry }) {
         </Show>
 
         <Show when={originalHadComments()}>
-          <p class="mt-3 rounded-lg border border-[#4a3c1a] bg-[#2c2413]/50 px-3 py-2 text-xs leading-relaxed text-warn">
+          <p class="mt-3 rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-xs leading-relaxed text-warn">
             The file on disk has comments. Saving rewrites it from the form, which drops them — edit on the
             TOML tab instead to keep them.
           </p>
@@ -406,7 +408,7 @@ function FieldRow(props: {
             type="button"
             title="Remove field"
             onClick={props.onRemove}
-            class="rounded p-1 text-faint hover:bg-[#2a1616] hover:text-danger"
+            class="rounded p-1 text-faint hover:bg-danger-soft hover:text-danger"
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.5 8h5l.5-8" stroke-linecap="round" stroke-linejoin="round" />
@@ -794,7 +796,7 @@ function SettingsTab(props: {
         </Card>
       </Show>
 
-      <Card class="border-[#3c2323]">
+      <Card class="border-danger-line">
         <CardHeader
           title={props.entry.builtin ? "Revert to the built-in" : "Delete this resource"}
           hint={

@@ -7,7 +7,7 @@ import { ResourcePage } from "./components/ResourcePage";
 import { FunctionPage } from "./components/FunctionPage";
 import { ChangesPage } from "./components/ChangesPage";
 import { NewFunctionDialog, NewResourceDialog } from "./components/Dialogs";
-import { Badge, Button, EmptyState, Leaf } from "./components/ui";
+import { Badge, Button, EmptyState, HeadMark, ThemeToggle } from "./components/ui";
 import { setView, view } from "./lib/nav";
 import {
   closeProject,
@@ -64,12 +64,14 @@ export function App() {
           <header class="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface/70 px-4 backdrop-blur-md">
             <button
               type="button"
-              class="flex items-center gap-2"
+              class="group flex items-center gap-2"
               onClick={() => setView({ kind: "overview" })}
               title="Overview"
             >
-              <Leaf class="h-7 w-7 text-accent" />
-              <span class="text-sm font-semibold tracking-tight">apiplant studio</span>
+              <HeadMark class="h-7 transition-opacity group-hover:opacity-80" />
+              <span class="text-sm font-semibold tracking-tight">
+                apiplant <span class="text-accent">studio</span>
+              </span>
             </button>
 
             <span class="text-faint">/</span>
@@ -93,6 +95,8 @@ export function App() {
                 </Badge>
               </Show>
             </button>
+
+            <ThemeToggle />
 
             <Button size="sm" variant="ghost" onClick={() => void reloadProject()} title="Re-read from disk">
               Reload
@@ -198,9 +202,9 @@ export function App() {
                   class={[
                     "animate-rise pointer-events-auto rounded-lg border px-3 py-2 text-left text-xs shadow-lg shadow-black/40 backdrop-blur",
                     item.kind === "success"
-                      ? "border-[#1c4c3b] bg-[#0d2b21]/95 text-accent"
+                      ? "border-accent-line bg-accent-soft/95 text-accent"
                       : item.kind === "error"
-                        ? "border-[#4a2626] bg-[#2c1818]/95 text-danger"
+                        ? "border-danger-line bg-danger-soft text-danger"
                         : "border-line bg-surface/95 text-muted",
                   ].join(" ")}
                 >

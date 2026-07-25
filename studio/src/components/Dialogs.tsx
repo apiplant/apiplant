@@ -129,7 +129,7 @@ export function NewFunctionDialog(props: { onClose: () => void }) {
                     class={[
                       "flex-1 rounded-md border px-2 py-1.5 text-xs transition-colors",
                       language() === option
-                        ? "border-[#1c4c3b] bg-[#0d2b21] text-accent"
+                        ? "border-accent-line bg-accent-soft text-accent"
                         : "border-line bg-surface-2 text-muted hover:border-line-strong hover:text-ink",
                     ].join(" ")}
                   >
@@ -149,7 +149,7 @@ export function NewFunctionDialog(props: { onClose: () => void }) {
               class={[
                 "rounded-lg border px-3 py-2 text-left transition-colors",
                 layout() === "file"
-                  ? "border-[#1c4c3b] bg-[#0d2b21]"
+                  ? "border-accent-line bg-accent-soft"
                   : "border-line bg-surface-2 hover:border-line-strong",
               ].join(" ")}
             >
@@ -164,7 +164,7 @@ export function NewFunctionDialog(props: { onClose: () => void }) {
               class={[
                 "rounded-lg border px-3 py-2 text-left transition-colors",
                 layout() === "directory"
-                  ? "border-[#1c4c3b] bg-[#0d2b21]"
+                  ? "border-accent-line bg-accent-soft"
                   : "border-line bg-surface-2 hover:border-line-strong",
               ].join(" ")}
             >

@@ -19,6 +19,9 @@ There is no server and no build step for your app: the page holds a
 happens in the browser. Chrome, Edge, Opera and Arc support that API; Firefox
 and Safari do not, and the studio says so instead of half-working.
 
+It wears apiplant.com's colours in both light and dark — the switch is in the
+header, it starts from your system preference, and it is remembered.
+
 ## What it edits
 
 | Piece | What the studio gives you |
@@ -65,8 +68,12 @@ src/
 │   ├── functions.ts   reading functions/ the way `apiplant build` does
 │   ├── templates.ts   the per-language function scaffolds
 │   ├── store.ts       the open project: models, the file map, and pending changes
+│   ├── theme.ts       light/dark, remembered, system preference by default
 │   └── nav.ts         which page is showing
-└── components/        Solid components; ui.tsx holds the shared primitives
+└── components/
+    ├── CodeEditor.tsx CodeMirror 6 — Rust, C, Go, TOML, and a small Zig mode
+    ├── ui.tsx         the shared primitives
+    └── …              one file per page
 ```
 
 `store.ts` is the piece to read first. Files are the single source of truth for
@@ -74,7 +81,13 @@ what gets saved: every form edits a model and immediately re-emits it into the
 file map, so "what will change on disk" is answerable at any moment and
 discarding is just a rescan.
 
-Built with [Solid](https://solidjs.com) and [Tailwind](https://tailwindcss.com);
-`pnpm build` type-checks and emits a static bundle to `dist/`.
+Every colour is a CSS variable defined twice in `app.css` — once for each theme —
+so components never mention light or dark, and the editor re-paints with the rest
+of the page. Zig has no CodeMirror grammar, so `CodeEditor.tsx` carries a small
+stream tokenizer for it.
+
+Built with [Solid](https://solidjs.com), [Tailwind](https://tailwindcss.com) and
+[CodeMirror](https://codemirror.net); `pnpm build` type-checks and emits a static
+bundle to `dist/`.
 
 [fsa]: https://developer.mozilla.org/en-US/docs/Web/API/File_System_API

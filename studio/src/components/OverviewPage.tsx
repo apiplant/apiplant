@@ -204,7 +204,7 @@ export function OverviewPage(props: {
             ]}
           >
             {(item) => (
-              <div class="flex items-center gap-3 rounded-lg border border-line bg-[#0a100e] px-3 py-2">
+              <div class="flex items-center gap-3 rounded-lg border border-line bg-editor-bg px-3 py-2">
                 <code class="flex-1 font-mono text-[0.78125rem] text-ink">
                   <span class="text-faint">$ </span>
                   {item.command}
@@ -228,7 +228,7 @@ export function OverviewPage(props: {
       </Card>
 
       <Show when={studio.project?.problems.length}>
-        <Card class="mt-3 border-[#4a2626]">
+        <Card class="mt-3 border-danger-line">
           <CardHeader title="Files that did not parse" hint="Left untouched; fix them on disk or in the editor." />
           <div class="divide-y divide-line">
             <For each={studio.project!.problems}>

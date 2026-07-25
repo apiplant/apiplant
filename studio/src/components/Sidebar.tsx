@@ -40,7 +40,7 @@ function SectionHeader(props: { label: string; count?: number; onAdd?: () => voi
       <h2 class="text-[0.6875rem] font-semibold uppercase tracking-[0.09em] text-faint">
         {props.label}
         <Show when={props.count !== undefined}>
-          <span class="ml-1.5 font-normal text-[#43554e]">{props.count}</span>
+          <span class="ml-1.5 font-normal text-faint/70">{props.count}</span>
         </Show>
       </h2>
       <Show when={props.onAdd}>
@@ -213,7 +213,7 @@ export function Sidebar(props: {
         </Show>
 
         <Show when={studio.project?.problems.length}>
-          <div class="mt-6 rounded-lg border border-[#4a2626] bg-[#2c1818]/50 px-3 py-2">
+          <div class="mt-6 rounded-lg border border-danger-line bg-danger-soft px-3 py-2">
             <p class="text-[0.6875rem] font-semibold uppercase tracking-wide text-danger">
               {studio.project!.problems.length} file(s) failed to parse
             </p>

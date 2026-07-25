@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js";
-import { Badge, Button, Leaf, Mono } from "./ui";
+import { Badge, Button, HeadMark, Mono, ThemeToggle } from "./ui";
 import { isSupported } from "../lib/fs";
 import { chooseDirectory, openProject, studio, toast, type AppCandidate } from "../lib/store";
 
@@ -57,12 +57,17 @@ export function Landing() {
   return (
     <div class="relative z-10 mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-center px-6 py-16">
       <div class="animate-rise">
-        <div class="flex items-center gap-3">
-          <Leaf class="h-10 w-10 text-accent" />
-          <div>
-            <h1 class="text-2xl font-semibold tracking-tight">apiplant studio</h1>
-            <p class="text-sm text-muted">A local editor for an apiplant app directory.</p>
+        <div class="flex items-start justify-between gap-6">
+          <div class="flex items-center gap-4">
+            <HeadMark class="h-16" />
+            <div>
+              <h1 class="text-2xl font-semibold tracking-tight">
+                apiplant <span class="text-accent">studio</span>
+              </h1>
+              <p class="text-sm text-muted">A local editor for an apiplant app directory.</p>
+            </div>
           </div>
+          <ThemeToggle />
         </div>
 
         <p class="mt-8 max-w-2xl text-[0.9375rem] leading-relaxed text-muted">
@@ -87,7 +92,7 @@ export function Landing() {
         </div>
 
         <Show when={!supported}>
-          <div class="mt-6 max-w-2xl rounded-lg border border-[#4a3c1a] bg-[#2c2413]/60 px-4 py-3 text-xs leading-relaxed text-warn">
+          <div class="mt-6 max-w-2xl rounded-lg border border-warn-line bg-warn-soft px-4 py-3 text-xs leading-relaxed text-warn">
             This browser has no File System Access API, so the studio cannot read or write a local directory.
             Chrome, Edge, Opera or Arc (desktop) support it; Firefox and Safari do not yet.
           </div>
@@ -95,7 +100,7 @@ export function Landing() {
 
         <Show when={error()}>
           {(message) => (
-            <div class="mt-6 max-w-2xl rounded-lg border border-[#4a2626] bg-[#2c1818]/60 px-4 py-3 text-xs leading-relaxed text-danger">
+            <div class="mt-6 max-w-2xl rounded-lg border border-danger-line bg-danger-soft px-4 py-3 text-xs leading-relaxed text-danger">
               {message()}
             </div>
           )}
