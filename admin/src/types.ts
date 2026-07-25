@@ -168,6 +168,8 @@ export interface AuthManifest {
 export interface AdminManifest {
   title: string;
   app_name: string;
+  /** The app's own mark, when configured; otherwise the apiplant one is used. */
+  logo: string | null;
   api_base_url: string;
   docs_url: string | null;
   auth: AuthManifest;

@@ -978,7 +978,9 @@ after_delete = "  "
 
         let user = parse_resource(crate::defaults::USER_TOML);
         assert!(!user.admin.is_visible("user"));
-        assert!(!parse_resource(crate::defaults::MEMBERSHIP_TOML).admin.is_visible("membership"));
+        assert!(!parse_resource(crate::defaults::MEMBERSHIP_TOML)
+            .admin
+            .is_visible("membership"));
 
         // An app that replaces a built-in still gets the dedicated screen…
         let replaced = parse_resource(
@@ -1028,9 +1030,8 @@ type = "string"
         );
         assert_eq!(conventional.admin_display_field().as_deref(), Some("name"));
 
-        let only_odd_names = parse_resource(
-            "[resource]\nname = \"blob\"\n\n[fields.zzz]\ntype = \"string\"\n",
-        );
+        let only_odd_names =
+            parse_resource("[resource]\nname = \"blob\"\n\n[fields.zzz]\ntype = \"string\"\n");
         assert_eq!(only_odd_names.admin_display_field().as_deref(), Some("zzz"));
 
         let nothing_stringy =

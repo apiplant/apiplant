@@ -211,8 +211,15 @@ export function EmptyState(props: ParentProps<{ title: string; description?: str
   );
 }
 
-export function HeadMark(props: { class?: string }) {
-  return <span class={`logo-head ${props.class ?? ""}`} role="img" aria-label="apiplant" />;
+export function HeadMark(props: { class?: string; src?: string | null }) {
+  return (
+    <Show
+      when={props.src}
+      fallback={<span class={`logo-head ${props.class ?? ""}`} role="img" aria-label="apiplant" />}
+    >
+      <img src={props.src!} alt="" class={`w-auto object-contain ${props.class ?? ""}`} />
+    </Show>
+  );
 }
 
 /** Initials in a tinted circle — enough to tell people apart in a list. */

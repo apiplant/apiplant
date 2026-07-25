@@ -19,7 +19,7 @@ with lifecycle hooks, one idea at a time.
 | [Authentication](authentication.md) | users, organisations, API keys, sessions, extending `user` |
 | [Functions](functions.md) | writing & loading compiled plugins over the stable ABI |
 | [Lifecycle hooks](hooks.md) | running functions before/after every CRUD operation |
-| [Admin dashboard](admin.md) | the generated operator UI, `[admin]` config, action forms |
+| [Admin dashboard](admin.md) | the built-in operator UI, `[admin]` config, action forms |
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](openapi.md) | the generated spec and interactive docs |
 

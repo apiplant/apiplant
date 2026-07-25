@@ -21,20 +21,41 @@ enabled = true
 path    = "/admin"
 ```
 
-## A static copy
+The header reads *`<app name>` admin* beside the apiplant mark. Point `logo` at
+an image of your own to replace the mark:
 
-`apiplant admin` bakes the same dashboard into a **directory of plain files**
-that talks to a deployed API over CORS and holds no secrets — for hosting the
-console somewhere other than the API, or for customising it.
-
-```bash
-apiplant admin ./my-app --api https://api.example.com
-# → ./my-app/admin/{index.html, app.js, app.css, apiplant-admin.json, …}
+```toml
+[admin]
+logo = "/logo.png"   # served from the app's public/ directory
 ```
 
-Drop that directory anywhere static files are served. Left at `APP_DIR/admin`,
-`apiplant run` serves its files at `/admin/` in place of the embedded ones — the
-manifest excepted, which is always the live one built from the running app.
+Want a different console entirely? Turn this one off and serve your own from
+the app's [`public/`](configuration.md#public) directory:
+
+```toml
+[admin]
+enabled = false
+```
+
+## A static copy, hosted elsewhere
+
+`apiplant admin` bakes the same dashboard into a **directory of plain files**
+for hosting away from the API — a CDN, a bucket, a different origin:
+
+```bash
+apiplant admin ./my-app --api https://api.example.com --out ./panel
+# → ./panel/{index.html, app.js, app.css, apiplant-admin.json, …}
+```
+
+`--api` may be a bare domain (the app's `base_path` is appended) or a full base
+URL (used as given); the panel makes cross-origin requests to it, so that origin
+has to allow them. Nothing in the output is secret: the manifest describes the
+same shape your [OpenAPI document](openapi.md) already publishes, and every
+request it makes is authenticated as whoever signed in.
+
+Unlike the built-in dashboard, this copy's manifest is **frozen at build time** —
+re-run the command when models or functions change. The server never reads it
+back; a directory left in the app is just files.
 
 ## What an operator sees
 
@@ -264,18 +285,17 @@ See [Functions § Visibility](functions.md#visibility) and
 
 ## Deploying it
 
-The manifest is baked at build time, so rebuild the dashboard whenever your
-models or functions change:
+There is nothing to deploy for the built-in dashboard: it ships inside the
+`apiplant` binary and its manifest is rebuilt on every boot, so a model or
+function you changed is described correctly the moment the server restarts.
+Compile your functions before starting, or the actions that need them won't be
+listed:
 
 ```bash
-apiplant build ./my-app --release          # compile functions first
-apiplant admin ./my-app --api https://api.example.com
+apiplant build ./my-app --release
+apiplant run ./my-app
 ```
 
-The `--api` value may be a bare domain (the app's `base_path` is appended) or a
-full base URL (used as given). The dashboard makes cross-origin requests to it,
-so that origin has to allow them.
-
-Nothing in the output is secret: the manifest describes the same shape your
-[OpenAPI document](openapi.md) already publishes, and every request it makes is
-authenticated as whoever signed in.
+Because it is served from the app's own origin, it needs no CORS setup and no
+API base URL. For the static copy, re-run `apiplant admin` in the same breath as
+a deploy — its manifest only changes when you rebuild it.

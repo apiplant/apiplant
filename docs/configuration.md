@@ -36,6 +36,7 @@ title   = "My API"          # spec info.title and UI title
 [admin]
 enabled = true               # serve the built-in admin dashboard
 path    = "/admin"           # where it mounts (outside base_path)
+# logo  = "/logo.png"        # your mark instead of the apiplant one
 
 [public]
 enabled   = true             # serve `dir` at the site root when it exists
@@ -91,11 +92,13 @@ See [OpenAPI & Swagger UI](openapi.md).
 |-----|---------|-------|
 | `enabled` | `true` | Serve the admin dashboard. Every app has one: the interface is built into the `apiplant` binary, and its manifest is derived from the app on boot — there is nothing to generate. Set `false` for a deployment that should expose no operator console. |
 | `path` | `/admin` | Where it mounts. Outside `base_path`, so `/admin/` stays put when the API moves to `/api`. Normalised to start with `/` and not end with one. |
+| `logo` | unset | Image shown beside the app name, as a URL the browser can fetch — usually a file in [`public/`](#public), e.g. `/logo.png`. Unset keeps the apiplant mark. |
 
-The dashboard talks to its own origin, so it needs no CORS and never goes stale
-after a model change. An `admin/` directory in the app — the output of
-`apiplant admin` — overrides the embedded build file by file, which is the hook
-for a customised console; the manifest is always the live one either way. See
+The dashboard is served entirely from the binary — the files from the embedded
+build, the manifest from the app being served. Nothing on disk feeds into it, so
+it needs no CORS and can't go stale after a model change. For a console of your
+own, set `enabled = false` and serve one from `public/admin/`. To host a copy of
+this one on another origin, bake it with `apiplant admin`. See
 [Admin dashboard](admin.md).
 
 ## `[public]`

@@ -891,79 +891,6 @@ title = "Doc Test"
 }
 
 #[ntex::test]
-async fn serves_admin_bundle_from_the_app_directory_when_it_has_one() {
-    let db = TempDatabase::create("admin-static").await;
-    let root = temp_dir("admin-static");
-    write_files(
-        &root,
-        &[
-            (
-                "main.toml",
-                &format!(
-                    r#"
-[server]
-base_path = "/api"
-
-[database]
-url = "{}"
-"#,
-                    db.url
-                ),
-            ),
-            ("admin/index.html", "<!doctype html><title>Admin</title>"),
-            ("admin/app.css", "body { color: red; }"),
-        ],
-    );
-
-    let state = load_state(&root).await;
-    let app = init_http_app!(state);
-
-    let index =
-        test::call_service(&app, test::TestRequest::get().uri("/admin/").to_request()).await;
-    assert_eq!(index.status().as_u16(), 200);
-    assert_eq!(
-        index.headers().get(CONTENT_TYPE).unwrap(),
-        "text/html; charset=utf-8"
-    );
-    let body = String::from_utf8(test::read_body(index).await.to_vec()).unwrap();
-    assert!(body.contains("<title>Admin</title>"));
-
-    let manifest = test::call_service(
-        &app,
-        test::TestRequest::get()
-            .uri("/admin/apiplant-admin.json")
-            .to_request(),
-    )
-    .await;
-    assert_eq!(manifest.status().as_u16(), 200);
-    assert_eq!(
-        manifest.headers().get(CONTENT_TYPE).unwrap(),
-        "application/json"
-    );
-    // The manifest is always the one built from *this* app, never a file on
-    // disk: a stale generated copy can't misdescribe what the server is serving.
-    let manifest = read_json(manifest).await;
-    assert!(manifest["title"].as_str().unwrap().ends_with("admin"));
-    assert!(manifest["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|r| r["name"] == "user"));
-
-    let missing = test::call_service(
-        &app,
-        test::TestRequest::get()
-            .uri("/admin/../../main.toml")
-            .to_request(),
-    )
-    .await;
-    assert_eq!(missing.status().as_u16(), 404);
-
-    fs::remove_dir_all(root).unwrap();
-    db.cleanup().await;
-}
-
-#[ntex::test]
 async fn admin_is_served_from_the_binary_for_an_app_that_generated_nothing() {
     let db = TempDatabase::create("admin-embedded").await;
     let root = temp_dir("admin-embedded");
@@ -1010,6 +937,35 @@ async fn admin_is_served_from_the_binary_for_an_app_that_generated_nothing() {
     let bare = test::call_service(&app, test::TestRequest::get().uri("/admin").to_request()).await;
     assert_eq!(bare.status().as_u16(), 308);
     assert_eq!(bare.headers().get("location").unwrap(), "/admin/");
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn a_directory_in_the_app_never_shadows_the_dashboard() {
+    let db = TempDatabase::create("admin-stale").await;
+    let root = temp_dir("admin-stale");
+    write_files(
+        &root,
+        &[
+            ("main.toml", &format!("[database]\nurl = \"{}\"\n", db.url)),
+            // Left over from an older apiplant, or just someone's stray files.
+            ("admin/index.html", "<!doctype html><title>Stale</title>"),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let index =
+        test::call_service(&app, test::TestRequest::get().uri("/admin/").to_request()).await;
+    assert_eq!(index.status().as_u16(), 200);
+    let body = String::from_utf8(test::read_body(index).await.to_vec()).unwrap();
+    assert!(
+        !body.contains("Stale"),
+        "a generated copy shadowed the live dashboard"
+    );
 
     fs::remove_dir_all(root).unwrap();
     db.cleanup().await;

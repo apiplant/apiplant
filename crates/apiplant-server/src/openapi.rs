@@ -549,9 +549,7 @@ fn function_path(
     let note = match access {
         FunctionAccess::Public => "Public — no authentication required.".to_string(),
         FunctionAccess::Authenticated => "Requires authentication.".to_string(),
-        FunctionAccess::Member => {
-            "Requires membership of the active organization.".to_string()
-        }
+        FunctionAccess::Member => "Requires membership of the active organization.".to_string(),
         FunctionAccess::Role(role) => {
             format!("Requires the `{role}` role in the active organization.")
         }

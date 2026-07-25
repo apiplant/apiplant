@@ -125,8 +125,10 @@ export function AuthPage() {
     <div class="relative z-10 flex min-h-screen flex-col">
       <header class="flex items-center justify-between px-5 py-4">
         <div class="flex items-center gap-2">
-          <HeadMark class="h-7" />
-          <span class="text-sm font-semibold tracking-tight">{current().app_name}</span>
+          <HeadMark class="h-7" src={current().logo} />
+          <span class="text-sm font-semibold tracking-tight">
+            {current().app_name} <span class="text-accent">admin</span>
+          </span>
         </div>
         <ThemeToggle />
       </header>

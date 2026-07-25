@@ -38,7 +38,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Authentication](docs/authentication.md) | users, API keys, sessions, OAuth, extending `user` |
 | [Functions](docs/functions.md) | writing & loading compiled plugins over the stable ABI |
 | [Lifecycle hooks](docs/hooks.md) | running functions before/after every CRUD operation |
-| [Admin dashboard](docs/admin.md) | the generated operator UI, `[admin]` config, action forms |
+| [Admin dashboard](docs/admin.md) | the built-in operator UI, `[admin]` config, action forms |
 | [API reference](docs/api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](docs/openapi.md) | the generated spec and interactive docs |
 
@@ -391,7 +391,7 @@ lifecycle hooks, one concept at a time — and
 apiplant run [APP_DIR]       serve the app (APP_DIR defaults to `.`)
 apiplant build [APP_DIR]     compile functions/* into loadable libraries
 apiplant check [APP_DIR]     load and validate the app, then exit
-apiplant admin [APP_DIR]     emit a static admin panel for the app
+apiplant admin [APP_DIR]     bake a static admin panel to host elsewhere
 apiplant studio              serve the visual editor from this binary
 ```
 
@@ -446,18 +446,7 @@ local-first: the browser opens your app directory directly and reads and writes
 it in place, so nothing is uploaded and this command is only a file server. It
 binds loopback by default.
 
-### Static admin panel
-
-```bash
-apiplant admin ./my-app --api https://api.example.com --out ./my-app/admin
-```
-
-The command reads the app directory at build time, bakes its resources,
-permissions, auth model and callable function endpoints into a static frontend,
-and writes a self-contained admin app (`index.html`, `app.js`, `app.css`, a
-JSON manifest, and the shared studio assets) to the output directory. The UI is
-generated from the dedicated top-level **`admin/` Vite app**, built with Solid
-and Tailwind while reusing studio's design system.
+### The dashboard, in more detail
 
 It is built for the people who *run* the app, not the developer who wrote the
 models — so it shows names rather than ids, forms rather than JSON, and only
@@ -472,11 +461,36 @@ what the person signed in is allowed to touch:
 * **Purpose-built screens** for the auth resources — Team, Organization, Your
   account, API keys — instead of raw `membership` and `user` tables.
 
+The UI is a dedicated top-level **`admin/` Vite app**, built with Solid and
+Tailwind while reusing studio's design system, and embedded in the binary.
+Everything it knows about an app — resources, permissions, auth model, callable
+functions — is resolved on boot and served as a JSON manifest, so the same
+JavaScript serves every app and can never describe a model you've since changed.
+
 Tune it per resource with an `[admin]` section (`label`, `group`, `columns`,
 `roles`, …), per field with `[fields.<name>.admin]` (`widget`, `options`,
 `help`), and per function with an `admin { … }` block. All of it is
 presentation: `[permissions]` is what the server enforces. See
 [docs/admin.md](docs/admin.md).
+
+Want something else entirely? Set `[admin] enabled = false` and serve your own
+console out of `public/admin/` like any other static page.
+
+### A static panel, hosted elsewhere
+
+```bash
+apiplant admin ./my-app --api https://api.example.com --out ./panel
+```
+
+Writes the same dashboard out as a directory of plain files — `index.html`,
+`app.js`, `app.css`, the images, and a JSON manifest baked from the app — for
+hosting somewhere other than the API: a CDN, a bucket, a different origin. It
+holds no secrets, and reaches the API over CORS, so that origin has to allow it.
+
+The manifest is frozen at the moment you run the command, so re-run it when
+models or functions change. The dashboard served at `/admin/` has no such
+problem — it is rebuilt from the app on every boot — and nothing written here is
+ever read back by the server.
 
 Develop the admin app like studio itself:
 
@@ -491,10 +505,6 @@ pnpm build     # → admin/dist, which the Rust build embeds
 `cargo build` embeds both into the binary — a checkout builds without running
 `pnpm` first. Rebuild and commit the `dist` you changed when you change either
 front end.
-
-If that bundle lives in `APP_DIR/admin`, `apiplant run` serves it at `/admin/`
-in place of the embedded dashboard, file by file — which is how you ship a
-customised console.
 
 ## Built on
 

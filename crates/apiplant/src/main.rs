@@ -4,7 +4,7 @@
 //! apiplant run [APP_DIR]       # serve the app in APP_DIR (default: current dir)
 //! apiplant build [APP_DIR]     # compile functions/* into loadable libraries
 //! apiplant check [APP_DIR]     # load & validate the app, then exit
-//! apiplant admin [APP_DIR]     # emit a static admin panel for the app
+//! apiplant admin [APP_DIR]     # bake a static admin panel to host elsewhere
 //! apiplant studio              # serve the visual editor from this binary
 //! ```
 //!
@@ -26,21 +26,22 @@ usage:
   apiplant run [APP_DIR]       serve the app (default dir `.`)
   apiplant build [APP_DIR]     compile functions/* into loadable libraries
   apiplant check [APP_DIR]     load and validate the app, then exit
-  apiplant admin [APP_DIR]     emit a static admin panel for the app
+  apiplant admin [APP_DIR]     bake a static admin panel to host elsewhere
   apiplant studio              serve the visual editor on http://127.0.0.1:5273
 
 options:
   --build           (run) compile any out-of-date function sources first
   --release         (build) compile with optimisations
   --force           (build) rebuild even when the library is up to date
-  --api <URL>       (admin) API domain or full base URL to talk to
-  --out <DIR>       (admin) where to write the static admin build (default: APP_DIR/admin)
+  --api <URL>       (admin) API domain or full base URL the panel talks to
+  --out <DIR>       (admin) where to write it (default: APP_DIR/admin)
   --host <ADDR>     (studio) interface to bind (default 127.0.0.1)
   --port <PORT>     (studio) port to listen on (default 5273)
   -h, --help        show this message
 
-Every served app also gets the admin dashboard at `/admin/` — it is built into
-this binary, needs no `apiplant admin` run, and is switched off with
+Every served app gets the admin dashboard at `/admin/` — it is built into this
+binary and describes whichever app is being served, so you only need `admin` to
+host a copy on another origin. Switch the built-in one off with
 `[admin] enabled = false` in main.toml.
 
 `build` shells out to a toolchain per language — cargo for .rs, cc for .c, zig
@@ -157,10 +158,11 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             if build_first {
                 return Err("`--build` only applies to `run`".into());
             }
-            if api.is_some() || out.is_some() || host.is_some() || port.is_some() {
-                return Err(
-                    "`--api`, `--out`, `--host` and `--port` do not apply to `build`".into(),
-                );
+            if api.is_some() || out.is_some() {
+                return Err("`--api` and `--out` only apply to `admin`".into());
+            }
+            if host.is_some() || port.is_some() {
+                return Err("`--host` and `--port` only apply to `studio`".into());
             }
             Command::Build { release, force }
         }
@@ -368,10 +370,7 @@ mod tests {
         ));
         assert_eq!(args(&["build", "./my-app"]).dir, "./my-app");
         assert!(matches!(args(&["check", "./app"]).command, Command::Check));
-        assert!(matches!(
-            args(&["admin", "./app", "--api", "https://example.com"]).command,
-            Command::Admin { .. }
-        ));
+        assert!(matches!(args(&["studio"]).command, Command::Studio { .. }));
         assert!(matches!(
             args(&["run", "./app"]).command,
             Command::Run { build_first: false }
@@ -467,6 +466,8 @@ mod tests {
 
     #[test]
     fn admin_requires_api_flag() {
+        // The static panel is hosted away from the API, so it has to be told
+        // which origin to talk to — there is no sensible default.
         let err = parse(vec!["admin".to_string(), ".".to_string()]).unwrap_err();
         assert!(err.contains("--api"));
     }

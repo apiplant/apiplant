@@ -138,9 +138,10 @@ impl Default for DocsConfig {
 
 /// The built-in admin dashboard, served from the binary itself.
 ///
-/// Every app gets one without generating anything: the interface is embedded in
+/// Every app gets one, and there is only one: the interface is embedded in
 /// `apiplant` and its manifest is derived from the app on boot. Turn it off for
-/// a deployment that shouldn't expose an operator console at all.
+/// a deployment that shouldn't expose an operator console at all — an app that
+/// wants its own can serve one from `public/` like any other page.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AdminConfig {
@@ -148,6 +149,9 @@ pub struct AdminConfig {
     pub enabled: bool,
     /// Path the dashboard is served at, outside `base_path`.
     pub path: String,
+    /// Image shown in place of the apiplant mark, as a URL the browser can
+    /// fetch — usually a file in `public/`. Unset keeps the apiplant mark.
+    pub logo: Option<String>,
 }
 
 impl Default for AdminConfig {
@@ -155,6 +159,7 @@ impl Default for AdminConfig {
         AdminConfig {
             enabled: true,
             path: "/admin".to_string(),
+            logo: None,
         }
     }
 }

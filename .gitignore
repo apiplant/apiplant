@@ -18,6 +18,8 @@ examples/**/functions/*.dll
 examples/**/functions/**/Cargo.lock
 examples/**/functions/**/target/
 
+# Static admin panels baked into an example by `apiplant admin`.
+examples/**/admin
+
 pgdata
 .apiplant-build/
-examples/**/admin

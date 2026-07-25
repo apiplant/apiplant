@@ -347,7 +347,10 @@ mod tests {
         ] {
             assert_eq!(FunctionAccess::parse(&value.as_string()), Some(value));
         }
-        assert_eq!(FunctionAccess::parse("  member "), Some(FunctionAccess::Member));
+        assert_eq!(
+            FunctionAccess::parse("  member "),
+            Some(FunctionAccess::Member)
+        );
         // A bare `role:` names nobody, so it is not a role.
         assert_eq!(FunctionAccess::parse("role:"), None);
         assert_eq!(FunctionAccess::parse("owner"), None);

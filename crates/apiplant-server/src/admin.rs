@@ -1,10 +1,12 @@
 //! The admin dashboard: its manifest, and baking a static copy of it.
 //!
-//! The dashboard itself is embedded in the binary, so the server can [serve it
-//! live](crate::run) for any app with nothing generated. [`build`] writes the
-//! same files out as a plain directory (`index.html`, `app.js`, `app.css` and a
-//! manifest) that can be hosted anywhere: it talks to the deployed API over
-//! CORS and holds no secrets. Everything the interface needs to know
+//! The dashboard is embedded in the binary and [served live](crate::run) for
+//! every app, so the common case generates nothing. [`build`] writes the same
+//! files out as a plain directory (`index.html`, `app.js`, `app.css` and a
+//! manifest) for **hosting it somewhere other than the API** — a CDN, a bucket,
+//! a different origin entirely. That copy is never read back by the server:
+//! the running dashboard always describes the running app. Everything it needs
+//! to know
 //! about the app — which resources exist, what to call them, which fields to
 //! show, who may see what — is resolved *here*, at build time, and written into
 //! `apiplant-admin.json`. The shipped JavaScript is the same for every app.
@@ -46,6 +48,8 @@ pub struct Options {
 struct AdminManifest {
     title: String,
     app_name: String,
+    /// URL of the app's own mark, when it configured one.
+    logo: Option<String>,
     api_base_url: String,
     docs_url: Option<String>,
     auth: AuthManifest,
@@ -421,6 +425,7 @@ fn build_manifest(
     Ok(AdminManifest {
         title: format!("{app_name} admin"),
         app_name,
+        logo: app.config.admin.logo.clone(),
         api_base_url,
         docs_url,
         auth: AuthManifest {

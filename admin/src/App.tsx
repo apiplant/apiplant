@@ -128,8 +128,14 @@ function Shell() {
           onClick={() => setNavOpen(false)}
           aria-hidden="true"
         />
+        {/*
+          On a wide screen the sidebar sticks below the 4rem top bar and is
+          capped to what's left of the viewport, scrolling on its own — an app
+          with enough resources to overflow the screen would otherwise push the
+          page taller and carry its own navigation off the top.
+        */}
         <aside
-          class={`fixed inset-y-0 left-0 z-40 w-64 shrink-0 overflow-y-auto border-r border-line bg-surface pt-16 transition-transform lg:static lg:z-auto lg:translate-x-0 lg:bg-surface/40 lg:pt-0 ${
+          class={`fixed inset-y-0 left-0 z-40 w-64 shrink-0 overflow-y-auto overscroll-contain border-r border-line bg-surface pt-16 transition-transform lg:sticky lg:top-16 lg:z-auto lg:h-[calc(100dvh-4rem)] lg:translate-x-0 lg:self-start lg:bg-surface/40 lg:pt-0 ${
             navOpen() ? "translate-x-0" : "-translate-x-full"
           }`}
         >
@@ -167,9 +173,9 @@ function TopBar(props: { onToggleNav: () => void }) {
         class="flex items-center gap-2 transition-opacity hover:opacity-80"
         onClick={() => navigate({ kind: "dashboard" })}
       >
-        <HeadMark class="h-7" />
+        <HeadMark class="h-7" src={manifest()?.logo} />
         <span class="hidden text-sm font-semibold tracking-tight text-ink sm:block">
-          {manifest()?.app_name}
+          {manifest()?.app_name} <span class="text-accent">admin</span>
         </span>
       </button>
 

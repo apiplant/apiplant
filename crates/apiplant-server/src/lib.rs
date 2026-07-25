@@ -204,11 +204,9 @@ async fn admin_asset(
 
 /// Serve one file of the dashboard.
 ///
-/// The manifest is answered from memory — it describes *this* app, and is built
-/// on boot rather than generated into a directory first. Everything else comes
-/// from the app's own `admin/` build when it has one (so `apiplant admin`
-/// output still wins, customisations and all) and from the embedded copy
-/// otherwise.
+/// Everything comes out of the binary: the files from the embedded build, the
+/// manifest from memory — it describes *this* app, and is built on boot. There
+/// is no directory to generate and none to go stale.
 fn serve_admin(state: &AppState, requested: &str) -> HttpResponse {
     let requested = requested.trim_start_matches('/');
 
@@ -216,10 +214,6 @@ fn serve_admin(state: &AppState, requested: &str) -> HttpResponse {
         return HttpResponse::Ok()
             .content_type("application/json")
             .body(state.admin_manifest.as_str().to_owned());
-    }
-
-    if let Some(root) = state.statics.admin_dir.as_deref() {
-        return serve_file(root, requested).unwrap_or_else(|| HttpResponse::NotFound().finish());
     }
 
     match admin::asset(requested) {
@@ -465,13 +459,7 @@ pub async fn run(app: App) -> anyhow::Result<()> {
     let statics = Statics::resolve(&app);
     let admin_manifest = match &statics.admin_path {
         Some(path) => {
-            tracing::info!(
-                "  admin -> {path}/{}",
-                match &statics.admin_dir {
-                    Some(dir) => format!("  (from {})", dir.display()),
-                    None => String::new(),
-                }
-            );
+            tracing::info!("  admin -> {path}/");
             admin::manifest_json(&app, &registry, base_path.clone()).unwrap_or_else(|error| {
                 tracing::error!(%error, "failed to build the admin manifest — the dashboard will not load");
                 "{}".to_string()
