@@ -1,18 +1,40 @@
 # The admin dashboard
 
-`apiplant admin` bakes a **static dashboard** for an app: a directory of plain
-files that talks to your deployed API over HTTPS and holds no secrets. It is
-built for the people who *run* the business — not for the developer who wrote
-the models — so it shows names rather than ids, forms rather than JSON, and only
-the things the person signed in is allowed to touch.
+A **dashboard for the people who run the business** — not for the developer who
+wrote the models — so it shows names rather than ids, forms rather than JSON,
+and only the things the person signed in is allowed to touch.
+
+Every served app has one, with nothing to generate:
+
+```bash
+apiplant run ./my-app     # → http://localhost:8080/admin/
+```
+
+The interface is embedded in the `apiplant` binary. Its manifest — the resources,
+permissions, auth model and callable functions described below — is derived from
+the app on boot, so the dashboard talks to its own origin and can't fall out of
+step with the models it's showing. Switch it off, or move it, in `main.toml`:
+
+```toml
+[admin]
+enabled = true
+path    = "/admin"
+```
+
+## A static copy
+
+`apiplant admin` bakes the same dashboard into a **directory of plain files**
+that talks to a deployed API over CORS and holds no secrets — for hosting the
+console somewhere other than the API, or for customising it.
 
 ```bash
 apiplant admin ./my-app --api https://api.example.com
 # → ./my-app/admin/{index.html, app.js, app.css, apiplant-admin.json, …}
 ```
 
-Drop that directory anywhere static files are served. If you leave it at
-`APP_DIR/admin`, `apiplant run` serves it at `/admin/` alongside the API.
+Drop that directory anywhere static files are served. Left at `APP_DIR/admin`,
+`apiplant run` serves its files at `/admin/` in place of the embedded ones — the
+manifest excepted, which is always the live one built from the running app.
 
 ## What an operator sees
 

@@ -11,6 +11,7 @@ apiplant-core.workspace = true
 apiplant-db.workspace = true
 apiplant-auth.workspace = true
 apiplant-abi.workspace = true
+apiplant-assets.workspace = true
 abi_stable.workspace = true
 libloading.workspace = true
 ntex.workspace = true

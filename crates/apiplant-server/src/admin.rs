@@ -1,8 +1,10 @@
-//! `apiplant admin` — bake a static dashboard for an app.
+//! The admin dashboard: its manifest, and baking a static copy of it.
 //!
-//! The output is a plain directory of files (`index.html`, `app.js`, `app.css`
-//! and a manifest) that can be served from anywhere: it talks to the deployed
-//! API over CORS and holds no secrets. Everything the interface needs to know
+//! The dashboard itself is embedded in the binary, so the server can [serve it
+//! live](crate::run) for any app with nothing generated. [`build`] writes the
+//! same files out as a plain directory (`index.html`, `app.js`, `app.css` and a
+//! manifest) that can be hosted anywhere: it talks to the deployed API over
+//! CORS and holds no secrets. Everything the interface needs to know
 //! about the app — which resources exist, what to call them, which fields to
 //! show, who may see what — is resolved *here*, at build time, and written into
 //! `apiplant-admin.json`. The shipped JavaScript is the same for every app.
@@ -26,21 +28,13 @@ use apiplant_core::schema::{
     is_auth_resource, relation_name, titleize, Access, Field, FieldType, OnDelete, Resource, Widget,
 };
 use apiplant_core::App;
-use apiplant_server::functions::FunctionRegistry;
 use serde::Serialize;
 use serde_json::Value;
 
-const INDEX_HTML: &str = include_str!(env!("APIPLANT_ADMIN_INDEX_PATH"));
-const APP_JS: &str = include_str!(env!("APIPLANT_ADMIN_JS_PATH"));
-const APP_CSS: &str = include_str!(env!("APIPLANT_ADMIN_CSS_PATH"));
-const HEAD_PNG: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../studio/public/head.png"
-));
-const HEAD_INVERTED_PNG: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../studio/public/head-inverted.png"
-));
+use crate::functions::FunctionRegistry;
+
+/// Name of the manifest file the dashboard fetches on load.
+pub const MANIFEST_FILE: &str = "apiplant-admin.json";
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -233,14 +227,49 @@ pub fn build(app_dir: &Path, options: Options) -> Result<PathBuf> {
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
-    write_text(output_dir.join("index.html"), INDEX_HTML)?;
-    write_text(output_dir.join("app.js"), APP_JS)?;
-    write_text(output_dir.join("app.css"), &admin_css())?;
-    write_json(output_dir.join("apiplant-admin.json"), &manifest)?;
-    write_bytes(output_dir.join("head.png"), HEAD_PNG)?;
-    write_bytes(output_dir.join("head-inverted.png"), HEAD_INVERTED_PNG)?;
+    for (relative, _) in apiplant_assets::ADMIN {
+        let path = output_dir.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        let bytes = asset(relative).expect("listed asset");
+        write_bytes(path, &bytes)?;
+    }
+    write_json(output_dir.join(MANIFEST_FILE), &manifest)?;
 
     Ok(output_dir)
+}
+
+/// One file of the embedded dashboard, ready to serve or write out.
+///
+/// The stylesheet is rewritten on the way past: Vite emits absolute
+/// `url(/head.png)` references, and the dashboard is never at the site root —
+/// it is under `/admin/`, or in a directory someone hosts wherever they like.
+pub fn asset(path: &str) -> Option<std::borrow::Cow<'static, [u8]>> {
+    use std::borrow::Cow;
+
+    let bytes = apiplant_assets::find(apiplant_assets::ADMIN, path)?;
+    if path.trim_matches('/') == "app.css" {
+        let css = String::from_utf8_lossy(bytes)
+            .replace("url(/head.png)", "url(./head.png)")
+            .replace("url(/head-inverted.png)", "url(./head-inverted.png)");
+        return Some(Cow::Owned(css.into_bytes()));
+    }
+    Some(Cow::Borrowed(bytes))
+}
+
+/// The manifest for an app already loaded by the server, as JSON.
+///
+/// `api_base_url` is the prefix the dashboard puts in front of every request;
+/// served from the app's own origin that is just the API's `base_path`.
+pub fn manifest_json(
+    app: &App,
+    functions: &FunctionRegistry,
+    api_base_url: String,
+) -> Result<String> {
+    let manifest = build_manifest(app, functions, api_base_url)?;
+    Ok(serde_json::to_string(&manifest)?)
 }
 
 fn build_manifest(
@@ -758,16 +787,6 @@ fn normalize_api_base(raw: &str, base_path: &str, prefer_https: bool) -> Result<
     Ok(url)
 }
 
-fn admin_css() -> String {
-    APP_CSS
-        .replace("url(/head.png)", "url(./head.png)")
-        .replace("url(/head-inverted.png)", "url(./head-inverted.png)")
-}
-
-fn write_text(path: PathBuf, text: &str) -> Result<()> {
-    fs::write(&path, text).with_context(|| format!("failed to write {}", path.display()))
-}
-
 fn write_bytes(path: PathBuf, bytes: &[u8]) -> Result<()> {
     fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))
 }
@@ -864,7 +883,11 @@ mod tests {
         let app_dir = temp_dir("files");
         let out_dir = temp_dir("files-out");
         fs::create_dir_all(app_dir.join("models")).unwrap();
-        fs::write(app_dir.join("main.toml"), "[server]\nbase_path = \"/api\"\n").unwrap();
+        fs::write(
+            app_dir.join("main.toml"),
+            "[server]\nbase_path = \"/api\"\n",
+        )
+        .unwrap();
 
         let written = build(
             &app_dir,

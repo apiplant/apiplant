@@ -12,78 +12,20 @@ use apiplant_auth::Authenticator;
 use apiplant_core::App;
 use apiplant_db::Db;
 use ntex::http::header::CONTENT_TYPE;
-use ntex::web::{self, guard, test, App as WebApp};
+use ntex::web::test;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::auth_routes;
-use super::crud;
-use super::docs_page;
 use super::functions::FunctionRegistry;
-use super::health;
 use super::openapi;
-use super::openapi_spec;
 use super::state::AppState;
 
 const ADMIN_DB_URL: &str = "postgres://postgres@127.0.0.1:55432/postgres";
 
 macro_rules! init_http_app {
-    ($state:expr) => {{
-        let state = $state.clone();
-        let base_path = state.app.config.server.base_path.clone();
-        let docs_enabled = state.app.config.docs.enabled;
-        let docs_path = state.app.config.docs.path.clone();
-        let domain = state.app.config.server.domain.clone();
-        let admin_enabled = state.admin_dir.is_some();
-
-        test::init_service({
-            let mut scope = web::scope(base_path.as_str());
-            if let Some(d) = &domain {
-                scope = scope.guard(guard::Host(d.clone()));
-            }
-            if docs_enabled {
-                scope = scope
-                    .route("/openapi.json", web::get().to(openapi_spec))
-                    .route(&docs_path, web::get().to(docs_page));
-            }
-            let scope = scope
-                .route("/_health", web::get().to(health))
-                .route("/auth/register", web::post().to(auth_routes::register))
-                .route("/auth/login", web::post().to(auth_routes::login))
-                .route("/auth/apikeys", web::post().to(auth_routes::create_api_key))
-                .route(
-                    "/functions/{name}",
-                    web::route().to(super::function_routes::invoke),
-                )
-                .service(
-                    web::resource("/{resource}")
-                        .route(web::get().to(crud::list))
-                        .route(web::post().to(crud::create)),
-                )
-                .service(
-                    web::resource("/{resource}/{id}")
-                        .route(web::get().to(crud::get))
-                        .route(web::patch().to(crud::update))
-                        .route(web::put().to(crud::update))
-                        .route(web::delete().to(crud::delete)),
-                )
-                .route("/{parent}/{id}/{child}", web::get().to(crud::nested_list));
-            let mut app = WebApp::new().state(state.clone());
-            if admin_enabled {
-                let mut admin_index_route = web::resource("/admin/");
-                let mut admin_asset_route = web::resource("/admin/{path:.*}");
-                if let Some(d) = &domain {
-                    admin_index_route = admin_index_route.guard(guard::Host(d.clone()));
-                    admin_asset_route = admin_asset_route.guard(guard::Host(d.clone()));
-                }
-                app = app
-                    .service(admin_index_route.route(web::get().to(super::admin_index)))
-                    .service(admin_asset_route.route(web::get().to(super::admin_asset)));
-            }
-            app.service(scope)
-        })
-        .await
-    }};
+    ($state:expr) => {
+        test::init_service(build_app!($state)).await
+    };
 }
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -258,12 +200,17 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
     let spec = openapi::build(&app, &functions);
     let spec_url = format!("{}/openapi.json", app.config.server.base_path);
 
+    let admin_manifest = crate::admin::manifest_json(&app, &functions, String::new())
+        .expect("build the admin manifest");
+    let statics = crate::state::Statics::resolve(&app);
+
     AppState {
         app: Arc::new(app),
         db,
         auth: Authenticator::new(b"test-secret".to_vec(), 3600),
         functions: Arc::new(functions),
-        admin_dir: root.join("admin").is_dir().then(|| root.join("admin")),
+        statics: Arc::new(statics),
+        admin_manifest: Arc::new(admin_manifest),
         openapi_json: Arc::new(serde_json::to_string(&spec).unwrap()),
         docs_html: Arc::new(openapi::swagger_ui_html(
             &spec_url,
@@ -944,7 +891,7 @@ title = "Doc Test"
 }
 
 #[ntex::test]
-async fn serves_admin_bundle_when_directory_exists() {
+async fn serves_admin_bundle_from_the_app_directory_when_it_has_one() {
     let db = TempDatabase::create("admin-static").await;
     let root = temp_dir("admin-static");
     write_files(
@@ -965,7 +912,6 @@ url = "{}"
             ),
             ("admin/index.html", "<!doctype html><title>Admin</title>"),
             ("admin/app.css", "body { color: red; }"),
-            ("admin/apiplant-admin.json", "{\"title\":\"Admin\"}"),
         ],
     );
 
@@ -994,7 +940,15 @@ url = "{}"
         manifest.headers().get(CONTENT_TYPE).unwrap(),
         "application/json"
     );
-    assert_eq!(read_json(manifest).await["title"], "Admin");
+    // The manifest is always the one built from *this* app, never a file on
+    // disk: a stale generated copy can't misdescribe what the server is serving.
+    let manifest = read_json(manifest).await;
+    assert!(manifest["title"].as_str().unwrap().ends_with("admin"));
+    assert!(manifest["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["name"] == "user"));
 
     let missing = test::call_service(
         &app,
@@ -1004,6 +958,192 @@ url = "{}"
     )
     .await;
     assert_eq!(missing.status().as_u16(), 404);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn admin_is_served_from_the_binary_for_an_app_that_generated_nothing() {
+    let db = TempDatabase::create("admin-embedded").await;
+    let root = temp_dir("admin-embedded");
+    write_files(
+        &root,
+        &[("main.toml", &format!("[database]\nurl = \"{}\"\n", db.url))],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    // No `admin/` directory anywhere — the dashboard still loads.
+    assert!(!root.join("admin").exists());
+    let index =
+        test::call_service(&app, test::TestRequest::get().uri("/admin/").to_request()).await;
+    assert_eq!(index.status().as_u16(), 200);
+    let body = String::from_utf8(test::read_body(index).await.to_vec()).unwrap();
+    assert!(body.contains("<script"));
+
+    // Its manifest describes this app, and points at this origin's API.
+    let manifest = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/admin/apiplant-admin.json")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(manifest.status().as_u16(), 200);
+    let manifest = read_json(manifest).await;
+    assert_eq!(manifest["api_base_url"], "");
+
+    // The stylesheet's absolute asset URLs are rewritten, or the dashboard
+    // would ask the API for `/head.png`.
+    let css = test::call_service(
+        &app,
+        test::TestRequest::get().uri("/admin/app.css").to_request(),
+    )
+    .await;
+    assert_eq!(css.status().as_u16(), 200);
+    let css = String::from_utf8(test::read_body(css).await.to_vec()).unwrap();
+    assert!(!css.contains("url(/head.png)"));
+
+    // `/admin` resolves as a directory so relative asset URLs work.
+    let bare = test::call_service(&app, test::TestRequest::get().uri("/admin").to_request()).await;
+    assert_eq!(bare.status().as_u16(), 308);
+    assert_eq!(bare.headers().get("location").unwrap(), "/admin/");
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn admin_can_be_switched_off() {
+    let db = TempDatabase::create("admin-off").await;
+    let root = temp_dir("admin-off");
+    write_files(
+        &root,
+        &[(
+            "main.toml",
+            &format!(
+                "[database]\nurl = \"{}\"\n\n[admin]\nenabled = false\n",
+                db.url
+            ),
+        )],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let index =
+        test::call_service(&app, test::TestRequest::get().uri("/admin/").to_request()).await;
+    assert_eq!(index.status().as_u16(), 404);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn a_public_directory_is_served_at_the_root_alongside_the_api() {
+    let db = TempDatabase::create("public").await;
+    let root = temp_dir("public");
+    write_files(
+        &root,
+        &[
+            ("main.toml", &format!("[database]\nurl = \"{}\"\n", db.url)),
+            (
+                "models/note.toml",
+                r#"
+[resource]
+name = "note"
+scope = "global"
+
+[permissions]
+list = "public"
+
+[fields.title]
+type = "string"
+"#,
+            ),
+            ("public/index.html", "<h1>home</h1>"),
+            ("public/style.css", "body { margin: 0 }"),
+            ("public/guide/index.html", "<h1>guide</h1>"),
+            ("public/404.html", "<h1>lost</h1>"),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    for (uri, expected) in [
+        ("/", "<h1>home</h1>"),
+        ("/index.html", "<h1>home</h1>"),
+        ("/style.css", "body { margin: 0 }"),
+        ("/guide/", "<h1>guide</h1>"),
+        ("/guide", "<h1>guide</h1>"),
+    ] {
+        let resp = test::call_service(&app, test::TestRequest::get().uri(uri).to_request()).await;
+        assert_eq!(resp.status().as_u16(), 200, "{uri}");
+        let body = String::from_utf8(test::read_body(resp).await.to_vec()).unwrap();
+        assert_eq!(body, expected, "{uri}");
+    }
+
+    // The API still owns everything that isn't a file: a static site at the
+    // root must not shadow `/{resource}`.
+    let list = test::call_service(&app, test::TestRequest::get().uri("/note").to_request()).await;
+    assert_eq!(list.status().as_u16(), 200);
+    assert!(read_json(list).await.is_array());
+
+    // Anything unrouted gets the app's 404 page, with a 404 status.
+    // A path no route claims at all — two-segment paths still belong to the
+    // API's `/{resource}/{id}`, and answer in JSON as they always did.
+    let missing = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/no/such/page/here")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(missing.status().as_u16(), 404);
+    let body = String::from_utf8(test::read_body(missing).await.to_vec()).unwrap();
+    assert_eq!(body, "<h1>lost</h1>");
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
+async fn the_404_page_can_be_named_in_settings() {
+    let db = TempDatabase::create("public-404").await;
+    let root = temp_dir("public-404");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    "[database]\nurl = \"{}\"\n\n[public]\nnot_found = \"missing.html\"\n",
+                    db.url
+                ),
+            ),
+            ("public/index.html", "<h1>home</h1>"),
+            ("public/missing.html", "<h1>gone</h1>"),
+            // Present, but not the configured page, so it must not be used.
+            ("public/404.html", "<h1>unused</h1>"),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let missing = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/no/such/page/here")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(missing.status().as_u16(), 404);
+    let body = String::from_utf8(test::read_body(missing).await.to_vec()).unwrap();
+    assert_eq!(body, "<h1>gone</h1>");
 
     fs::remove_dir_all(root).unwrap();
     db.cleanup().await;
@@ -2495,7 +2635,11 @@ fn permissioned_function(name: &str, permission: &str) -> BoxedFunction {
             }
         }
 
-        fn invoke(&self, _host: HostApi_TO<'_, RBox<()>>, _input: RStr<'_>) -> RResult<RString, RString> {
+        fn invoke(
+            &self,
+            _host: HostApi_TO<'_, RBox<()>>,
+            _input: RStr<'_>,
+        ) -> RResult<RString, RString> {
             RResult::ROk(RString::from(json!({ "ran": true }).to_string()))
         }
     }
@@ -2636,10 +2780,13 @@ async fn function_permissions_gate_endpoints_by_membership_and_role() {
 
     for name in ["colleagues", "bosses"] {
         assert_eq!(
-            test::call_service(&app, call(&format!("/api/functions/{name}"), Some(&ana), Some(&org_id)))
-                .await
-                .status()
-                .as_u16(),
+            test::call_service(
+                &app,
+                call(&format!("/api/functions/{name}"), Some(&ana), Some(&org_id))
+            )
+            .await
+            .status()
+            .as_u16(),
             200,
             "an admin should be able to call {name}"
         );
@@ -2676,17 +2823,23 @@ async fn function_permissions_gate_endpoints_by_membership_and_role() {
     .await;
 
     assert_eq!(
-        test::call_service(&app, call("/api/functions/colleagues", Some(&ben), Some(&org_id)))
-            .await
-            .status()
-            .as_u16(),
+        test::call_service(
+            &app,
+            call("/api/functions/colleagues", Some(&ben), Some(&org_id))
+        )
+        .await
+        .status()
+        .as_u16(),
         200
     );
     assert_eq!(
-        test::call_service(&app, call("/api/functions/bosses", Some(&ben), Some(&org_id)))
-            .await
-            .status()
-            .as_u16(),
+        test::call_service(
+            &app,
+            call("/api/functions/bosses", Some(&ben), Some(&org_id))
+        )
+        .await
+        .status()
+        .as_u16(),
         403
     );
 

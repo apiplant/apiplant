@@ -340,9 +340,11 @@ straight into the organisation that owns its email domain.
 | `apiplant-db`          | dynamic DDL/DML over Postgres (sea-query + sea-orm), migrations    |
 | `apiplant-auth`        | passwords, JWT sessions, API keys, permission evaluation          |
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
+| `apiplant-assets`      | the admin and studio builds, embedded in the binary                |
 | `apiplant`             | the executable                                                     |
 | `examples/`            | runnable apps, from hello-world to a 20-resource domain model — see [examples/](examples/) |
-| `studio/`              | a local browser editor for an app directory, and the design system reused by the generated static admin panel — see [studio/](studio/) |
+| `studio/`              | a local browser editor for an app directory, served by `apiplant studio`, and the design system reused by the admin dashboard — see [studio/](studio/) |
+| `admin/`               | the admin dashboard, embedded in the binary and served at `/admin/` |
 
 ## Quickstart
 
@@ -390,11 +392,55 @@ apiplant [run] [APP_DIR]     serve the app (default command)
 apiplant build [APP_DIR]     compile functions/* into loadable libraries
 apiplant check [APP_DIR]     load and validate the app, then exit
 apiplant admin [APP_DIR]     emit a static admin panel for the app
+apiplant studio              serve the visual editor from this binary
 ```
 
 `run` takes `--build` to compile out-of-date sources first; `build` takes
 `--release` and `--force`; `admin` takes `--api <domain-or-base-url>` and
-optionally `--out <dir>`.
+optionally `--out <dir>`; `studio` takes `--host` and `--port`.
+
+### The admin dashboard
+
+Every served app has one, at `/admin/`, with nothing to generate:
+
+```bash
+apiplant run ./my-app     # dashboard at http://localhost:8080/admin/
+```
+
+The interface is embedded in the `apiplant` binary and its manifest — resources,
+permissions, auth model, callable functions — is derived from the app on boot,
+so it talks to its own origin and never goes stale after a model change. Turn it
+off with `[admin] enabled = false`, or move it with `[admin] path`.
+
+### A public directory
+
+A `public/` directory in the app is served at the site root, alongside the API:
+
+```
+my-app/
+├── main.toml
+├── models/
+└── public/
+    ├── index.html      # GET /
+    ├── style.css       # GET /style.css
+    ├── guide/index.html # GET /guide and /guide/
+    └── 404.html        # anything that matches nothing
+```
+
+A file is only routed if it exists, so `/products` still reaches the API while
+`/about.html` reaches the file. The 404 page is `404.html` when there is one, or
+whatever `[public] not_found` names.
+
+### Studio
+
+```bash
+apiplant studio          # http://127.0.0.1:5273
+```
+
+Serves the visual editor out of the same binary — no `pnpm`, no checkout. It is
+local-first: the browser opens your app directory directly and reads and writes
+it in place, so nothing is uploaded and this command is only a file server. It
+binds loopback by default.
 
 ### Static admin panel
 
@@ -434,11 +480,17 @@ Develop the admin app like studio itself:
 cd admin
 pnpm install
 pnpm dev
-pnpm build
+pnpm build     # → admin/dist, which the Rust build embeds
 ```
 
-If that bundle lives in `APP_DIR/admin`, `apiplant run` now serves it
-automatically at `/admin/` on the same host as the API.
+`admin/dist` and `studio/dist` are tracked in the repository, because
+`cargo build` embeds both into the binary — a checkout builds without running
+`pnpm` first. Rebuild and commit the `dist` you changed when you change either
+front end.
+
+If that bundle lives in `APP_DIR/admin`, `apiplant run` serves it at `/admin/`
+in place of the embedded dashboard, file by file — which is how you ship a
+customised console.
 
 ## Built on
 

@@ -32,6 +32,15 @@ allow_registration = true         # enable POST /auth/register
 enabled = true               # serve OpenAPI spec + Swagger UI
 path    = "/docs"            # where Swagger UI mounts (under base_path)
 title   = "My API"          # spec info.title and UI title
+
+[admin]
+enabled = true               # serve the built-in admin dashboard
+path    = "/admin"           # where it mounts (outside base_path)
+
+[public]
+enabled   = true             # serve `dir` at the site root when it exists
+dir       = "public"         # static site directory, relative to the app root
+not_found = "404.html"       # page for unmatched requests (default when present)
 ```
 
 ## `[server]`
@@ -75,6 +84,37 @@ See [Authentication](authentication.md) for the full auth model.
 | `title` | `apiplant API` | Shown in the UI and the spec. |
 
 See [OpenAPI & Swagger UI](openapi.md).
+
+## `[admin]`
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `true` | Serve the admin dashboard. Every app has one: the interface is built into the `apiplant` binary, and its manifest is derived from the app on boot — there is nothing to generate. Set `false` for a deployment that should expose no operator console. |
+| `path` | `/admin` | Where it mounts. Outside `base_path`, so `/admin/` stays put when the API moves to `/api`. Normalised to start with `/` and not end with one. |
+
+The dashboard talks to its own origin, so it needs no CORS and never goes stale
+after a model change. An `admin/` directory in the app — the output of
+`apiplant admin` — overrides the embedded build file by file, which is the hook
+for a customised console; the manifest is always the live one either way. See
+[Admin dashboard](admin.md).
+
+## `[public]`
+
+Drop a `public/` directory in the app and it is served at the site root:
+`public/index.html` answers `/`, `public/style.css` answers `/style.css`, and
+`public/guide/index.html` answers both `/guide` and `/guide/`.
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `true` | Serve `dir` when it exists. A missing directory is not an error — it just means no static site. |
+| `dir` | `public` | Directory holding the site, relative to the app root. |
+| `not_found` | *(none)* | Page for requests that match nothing, relative to `dir`. When unset, `404.html` is used if it exists. Served with a `404` status. |
+
+One route is registered per file at boot, so the site and the API can share the
+root: `/about.html` reaches the file, while `/products` still reaches the API's
+CRUD routes. A path with no file *and* no route — `/no/such/page` — gets the
+404 page. Two-segment paths belong to the API's `/{resource}/{id}` and keep
+answering in JSON.
 
 ## HTTPS
 

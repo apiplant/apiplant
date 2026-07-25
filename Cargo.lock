@@ -105,6 +105,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apiplant-abi",
+ "apiplant-assets",
  "apiplant-core",
  "apiplant-server",
  "ntex",
@@ -121,6 +122,10 @@ version = "0.1.0"
 dependencies = [
  "abi_stable",
 ]
+
+[[package]]
+name = "apiplant-assets"
+version = "0.1.0"
 
 [[package]]
 name = "apiplant-auth"
@@ -182,6 +187,7 @@ dependencies = [
  "abi_stable",
  "anyhow",
  "apiplant-abi",
+ "apiplant-assets",
  "apiplant-auth",
  "apiplant-core",
  "apiplant-db",

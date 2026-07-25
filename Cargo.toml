@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/apiplant-abi",
+    "crates/apiplant-assets",
     "crates/apiplant-function",
     "crates/apiplant-core",
     "crates/apiplant-db",
@@ -21,6 +22,7 @@ repository = "https://github.com/apiplant/apiplant"
 [workspace.dependencies]
 # Internal crates
 apiplant-abi = { path = "crates/apiplant-abi" }
+apiplant-assets = { path = "crates/apiplant-assets" }
 apiplant-function = { path = "crates/apiplant-function" }
 apiplant-core = { path = "crates/apiplant-core" }
 apiplant-db = { path = "crates/apiplant-db" }

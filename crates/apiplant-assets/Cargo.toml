@@ -1,0 +1,9 @@
+[package]
+name = "apiplant-assets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The admin and studio front-end builds, embedded in the apiplant binary"
+
+[dependencies]

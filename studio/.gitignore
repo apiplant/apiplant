@@ -1,4 +1,5 @@
+# `dist/` is tracked: the Rust build embeds it (see crates/apiplant-assets),
+# so a checkout has to be buildable without running pnpm first — same as admin/.
 node_modules
-dist
 .vite
 *.local

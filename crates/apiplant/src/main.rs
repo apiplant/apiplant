@@ -5,6 +5,7 @@
 //! apiplant build [APP_DIR]     # compile functions/* into loadable libraries
 //! apiplant check [APP_DIR]     # load & validate the app, then exit
 //! apiplant admin [APP_DIR]     # emit a static admin panel for the app
+//! apiplant studio              # serve the visual editor from this binary
 //! ```
 //!
 //! An *app directory* holds an optional `main.toml`, an optional `models/`
@@ -14,10 +15,11 @@
 //! `https/` directory with a certificate and key. Every piece is optional; an
 //! empty directory is a valid (if bare) app.
 
-mod admin;
 mod compile;
+mod studio;
 
 use apiplant_core::App;
+use apiplant_server::admin;
 
 const USAGE: &str = "\
 usage:
@@ -25,6 +27,7 @@ usage:
   apiplant build [APP_DIR]     compile functions/* into loadable libraries
   apiplant check [APP_DIR]     load and validate the app, then exit
   apiplant admin [APP_DIR]     emit a static admin panel for the app
+  apiplant studio              serve the visual editor on http://127.0.0.1:5273
 
 options:
   --build           (run) compile any out-of-date function sources first
@@ -32,7 +35,13 @@ options:
   --force           (build) rebuild even when the library is up to date
   --api <URL>       (admin) API domain or full base URL to talk to
   --out <DIR>       (admin) where to write the static admin build (default: APP_DIR/admin)
+  --host <ADDR>     (studio) interface to bind (default 127.0.0.1)
+  --port <PORT>     (studio) port to listen on (default 5273)
   -h, --help        show this message
+
+Every served app also gets the admin dashboard at `/admin/` — it is built into
+this binary, needs no `apiplant admin` run, and is switched off with
+`[admin] enabled = false` in main.toml.
 
 `build` shells out to a toolchain per language — cargo for .rs, cc for .c, zig
 for .zig, go for .go — so whichever your functions use must be on PATH.
@@ -45,6 +54,7 @@ enum Command {
     Build { release: bool, force: bool },
     Check,
     Admin { api: String, out: Option<String> },
+    Studio { host: String, port: u16 },
 }
 
 #[derive(Debug)]
@@ -64,6 +74,8 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
     let mut force = false;
     let mut api = None;
     let mut out = None;
+    let mut host = None;
+    let mut port = None;
     let mut expecting: Option<&str> = None;
 
     for arg in argv {
@@ -77,6 +89,17 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
                     out = Some(arg);
                     continue;
                 }
+                "--host" => {
+                    host = Some(arg);
+                    continue;
+                }
+                "--port" => {
+                    port = Some(
+                        arg.parse::<u16>()
+                            .map_err(|_| format!("`--port` needs a port number, got `{arg}`"))?,
+                    );
+                    continue;
+                }
                 _ => return Err(format!("unknown pending option `{flag}`")),
             }
         }
@@ -88,13 +111,18 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--force" => force = true,
             "--api" => expecting = Some("--api"),
             "--out" => expecting = Some("--out"),
+            "--host" => expecting = Some("--host"),
+            "--port" => expecting = Some("--port"),
             // Kept for compatibility with the original flag-style invocation.
             "--check" => command = Some("check"),
-            "run" | "build" | "check" | "admin" if command.is_none() && dir.is_none() => {
+            "run" | "build" | "check" | "admin" | "studio"
+                if command.is_none() && dir.is_none() =>
+            {
                 command = Some(match arg.as_str() {
                     "run" => "run",
                     "build" => "build",
                     "admin" => "admin",
+                    "studio" => "studio",
                     _ => "check",
                 });
             }
@@ -113,14 +141,23 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             if build_first {
                 return Err("`--build` only applies to `run`".into());
             }
-            if api.is_some() || out.is_some() {
-                return Err("`--api` and `--out` only apply to `admin`".into());
+            if api.is_some() || out.is_some() || host.is_some() || port.is_some() {
+                return Err(
+                    "`--api`, `--out`, `--host` and `--port` do not apply to `build`".into(),
+                );
             }
             Command::Build { release, force }
         }
         "check" => {
-            if build_first || release || force || api.is_some() || out.is_some() {
-                return Err("`check` does not take run/build/admin flags".into());
+            if build_first
+                || release
+                || force
+                || api.is_some()
+                || out.is_some()
+                || host.is_some()
+                || port.is_some()
+            {
+                return Err("`check` does not take run/build/admin/studio flags".into());
             }
             Command::Check
         }
@@ -128,13 +165,31 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             if build_first || release || force {
                 return Err("`admin` does not take run/build flags".into());
             }
+            if host.is_some() || port.is_some() {
+                return Err("`--host` and `--port` only apply to `studio`".into());
+            }
             Command::Admin {
                 api: api.ok_or_else(|| "`admin` requires `--api <URL>`".to_string())?,
                 out,
             }
         }
+        "studio" => {
+            if build_first || release || force || api.is_some() || out.is_some() {
+                return Err("`studio` only takes `--host` and `--port`".into());
+            }
+            Command::Studio {
+                host: host.unwrap_or_else(|| studio::DEFAULT_HOST.to_string()),
+                port: port.unwrap_or(studio::DEFAULT_PORT),
+            }
+        }
         _ => {
-            if release || force || api.is_some() || out.is_some() {
+            if release
+                || force
+                || api.is_some()
+                || out.is_some()
+                || host.is_some()
+                || port.is_some()
+            {
                 return Err("`run` only takes `--build`".into());
             }
             Command::Run { build_first }
@@ -208,6 +263,8 @@ async fn main() -> anyhow::Result<()> {
             println!("built static admin panel in {}", output.display());
             Ok(())
         }
+
+        Command::Studio { host, port } => studio::serve(&host, port).await,
 
         Command::Run { build_first } => {
             if build_first {
@@ -314,6 +371,33 @@ mod tests {
             }
             other => panic!("expected admin command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn studio_defaults_to_loopback_and_takes_host_and_port() {
+        match args(&["studio"]).command {
+            Command::Studio { host, port } => {
+                assert_eq!(host, studio::DEFAULT_HOST);
+                assert_eq!(port, studio::DEFAULT_PORT);
+            }
+            other => panic!("expected studio command, got {other:?}"),
+        }
+        match args(&["studio", "--host", "0.0.0.0", "--port", "9000"]).command {
+            Command::Studio { host, port } => {
+                assert_eq!(host, "0.0.0.0");
+                assert_eq!(port, 9000);
+            }
+            other => panic!("expected studio command, got {other:?}"),
+        }
+
+        let err = parse(
+            ["studio", "--port", "nope"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )
+        .unwrap_err();
+        assert!(err.contains("port number"));
     }
 
     #[test]

@@ -16,6 +16,8 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
     pub docs: DocsConfig,
+    pub admin: AdminConfig,
+    pub public: PublicConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -134,6 +136,55 @@ impl Default for DocsConfig {
     }
 }
 
+/// The built-in admin dashboard, served from the binary itself.
+///
+/// Every app gets one without generating anything: the interface is embedded in
+/// `apiplant` and its manifest is derived from the app on boot. Turn it off for
+/// a deployment that shouldn't expose an operator console at all.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AdminConfig {
+    /// Serve the admin dashboard (default true).
+    pub enabled: bool,
+    /// Path the dashboard is served at, outside `base_path`.
+    pub path: String,
+}
+
+impl Default for AdminConfig {
+    fn default() -> Self {
+        AdminConfig {
+            enabled: true,
+            path: "/admin".to_string(),
+        }
+    }
+}
+
+/// Static files served from the app's `public/` directory.
+///
+/// When the directory exists its contents are served at the site root, so
+/// `public/index.html` answers `/` and `public/style.css` answers `/style.css`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PublicConfig {
+    /// Serve `dir` at the root when it exists (default true).
+    pub enabled: bool,
+    /// Directory (relative to the app root) holding the static site.
+    pub dir: String,
+    /// Page returned for requests that match nothing, relative to `dir`.
+    /// Defaults to `404.html` when that file exists.
+    pub not_found: Option<String>,
+}
+
+impl Default for PublicConfig {
+    fn default() -> Self {
+        PublicConfig {
+            enabled: true,
+            dir: "public".to_string(),
+            not_found: None,
+        }
+    }
+}
+
 impl Config {
     /// Load `main.toml` from an app directory, applying defaults for anything
     /// absent. A missing file is not an error.
@@ -166,6 +217,13 @@ impl Config {
         if !self.docs.path.starts_with('/') {
             self.docs.path = format!("/{}", self.docs.path);
         }
+
+        let admin = self.admin.path.trim_matches('/');
+        self.admin.path = if admin.is_empty() {
+            AdminConfig::default().path
+        } else {
+            format!("/{admin}")
+        };
     }
 }
 
@@ -204,6 +262,12 @@ mod tests {
         assert!(config.auth.allow_registration);
         assert!(config.docs.enabled);
         assert_eq!(config.docs.path, "/docs");
+        // The dashboard and the public site are on by default; an app opts out.
+        assert!(config.admin.enabled);
+        assert_eq!(config.admin.path, "/admin");
+        assert!(config.public.enabled);
+        assert_eq!(config.public.dir, "public");
+        assert_eq!(config.public.not_found, None);
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -228,6 +292,13 @@ password = "ignored"
 
 [docs]
 path = "swagger"
+
+[admin]
+path = "console/"
+
+[public]
+dir = "site"
+not_found = "oops.html"
 "#,
         )
         .unwrap();
@@ -237,6 +308,9 @@ path = "swagger"
         assert_eq!(config.server.base_path, "/api");
         assert_eq!(config.server.workers, Some(8));
         assert_eq!(config.docs.path, "/swagger");
+        assert_eq!(config.admin.path, "/console");
+        assert_eq!(config.public.dir, "site");
+        assert_eq!(config.public.not_found.as_deref(), Some("oops.html"));
         assert_eq!(
             config.database.resolved_url(),
             "postgres://db.example/custom"

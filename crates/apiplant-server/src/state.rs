@@ -19,12 +19,79 @@ pub struct AppState {
     pub db: Db,
     pub auth: Authenticator,
     pub functions: Arc<FunctionRegistry>,
-    /// Static admin bundle root (`admin/`) when the app ships one.
-    pub admin_dir: Option<PathBuf>,
+    /// Everything served alongside the API: the dashboard and the public site.
+    pub statics: Arc<Statics>,
+    /// The admin manifest for this app, built on boot.
+    pub admin_manifest: Arc<String>,
     /// Pre-rendered OpenAPI document (JSON).
     pub openapi_json: Arc<String>,
     /// Pre-rendered Swagger UI page.
     pub docs_html: Arc<String>,
+}
+
+/// What the server serves besides the API: the admin dashboard, the app's
+/// `public/` directory, and the page for requests that match nothing.
+///
+/// Resolved once, on boot, so every worker registers the same routes — and so
+/// the route table is decided in one place rather than at request time.
+#[derive(Debug, Default, Clone)]
+pub struct Statics {
+    /// Path the dashboard is mounted at, or `None` when it's switched off.
+    pub admin_path: Option<String>,
+    /// The app's own `admin/` build, which overrides the embedded one.
+    pub admin_dir: Option<PathBuf>,
+    /// Static site root (`public/`) when the app has one.
+    pub public_dir: Option<PathBuf>,
+    /// Route patterns for the files in it, one entry per URL they answer on.
+    pub public_routes: Vec<String>,
+    /// Page to answer unmatched requests with.
+    pub not_found_page: Option<PathBuf>,
+}
+
+impl Statics {
+    /// Work out what a loaded app serves statically.
+    pub fn resolve(app: &App) -> Statics {
+        let admin_path = app
+            .config
+            .admin
+            .enabled
+            .then(|| app.config.admin.path.clone());
+        let admin_dir = app.root.join("admin");
+        let admin_dir = (admin_path.is_some() && admin_dir.is_dir()).then_some(admin_dir);
+
+        let public_dir = app.root.join(&app.config.public.dir);
+        let public_dir = (app.config.public.enabled && public_dir.is_dir()).then_some(public_dir);
+
+        let mut public_routes = Vec::new();
+        let mut not_found_page = None;
+        if let Some(root) = &public_dir {
+            let mut files = Vec::new();
+            crate::walk_public(root, "", &mut files);
+            files.sort();
+            public_routes = files.iter().flat_map(|f| crate::public_routes(f)).collect();
+
+            // A 404 page is opt-out, not opt-in: `404.html` is what people
+            // already call the file, so finding one is enough to use it.
+            let candidate = app.config.public.not_found.as_deref().unwrap_or("404.html");
+            let page = root.join(candidate);
+            if page.is_file() {
+                not_found_page = Some(page);
+            } else if app.config.public.not_found.is_some() {
+                tracing::warn!(
+                    path = %page.display(),
+                    "public.not_found points at a file that doesn't exist"
+                );
+            }
+        }
+
+        Statics {
+            admin_path,
+            admin_dir,
+            public_dir,
+            public_routes,
+            not_found_page,
+        }
+    }
 }
 
 impl AppState {

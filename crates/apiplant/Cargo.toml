@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 apiplant-abi.workspace = true
+apiplant-assets.workspace = true
 apiplant-core.workspace = true
 apiplant-server.workspace = true
 ntex.workspace = true
