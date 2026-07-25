@@ -1,0 +1,180 @@
+/**
+ * The apiplant app-directory model, as the studio holds it in memory.
+ *
+ * Mirrors `crates/apiplant-core/src/schema.rs` and `config.rs`: every default
+ * here is the one the server applies when a key is absent, so the studio can
+ * omit unchanged keys from what it writes back.
+ */
+
+export const FIELD_TYPES = [
+  "string",
+  "text",
+  "integer",
+  "big_int",
+  "float",
+  "boolean",
+  "uuid",
+  "timestamp",
+  "json",
+  "reference",
+] as const;
+export type FieldType = (typeof FIELD_TYPES)[number];
+
+export const ON_DELETE = ["restrict", "set_null", "cascade", "no_action"] as const;
+export type OnDelete = (typeof ON_DELETE)[number];
+
+export const SCOPES = ["organization", "global"] as const;
+export type Scope = (typeof SCOPES)[number];
+
+export const ACTIONS = ["list", "read", "create", "update", "delete"] as const;
+export type Action = (typeof ACTIONS)[number];
+
+/** The `role:<name>` level is spelled out separately in the UI. */
+export const ACCESS_LEVELS = ["public", "authenticated", "member", "owner", "role", "private"] as const;
+export type AccessLevel = (typeof ACCESS_LEVELS)[number];
+
+export const HOOK_EVENTS = [
+  "before_list",
+  "after_list",
+  "before_read",
+  "after_read",
+  "before_create",
+  "after_create",
+  "before_update",
+  "after_update",
+  "before_delete",
+  "after_delete",
+] as const;
+export type HookEvent = (typeof HOOK_EVENTS)[number];
+
+export const LANGUAGES = ["rust", "c", "zig", "go"] as const;
+export type Language = (typeof LANGUAGES)[number];
+
+export type TomlValue = string | number | boolean | Date | TomlValue[] | { [key: string]: TomlValue };
+export type TomlTable = { [key: string]: TomlValue };
+
+export interface Field {
+  name: string;
+  type: FieldType;
+  references?: string;
+  required?: boolean;
+  unique?: boolean;
+  hidden?: boolean;
+  /** Column DEFAULT; a bare scalar in TOML. */
+  default?: string | number | boolean;
+  max_length?: number;
+  on_delete?: OnDelete;
+}
+
+export interface AuthSpec {
+  identity_field: string;
+  password_field: string;
+  oauth_providers: string[];
+}
+
+export interface Resource {
+  name: string;
+  /** Physical table; defaults to `apiplant_<name>`. */
+  table?: string;
+  timestamps: boolean;
+  owner_field: string;
+  scope: Scope;
+  permissions: Partial<Record<Action, string>>;
+  /** Ordered for the file; the server sorts them anyway. */
+  fields: Field[];
+  hooks: Partial<Record<HookEvent, string>>;
+  /** Only meaningful on the `user` resource. */
+  auth?: AuthSpec;
+  /** Anything the studio does not model, preserved verbatim on save. */
+  extra?: TomlTable;
+}
+
+/** A resource as it exists in a project: on disk, or still a framework default. */
+export interface ResourceEntry {
+  name: string;
+  /** `models/<file>.toml`, or null while the resource is an unmodified built-in. */
+  path: string | null;
+  /** One of the five resources the framework defines with or without a file. */
+  builtin: boolean;
+  resource: Resource;
+}
+
+export interface FunctionFile {
+  path: string;
+  /** Text sources are editable; compiled libraries are listed by size only. */
+  text: string | null;
+  size: number;
+}
+
+/** Config is keyed by *function* name, which need not match the library's. */
+export interface FunctionConfig {
+  name: string;
+  path: string;
+}
+
+export interface FunctionEntry {
+  /** The library name: `greet.rs` and `greet/` both produce `libgreet.so`. */
+  name: string;
+  language: Language;
+  layout: "file" | "directory";
+  /** Sources, in the order they should be listed. */
+  files: FunctionFile[];
+  /** `functions/<fn>.toml` files belonging to this library's functions. */
+  configs: FunctionConfig[];
+  /** The compiled artifact, when `apiplant build` has run. */
+  libPath: string | null;
+  libSize: number;
+  /** Function names the sources appear to export (for the hook pickers). */
+  exports: string[];
+}
+
+/** One file the studio is tracking, with the bytes it was read with. */
+export interface FileState {
+  /**
+   * Content on disk when the project was opened; null when the file is new —
+   * or when it is binary, which is why deletion needs its own flag rather than
+   * being inferred from a null `current`.
+   */
+  original: string | null;
+  /** Content to write. */
+  current: string | null;
+  /** Staged for removal from the directory. */
+  deleted?: boolean;
+  /** Non-text files (compiled libraries, certificates) are listed, never edited. */
+  binary: boolean;
+  size: number;
+}
+
+export const DEFAULT_PERMISSIONS: Record<Action, string> = {
+  list: "member",
+  read: "member",
+  create: "member",
+  update: "member",
+  delete: "member",
+};
+
+export function emptyResource(name: string): Resource {
+  return {
+    name,
+    timestamps: true,
+    owner_field: "owner_id",
+    scope: "organization",
+    permissions: { ...DEFAULT_PERMISSIONS },
+    fields: [],
+    hooks: {},
+  };
+}
+
+export const LANGUAGE_LABEL: Record<Language, string> = {
+  rust: "Rust",
+  c: "C",
+  zig: "Zig",
+  go: "Go",
+};
+
+export const LANGUAGE_EXT: Record<Language, string> = {
+  rust: "rs",
+  c: "c",
+  zig: "zig",
+  go: "go",
+};

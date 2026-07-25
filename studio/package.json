@@ -1,0 +1,24 @@
+{
+  "name": "apiplant-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A local-first visual editor for apiplant app directories.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "smol-toml": "^1.7.0",
+    "solid-js": "^1.9.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5",
+    "vite-plugin-solid": "^2.11.13"
+  }
+}

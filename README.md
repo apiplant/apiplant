@@ -341,6 +341,7 @@ straight into the organisation that owns its email domain.
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
 | `apiplant`             | the executable                                                     |
 | `examples/`            | runnable apps, from hello-world to a 20-resource domain model — see [examples/](examples/) |
+| `studio/`              | a local browser editor for an app directory — resources, hooks and functions — see [studio/](studio/) |
 
 ## Quickstart
 
