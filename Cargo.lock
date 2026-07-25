@@ -107,6 +107,7 @@ dependencies = [
  "apiplant-core",
  "apiplant-server",
  "ntex",
+ "serde_json",
  "toml",
  "tracing",
  "tracing-subscriber",

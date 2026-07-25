@@ -1,0 +1,3 @@
+# Config still sits in functions/, keyed by the directory name — `token/` reads
+# `token.toml`, exactly as `greet.rs` reads `greet.toml`. This function has no
+# config, so the file only documents that the convention is unchanged.

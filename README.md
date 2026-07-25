@@ -75,6 +75,13 @@ Functions are ordinary `.rs` files in `functions/`, each written as if it were a
 compiles it with cargo, and drops the library beside it — so the only toolchain
 requirement is a working `cargo`.
 
+When a function needs a dependency, a second source file, or its own build setup,
+an entry in `functions/` can be a **directory** instead of a file — a real crate
+(`Cargo.toml`), a Go module (`go.mod`), or a set of C/Zig files. apiplant builds
+it its native way and drops `lib<dir>.so` beside it, loaded just like a
+single-file function. See
+[`examples/12-function-dependencies`](examples/12-function-dependencies).
+
 ## Defining a resource
 
 ```toml
@@ -273,7 +280,9 @@ server down, and functions do not have to be Rust: a library can instead export
 compiles `.rs` with cargo, `.c` with cc, `.zig` with zig and `.go` with go, all
 from the same `functions/` directory — see the same two endpoints written in
 [C](examples/09-c-functions), [Zig](examples/10-zig-functions) and
-[Go](examples/11-go-functions).
+[Go](examples/11-go-functions). Any of these can be a whole directory rather than
+a single file when it needs dependencies —
+[`examples/12-function-dependencies`](examples/12-function-dependencies).
 
 ## Lifecycle hooks: custom logic on CRUD
 
@@ -326,7 +335,7 @@ and the [Hooks guide](docs/hooks.md).
 | `apiplant-auth`        | passwords, JWT sessions, API keys, permission evaluation          |
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
 | `apiplant`             | the executable                                                     |
-| `examples/`            | eight runnable apps, from hello-world to hooks — see [examples/](examples/) |
+| `examples/`            | twelve runnable apps, from hello-world to multi-language function directories — see [examples/](examples/) |
 
 ## Quickstart
 

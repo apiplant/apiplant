@@ -115,7 +115,10 @@ async fn main() -> anyhow::Result<()> {
             let built = compile::build(dir, compile::Options { release, force })?;
             match built.len() {
                 0 => println!("nothing to build"),
-                n => println!("built {n} function librar{}", if n == 1 { "y" } else { "ies" }),
+                n => println!(
+                    "built {n} function librar{}",
+                    if n == 1 { "y" } else { "ies" }
+                ),
             }
             Ok(())
         }
@@ -218,7 +221,10 @@ mod tests {
 
     #[test]
     fn legacy_check_flag_and_help_still_work() {
-        assert!(matches!(args(&["--check", "./app"]).command, Command::Check));
+        assert!(matches!(
+            args(&["--check", "./app"]).command,
+            Command::Check
+        ));
         assert_eq!(args(&["--check", "./app"]).dir, "./app");
 
         let argv = vec!["--help".to_string()];

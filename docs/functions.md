@@ -19,6 +19,45 @@ my-app/functions/
 A directory can hold any number of libraries, and each library can export any
 number of functions.
 
+## A function can be a file or a directory
+
+The `greet.rs` above is a single file. That's enough until a function needs a
+third-party crate, a second source file, or a linked library — for which an entry
+in `functions/` can be a **directory** instead, a self-contained project in the
+language's own native form:
+
+```
+my-app/functions/
+├── greet/            # a directory is one function library…
+│   ├── Cargo.toml    #   …here a real crate, with any dependencies you like
+│   └── src/lib.rs
+├── greet.toml        # config still sits beside it, keyed by the directory name
+└── libgreet.so       # ← produced next to the directory, loaded the same way
+```
+
+apiplant reads the language from what the directory holds, and builds it its
+native way:
+
+| A directory containing… | is built as | with |
+|-------------------------|-------------|-------|
+| `Cargo.toml`            | Rust | `cargo build` on *your* crate — any dependencies, any modules |
+| `go.mod`                | Go   | `go build -buildmode=c-shared` on your module |
+| `.c` files              | C    | `cc` over every `.c` in the directory, with it on the include path |
+| `.zig` files            | Zig  | `zig build-lib` from a root `.zig` (named for the directory) that may `@import` the rest |
+
+A directory named `greet/` compiles to `libgreet.so` beside it, so the host loads
+it exactly like a single-file function. For **Rust and Go the project is yours**:
+apiplant runs your `Cargo.toml` / `go.mod` unchanged and copies out the library it
+produces, so you own the dependencies *and* the build profiles (a directory does
+not get the [size-reducing profiles](#library-size) injected — set them yourself).
+For **C and Zig** a directory just widens the single-file build to every source it
+holds, so its own headers and `@import`ed modules resolve.
+
+A `greet/` directory and a `greet.rs` file both want `libgreet.so`, so apiplant
+rejects that collision — pick one form per name. See
+[`examples/12-function-dependencies`](../examples/12-function-dependencies) for one
+directory per language, each pulling in something a single file couldn't.
+
 ## Building
 
 ```bash

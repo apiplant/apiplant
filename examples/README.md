@@ -1,6 +1,6 @@
 # Examples
 
-Eight self-contained apps, each adding one idea to the last. Every directory is
+Twelve self-contained apps, each adding one idea to the last. Every directory is
 a complete app: point the binary at it and it runs.
 
 | # | Example | Adds |
@@ -13,6 +13,10 @@ a complete app: point the binary at it and it runs.
 | 06 | [permissions](06-permissions) | per-action policies: public, owner, member, roles |
 | 07 | [functions](07-functions) | writing custom code: compiled functions as endpoints |
 | 08 | [hooks](08-hooks) | running those functions around every CRUD operation |
+| 09 | [c-functions](09-c-functions) | the same idea in C: a function is just a shared library |
+| 10 | [zig-functions](10-zig-functions) | and in Zig, reaching the ABI through `@cImport` |
+| 11 | [go-functions](11-go-functions) | and in Go, via cgo and the standard library |
+| 12 | [function-dependencies](12-function-dependencies) | function *directories*: crates, modules, multi-file — with dependencies |
 
 ## Running one
 
@@ -23,14 +27,19 @@ createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_resources
 cargo run -p apiplant -- examples/02-resources
 ```
 
-Examples 07 and 08 have functions, so build them first (this needs `cargo` on
-PATH):
+Examples 07–12 have functions, so build them first. Rust functions need `cargo`
+on PATH; the others need their own toolchain (`cc`, `zig`, `go`), and example 12
+needs all four:
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hooks
 cargo run -p apiplant -- build examples/08-hooks
 cargo run -p apiplant -- examples/08-hooks
 ```
+
+A function can be a single source file or a whole directory (a crate, a module, a
+set of C or Zig files) — example 12 shows the directory form, which is how a
+function pulls in dependencies.
 
 Each example serves on `127.0.0.1:8099` under `/api`, with Swagger UI at
 <http://127.0.0.1:8099/api/docs>. Run one at a time.
@@ -47,6 +56,10 @@ Each example serves on `127.0.0.1:8099` under `/api`, with Swagger UI at
 | 06-permissions | `apiplant_permissions` |
 | 07-functions | `apiplant_functions` |
 | 08-hooks | `apiplant_hooks` |
+| 09-c-functions | `apiplant_c_functions` |
+| 10-zig-functions | `apiplant_zig_functions` |
+| 11-go-functions | `apiplant_go_functions` |
+| 12-function-dependencies | `apiplant_function_deps` |
 
 Separate databases keep the examples genuinely independent: example 05 redefines
 `user` to log in by username, which cannot share a table with the built-in
