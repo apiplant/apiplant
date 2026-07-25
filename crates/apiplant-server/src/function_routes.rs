@@ -1,7 +1,7 @@
 //! HTTP surface for dynamically-loaded functions, mounted at
 //! `<base>/functions/{name}`.
 
-use apiplant_abi::{HttpMethod, Visibility};
+use apiplant_abi::{FunctionAccess, HttpMethod};
 use ntex::http::Method;
 use ntex::web::types::{Path, State};
 use ntex::web::{HttpRequest, HttpResponse};
@@ -31,12 +31,8 @@ pub async fn invoke(
     let name = path.into_inner();
 
     // Read manifest fields we need before crossing into the blocking task.
-    let (method, visibility, role) = match state.functions.get(&name) {
-        Some(f) => (
-            f.manifest.method,
-            f.manifest.visibility,
-            f.manifest.role.to_string(),
-        ),
+    let (method, access) = match state.functions.get(&name) {
+        Some(f) => (f.manifest.method, f.manifest.access()),
         None => return error(404, format!("unknown function `{name}`")),
     };
 
@@ -45,24 +41,33 @@ pub async fn invoke(
     }
 
     let principal = state.resolve_principal(&req).await;
-    match visibility {
-        Visibility::Public => {}
-        Visibility::Private => return error(404, "unknown function"),
-        Visibility::Authenticated => {
+    // The same vocabulary a resource's `[permissions]` uses, minus `owner`:
+    // a function call has no row to own.
+    match &access {
+        FunctionAccess::Public => {}
+        // A private function is not merely forbidden, it is not there — the
+        // same answer an unknown name gets, so probing cannot enumerate it.
+        FunctionAccess::Private => return error(404, "unknown function"),
+        FunctionAccess::Authenticated => {
             if principal.is_none() {
                 return error(401, "authentication required");
             }
         }
-        Visibility::RoleGated => {
-            // Roles are per-organisation: the caller must hold `role` in their
-            // active organisation.
-            let active_org = state.active_org(&req, &principal);
-            let ok = principal
-                .as_ref()
-                .zip(active_org)
-                .and_then(|(p, org)| p.role_in(org))
-                .map(|r| r == role)
-                .unwrap_or(false);
+        // `member` and `role:` are both organisation-scoped: they need an
+        // active organisation the caller actually belongs to.
+        FunctionAccess::Member | FunctionAccess::Role(_) => {
+            if principal.is_none() {
+                return error(401, "authentication required");
+            }
+            let membership_role = state
+                .active_org(&req, &principal)
+                .zip(principal.as_ref())
+                .and_then(|(org, principal)| principal.role_in(org));
+            let ok = match (&access, membership_role) {
+                (FunctionAccess::Member, role) => role.is_some(),
+                (FunctionAccess::Role(required), Some(held)) => held == required,
+                _ => false,
+            };
             if !ok {
                 return error(403, "forbidden");
             }

@@ -25,6 +25,9 @@ pub struct Resource {
     /// Optional auth configuration; only meaningful on the `user` resource.
     #[serde(default)]
     pub auth: Option<AuthSpec>,
+    /// How (and whether) this resource appears in the generated admin dashboard.
+    #[serde(default)]
+    pub admin: ResourceAdmin,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,7 +95,115 @@ impl Resource {
                 });
             }
         }
+        // `[admin]` is presentation, so a typo here is silent rather than
+        // dangerous — but it is still a typo, and naming a column that does not
+        // exist is never what anyone meant.
+        for column in &self.admin.columns {
+            if !self.fields.contains_key(column) && column != "id" {
+                return Err(crate::Error::Schema {
+                    resource: self.meta.name.clone(),
+                    message: format!("[admin] columns names unknown field `{column}`"),
+                });
+            }
+        }
+        for (key, declared) in [
+            ("display_field", &self.admin.display_field),
+            ("search_field", &self.admin.search_field),
+        ] {
+            if let Some(field) = declared {
+                if !self.fields.contains_key(field) {
+                    return Err(crate::Error::Schema {
+                        resource: self.meta.name.clone(),
+                        message: format!("[admin] {key} names unknown field `{field}`"),
+                    });
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Human label for a single record, e.g. `"Purchase order"`.
+    pub fn admin_label(&self) -> String {
+        self.admin
+            .label
+            .clone()
+            .unwrap_or_else(|| titleize(&self.meta.name))
+    }
+
+    /// Human label for the collection, e.g. `"Purchase orders"`.
+    pub fn admin_plural(&self) -> String {
+        self.admin
+            .plural
+            .clone()
+            .unwrap_or_else(|| pluralize(&self.admin_label()))
+    }
+
+    /// The field whose value names a record in tables, pickers and headings.
+    ///
+    /// An explicit `display_field` wins; otherwise the first conventionally
+    /// named field (`name`, `title`, …), then the first plain string field, and
+    /// finally `None` — at which point the dashboard falls back to the id.
+    pub fn admin_display_field(&self) -> Option<String> {
+        if let Some(declared) = &self.admin.display_field {
+            if self.fields.contains_key(declared) {
+                return Some(declared.clone());
+            }
+        }
+        const PREFERRED: [&str; 7] = ["name", "title", "label", "slug", "code", "number", "email"];
+        for candidate in PREFERRED {
+            if let Some(field) = self.fields.get(candidate) {
+                if !field.hidden && matches!(field.ty, FieldType::String | FieldType::Text) {
+                    return Some(candidate.to_string());
+                }
+            }
+        }
+        self.fields
+            .iter()
+            .find(|(_, field)| !field.hidden && field.ty == FieldType::String)
+            .map(|(name, _)| name.clone())
+    }
+
+    /// The field the dashboard's list search box filters on.
+    pub fn admin_search_field(&self) -> Option<String> {
+        match &self.admin.search_field {
+            Some(declared) if self.fields.contains_key(declared) => Some(declared.clone()),
+            Some(_) | None => self.admin_display_field(),
+        }
+    }
+
+    /// The columns the list table shows, in order.
+    ///
+    /// Declared `columns` win. Otherwise: the display field first, then up to
+    /// four more dashboard-visible fields, skipping `json`/`text` blobs (which
+    /// never read well in a cell) and the tenancy column.
+    pub fn admin_columns(&self) -> Vec<String> {
+        let declared: Vec<String> = self
+            .admin
+            .columns
+            .iter()
+            .filter(|name| self.fields.contains_key(*name))
+            .cloned()
+            .collect();
+        if !declared.is_empty() {
+            return declared;
+        }
+
+        let display = self.admin_display_field();
+        let mut columns: Vec<String> = display.iter().cloned().collect();
+        for (name, field) in &self.fields {
+            if columns.len() >= 5 {
+                break;
+            }
+            let skip = field.hidden
+                || !field.admin.visible
+                || Some(name) == display.as_ref()
+                || name == "organization_id"
+                || matches!(field.ty, FieldType::Json | FieldType::Text);
+            if !skip {
+                columns.push(name.clone());
+            }
+        }
+        columns
     }
 
     /// All `belongs_to` references declared by this resource's fields.
@@ -155,6 +266,151 @@ impl Resource {
     }
 }
 
+/// The `[admin]` section of a resource: how it is presented — and to whom — in
+/// the generated dashboard.
+///
+/// This is **presentation only**. Hiding a resource from the dashboard does not
+/// make its API endpoints any less reachable; that is what
+/// [`Permissions`] is for. The two are deliberately separate: `[permissions]`
+/// decides what the API allows, `[admin]` decides what an operator is shown.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ResourceAdmin {
+    /// Show this resource in the dashboard. Unset means "decide from the
+    /// resource" — see [`ResourceAdmin::is_visible`].
+    pub visible: Option<bool>,
+    /// Organisation roles that may see it. Empty means "anyone who can list it"
+    /// — the API remains the authority either way.
+    pub roles: Vec<String>,
+    /// Human label for one record ("Product"). Defaults to the resource name.
+    pub label: Option<String>,
+    /// Human label for the collection ("Products"). Defaults to `label` + "s".
+    pub plural: Option<String>,
+    /// Sidebar group heading ("Catalogue"). Ungrouped resources sort last.
+    pub group: Option<String>,
+    /// Which field to render when a record is named — in tables, in reference
+    /// pickers, in breadcrumbs. Defaults to the first sensible string field.
+    pub display_field: Option<String>,
+    /// Columns to show in the list table, in order. Empty means "pick for me".
+    pub columns: Vec<String>,
+    /// Field the list search box filters on. Defaults to `display_field`.
+    pub search_field: Option<String>,
+    /// Sort key within the sidebar group; lower comes first.
+    pub order: i64,
+}
+
+impl Default for ResourceAdmin {
+    fn default() -> Self {
+        ResourceAdmin {
+            visible: None,
+            roles: Vec::new(),
+            label: None,
+            plural: None,
+            group: None,
+            display_field: None,
+            columns: Vec::new(),
+            search_field: None,
+            order: 0,
+        }
+    }
+}
+
+impl ResourceAdmin {
+    /// Whether the named resource appears in the dashboard's resource
+    /// navigation.
+    ///
+    /// An explicit `visible` always wins. Otherwise the auth resources default
+    /// to hidden — they are managed through purpose-built screens (account,
+    /// team, organisation, API keys), and a raw table of `membership` rows is
+    /// exactly the developer-facing surface the dashboard is meant to avoid.
+    pub fn is_visible(&self, resource_name: &str) -> bool {
+        self.visible.unwrap_or(!is_auth_resource(resource_name))
+    }
+}
+
+/// Whether a resource is one of the built-in auth/tenancy resources, which the
+/// dashboard manages through dedicated screens instead of generic CRUD.
+pub fn is_auth_resource(name: &str) -> bool {
+    matches!(
+        name,
+        "user" | "organization" | "membership" | "api_key" | "oauth_connection"
+    )
+}
+
+/// Per-field dashboard presentation, from `[fields.<name>.admin]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FieldAdmin {
+    /// Show this field in the dashboard at all. Hidden fields are still part of
+    /// the API (unlike [`Field::hidden`]).
+    pub visible: bool,
+    /// Show the field but refuse edits.
+    pub readonly: bool,
+    /// Human label. Defaults to a title-cased field name.
+    pub label: Option<String>,
+    /// One line of guidance shown under the input.
+    pub help: Option<String>,
+    /// Input to render. `auto` picks from the field's type.
+    pub widget: Widget,
+    /// Allowed values, turning the input into a dropdown. Each entry may be
+    /// `"value"` or `"value|Label"`.
+    pub options: Vec<String>,
+    /// Placeholder text for free-text inputs.
+    pub placeholder: Option<String>,
+}
+
+impl Default for FieldAdmin {
+    fn default() -> Self {
+        FieldAdmin {
+            visible: true,
+            readonly: false,
+            label: None,
+            help: None,
+            widget: Widget::Auto,
+            options: Vec::new(),
+            placeholder: None,
+        }
+    }
+}
+
+/// The input a field is edited with in the dashboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Widget {
+    /// Derive the input from the field's type (the default).
+    Auto,
+    Text,
+    Textarea,
+    Select,
+    Email,
+    Url,
+    Password,
+    Color,
+    Date,
+    DateTime,
+    Json,
+    Switch,
+}
+
+impl Widget {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Widget::Auto => "auto",
+            Widget::Text => "text",
+            Widget::Textarea => "textarea",
+            Widget::Select => "select",
+            Widget::Email => "email",
+            Widget::Url => "url",
+            Widget::Password => "password",
+            Widget::Color => "color",
+            Widget::Date => "date",
+            Widget::DateTime => "date_time",
+            Widget::Json => "json",
+            Widget::Switch => "switch",
+        }
+    }
+}
+
 /// One column in a resource.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Field {
@@ -178,6 +434,9 @@ pub struct Field {
     /// is deleted. Defaults to [`OnDelete::Restrict`] (safe: blocks orphaning).
     #[serde(default)]
     pub on_delete: Option<OnDelete>,
+    /// Dashboard presentation for this field, from `[fields.<name>.admin]`.
+    #[serde(default)]
+    pub admin: FieldAdmin,
 }
 
 /// Supported column types.
@@ -237,6 +496,39 @@ pub struct Reference {
 /// otherwise the field name unchanged.
 pub fn relation_name(field: &str) -> &str {
     field.strip_suffix("_id").unwrap_or(field)
+}
+
+/// `"purchase_order"` → `"Purchase order"`. Sentence case, not title case: a
+/// dashboard full of Capitalised Nouns reads like a form, not an application.
+pub fn titleize(name: &str) -> String {
+    let spaced = name.trim_end_matches("_id").replace('_', " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => spaced,
+    }
+}
+
+/// A deliberately small English pluraliser — enough for the labels apiplant
+/// generates, and overridable per resource with `[admin] plural`.
+pub fn pluralize(label: &str) -> String {
+    let lower = label.to_lowercase();
+    if lower.ends_with('s')
+        || lower.ends_with("x")
+        || lower.ends_with("ch")
+        || lower.ends_with("sh")
+    {
+        format!("{label}es")
+    } else if lower.ends_with('y')
+        && !lower.ends_with("ay")
+        && !lower.ends_with("ey")
+        && !lower.ends_with("oy")
+        && !lower.ends_with("uy")
+    {
+        format!("{}ies", &label[..label.len() - 1])
+    } else {
+        format!("{label}s")
+    }
 }
 
 /// Whether a resource is isolated per organisation (the default) or shared
@@ -677,6 +969,188 @@ after_delete = "  "
         assert!(HookEvent::ALL
             .into_iter()
             .all(|event| resource.hook(event).is_none()));
+    }
+
+    #[test]
+    fn admin_visibility_defaults_hide_auth_resources_but_nothing_else() {
+        let post = parse_resource("[resource]\nname = \"post\"\n");
+        assert!(post.admin.is_visible("post"));
+
+        let user = parse_resource(crate::defaults::USER_TOML);
+        assert!(!user.admin.is_visible("user"));
+        assert!(!parse_resource(crate::defaults::MEMBERSHIP_TOML).admin.is_visible("membership"));
+
+        // An app that replaces a built-in still gets the dedicated screen…
+        let replaced = parse_resource(
+            "[resource]\nname = \"user\"\nscope = \"global\"\n\n[fields.email]\ntype = \"string\"\n",
+        );
+        assert!(!replaced.admin.is_visible("user"));
+
+        // …unless it asks for the table back.
+        let opted_in = parse_resource(
+            "[resource]\nname = \"user\"\nscope = \"global\"\n\n[admin]\nvisible = true\n",
+        );
+        assert!(opted_in.admin.is_visible("user"));
+    }
+
+    #[test]
+    fn admin_labels_are_inferred_and_overridable() {
+        let inferred = parse_resource("[resource]\nname = \"purchase_order\"\n");
+        assert_eq!(inferred.admin_label(), "Purchase order");
+        assert_eq!(inferred.admin_plural(), "Purchase orders");
+
+        let overridden = parse_resource(
+            "[resource]\nname = \"person\"\n\n[admin]\nlabel = \"Person\"\nplural = \"People\"\n",
+        );
+        assert_eq!(overridden.admin_plural(), "People");
+
+        assert_eq!(titleize("owner_id"), "Owner");
+        assert_eq!(titleize("total_cents"), "Total cents");
+        assert_eq!(pluralize("Category"), "Categories");
+        assert_eq!(pluralize("Address"), "Addresses");
+        assert_eq!(pluralize("Day"), "Days");
+        assert_eq!(pluralize("Product"), "Products");
+    }
+
+    #[test]
+    fn display_field_prefers_conventional_names_then_any_string() {
+        let conventional = parse_resource(
+            r#"
+[resource]
+name = "product"
+
+[fields.sku]
+type = "string"
+
+[fields.name]
+type = "string"
+"#,
+        );
+        assert_eq!(conventional.admin_display_field().as_deref(), Some("name"));
+
+        let only_odd_names = parse_resource(
+            "[resource]\nname = \"blob\"\n\n[fields.zzz]\ntype = \"string\"\n",
+        );
+        assert_eq!(only_odd_names.admin_display_field().as_deref(), Some("zzz"));
+
+        let nothing_stringy =
+            parse_resource("[resource]\nname = \"tick\"\n\n[fields.count]\ntype = \"integer\"\n");
+        assert_eq!(nothing_stringy.admin_display_field(), None);
+
+        // An explicit choice always wins, conventional or not.
+        let declared = parse_resource(
+            r#"
+[resource]
+name = "product"
+
+[admin]
+display_field = "sku"
+
+[fields.sku]
+type = "string"
+
+[fields.name]
+type = "string"
+"#,
+        );
+        assert_eq!(declared.admin_display_field().as_deref(), Some("sku"));
+        // `search_field` falls back to whatever names the record.
+        assert_eq!(declared.admin_search_field().as_deref(), Some("sku"));
+    }
+
+    #[test]
+    fn inferred_columns_skip_blobs_and_dashboard_hidden_fields() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "product"
+
+[fields.name]
+type = "string"
+
+[fields.status]
+type = "string"
+
+[fields.description]
+type = "text"
+
+[fields.attributes]
+type = "json"
+
+[fields.secret_ratio]
+type = "float"
+
+[fields.secret_ratio.admin]
+visible = false
+"#,
+        );
+        assert_eq!(resource.admin_columns(), vec!["name", "status"]);
+
+        let declared = parse_resource(
+            r#"
+[resource]
+name = "product"
+
+[admin]
+columns = ["status", "name"]
+
+[fields.name]
+type = "string"
+
+[fields.status]
+type = "string"
+"#,
+        );
+        assert_eq!(declared.admin_columns(), vec!["status", "name"]);
+    }
+
+    #[test]
+    fn admin_section_rejects_columns_naming_fields_that_do_not_exist() {
+        let bad_column: Resource = toml::from_str(
+            "[resource]\nname = \"post\"\n\n[admin]\ncolumns = [\"nope\"]\n\n[fields.title]\ntype = \"string\"\n",
+        )
+        .unwrap();
+        assert!(bad_column.validate().is_err());
+
+        let bad_display: Resource = toml::from_str(
+            "[resource]\nname = \"post\"\n\n[admin]\ndisplay_field = \"nope\"\n\n[fields.title]\ntype = \"string\"\n",
+        )
+        .unwrap();
+        assert!(bad_display.validate().is_err());
+
+        // A typo in a key is caught too, rather than silently ignored.
+        assert!(toml::from_str::<Resource>(
+            "[resource]\nname = \"post\"\n\n[admin]\nvisibel = true\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn field_admin_carries_widget_options_and_visibility() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "product"
+
+[fields.status]
+type = "string"
+
+[fields.status.admin]
+label = "Lifecycle"
+widget = "select"
+options = ["draft", "active|Live"]
+readonly = true
+"#,
+        );
+        let status = &resource.fields["status"];
+        assert_eq!(status.admin.label.as_deref(), Some("Lifecycle"));
+        assert_eq!(status.admin.widget, Widget::Select);
+        assert_eq!(status.admin.widget.as_str(), "select");
+        assert_eq!(status.admin.options, vec!["draft", "active|Live"]);
+        assert!(status.admin.readonly);
+        // Defaults stay out of the way when `[fields.x.admin]` says nothing.
+        assert!(status.admin.visible);
+        assert_eq!(resource.fields["status"].admin.help, None);
     }
 
     #[test]

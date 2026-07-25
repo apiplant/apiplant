@@ -205,6 +205,7 @@ mod tests {
             default: None,
             max_length: None,
             on_delete: Some(OnDelete::Restrict),
+            admin: Default::default(),
         }
     }
 

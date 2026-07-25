@@ -142,7 +142,7 @@ apiplant_function::function! {
     name: "greet",
     description: "Greets a person and counts total registered users.",
     method: Post,
-    visibility: Public,
+    permission: "public",
     handler: greet,
 }
 ```
@@ -165,14 +165,14 @@ apiplant_function::functions! {
         name: "post_before_create",
         description: "Validates a post before it is stored.",
         method: Post,
-        visibility: Private,
+        permission: "private",
         handler: post_before_create,
     },
     {
         name: "post_after_create",
         description: "Records a newly created post.",
         method: Post,
-        visibility: Private,
+        permission: "private",
         handler: post_after_create,
     },
 }
@@ -217,10 +217,16 @@ you skip the derives), function bodies fall back to an untyped `object`.
 | `name` | yes | URL segment ⇒ `<base>/functions/<name>`. |
 | `description` | yes | Shown in the generated OpenAPI docs. |
 | `method` | yes | `Get` \| `Post` \| `Put` \| `Delete`. |
-| `visibility` | yes | `Public` \| `Authenticated` \| `RoleGated` \| `Private`. |
 | `handler` | yes | The function above. |
-| `version` | no | Defaults to the crate's `CARGO_PKG_VERSION`. |
+| `permission` | no* | Access policy: `"public"`, `"authenticated"`, `"member"`, `"role:<name>"`, `"private"`. |
+| `visibility` | no* | The older form: `Public` \| `Authenticated` \| `RoleGated` \| `Private`. |
 | `role` | no | Required role name when `visibility: RoleGated`. |
+| `admin` | no | How the [dashboard](admin.md#actions) presents it. |
+| `version` | no | Defaults to the crate's `CARGO_PKG_VERSION`. |
+
+\* Give `permission` **or** `visibility`, not both. Omit both and the function
+is private — the safe direction, so a forgotten line hides an endpoint rather
+than publishing one.
 
 ### Cargo setup
 
@@ -269,21 +275,61 @@ let rows = ctx.query(
 )?;
 ```
 
-## Visibility
+## Permissions
 
-Mirrors the resource [permission model](permissions.md). The framework enforces
-it before your handler runs:
+A function's access uses the same string grammar as a resource's
+[`[permissions]`](permissions.md), so an app has one access vocabulary rather
+than two. The framework enforces it before your handler runs:
 
 | Value | Who can call it | On mismatch |
 |-------|-----------------|-------------|
-| `Public` | anyone | — |
-| `Authenticated` | any authenticated caller | `401` |
-| `RoleGated` | caller holding `role` | `403` |
-| `Private` | nobody over HTTP (hidden from routing & docs) | `404` |
+| `"public"` | anyone | — |
+| `"authenticated"` | any authenticated caller | `401` |
+| `"member"` | any member of the caller's active organisation | `401` / `403` |
+| `"role:<name>"` | a member holding that role in the active organisation | `401` / `403` |
+| `"private"` | nobody over HTTP (hidden from routing & docs) | `404` |
 
-Visibility governs the **HTTP endpoint** only. A function attached to a
-resource's lifecycle still runs whatever its visibility — which is why hook
-functions are usually `Private`.
+`owner` is the one level with no meaning here: a function call has no row to
+own.
+
+```rust
+apiplant_function::function! {
+    name: "sales_summary",
+    description: "Orders and revenue over a recent window.",
+    method: Post,
+    permission: "member",
+    handler: sales_summary,
+}
+```
+
+A `private` function answers `404` rather than `403` — the same answer an
+unknown name gets, so probing cannot enumerate what is there.
+
+This governs the **HTTP endpoint** only. A function attached to a resource's
+lifecycle still runs whatever its permission — which is why hook functions are
+usually `"private"`.
+
+### The older `visibility` field
+
+`permission` supersedes the original `visibility` + `role` pair, which still
+works and still means what it always did:
+
+| `visibility` | equivalent `permission` |
+|---|---|
+| `Public` | `"public"` |
+| `Authenticated` | `"authenticated"` |
+| `RoleGated` + `role: "admin"` | `"role:admin"` |
+| `Private` | `"private"` |
+
+Give one form or the other, not both. The reason to prefer `permission` is
+`member` — "anyone in the active organisation", the level most operator-facing
+actions actually want, and the one `Visibility` has no variant for. A library
+compiled before `permission` existed keeps exactly the access its `visibility`
+gave it.
+
+An unreadable `permission` string collapses to `private`, matching how the rest
+of apiplant treats a typo in an access string: a mistake hides an endpoint
+instead of exposing one.
 
 ## Running as a lifecycle hook
 
@@ -315,6 +361,33 @@ fn post_before_create(ctx: &Context<()>, mut input: serde_json::Value) -> Result
 
 See [Lifecycle hooks](hooks.md) for the events, the payload each one receives,
 and the full reply protocol.
+
+## Appearing in the dashboard
+
+A function whose permission is not `private` becomes a runnable **action** in
+the generated [admin dashboard](admin.md), with a form derived from its `Input`
+type. An optional `admin` block says how it is presented — its label, its
+grouping, and whether running it asks for confirmation first:
+
+```rust
+apiplant_function::function! {
+    name: "reindex_catalogue",
+    description: "Rebuilds the product search index.",
+    method: Post,
+    permission: "role:admin",
+    admin: {
+        label: "Rebuild search index",
+        group: "Maintenance",
+        confirm: "Rebuild the index for every product?",
+        run_label: "Rebuild index",
+    },
+    handler: reindex,
+}
+```
+
+Functions bound to a resource's lifecycle never appear: they are machinery, not
+something a person triggers. Full reference:
+[Admin dashboard § Actions](admin.md#actions).
 
 ## Configuration
 
@@ -482,15 +555,19 @@ what the `function!` macro generates on the Rust side:
 
 ```json
 [{ "name": "hello", "version": "1.0.0", "description": "Greets someone.",
-   "visibility": "public", "method": "POST",
+   "permission": "public", "method": "POST",
+   "admin": { "label": "Say hello", "group": "Demo" },
    "input_schema": { "type": "object" }, "output_schema": { "type": "object" } }]
 ```
 
-Only `name` is required. `visibility` takes the same strings as a resource's
-permissions (`"public"`, `"authenticated"`, `"role:admin"`, `"private"`) and
-defaults to `"private"` — the safe direction, so a typo hides an endpoint instead
-of exposing it. `method` defaults to `"POST"`. The schema fields are optional,
-may be an object or a pre-serialised string, and only feed the generated docs.
+Only `name` is required. `permission` takes the same strings as a resource's
+permissions (`"public"`, `"authenticated"`, `"member"`, `"role:admin"`,
+`"private"`) and defaults to `"private"` — the safe direction, so a typo hides
+an endpoint instead of exposing it. `visibility` is accepted as the older name
+for the same thing; `permission` wins if both appear. `method` defaults to
+`"POST"`. `admin` is the [dashboard](admin.md#actions) block, as an object or a
+pre-serialised string. The schema fields are optional, may likewise be an object
+or a string, and only feed the generated docs.
 
 ### Status codes and memory
 

@@ -4,6 +4,12 @@
 [resource]
 name = "order_line"
 
+[admin]
+visible = false
+label = "Order line"
+group = "Sales"
+order = 3
+
 [permissions]
 list   = "member"
 read   = "member"

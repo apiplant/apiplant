@@ -6,6 +6,11 @@
 [resource]
 name = "shipment_line"
 
+[admin]
+visible = false
+group = "Operations"
+order = 4
+
 [permissions]
 list   = "member"
 read   = "member"

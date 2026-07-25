@@ -521,6 +521,69 @@ where
     String::new()
 }
 
+/// Turn a `permission` string into the nearest legacy [`Visibility`] + role.
+///
+/// The manifest carries both because [`Visibility`] is the older, coarser field
+/// that generated docs and pre-`permission` tooling still read. `member` has no
+/// `Visibility` of its own, so it degrades to `Authenticated` — the closest
+/// truthful statement, and never a *wider* one.
+#[doc(hidden)]
+pub fn derive_visibility(permission: &str) -> (apiplant_abi::Visibility, String) {
+    use apiplant_abi::{FunctionAccess, Visibility};
+    match FunctionAccess::parse(permission) {
+        Some(FunctionAccess::Public) => (Visibility::Public, String::new()),
+        Some(FunctionAccess::Authenticated) | Some(FunctionAccess::Member) => {
+            (Visibility::Authenticated, String::new())
+        }
+        Some(FunctionAccess::Role(role)) => (Visibility::RoleGated, role),
+        // Unparseable or absent: closed, like every other access default here.
+        Some(FunctionAccess::Private) | None => (Visibility::Private, String::new()),
+    }
+}
+
+/// Collects the optional `admin { … }` block of a [`functions!`] entry and
+/// serialises it into [`apiplant_abi::FunctionManifest::admin`].
+///
+/// An entry that declares nothing produces the empty string rather than `{}`,
+/// so "said nothing" stays distinguishable from "said the defaults out loud".
+#[doc(hidden)]
+#[derive(Default)]
+pub struct AdminBuilder {
+    pub visible: Option<bool>,
+    pub roles: Vec<String>,
+    pub label: Option<String>,
+    pub group: Option<String>,
+    pub description: Option<String>,
+    pub confirm: Option<String>,
+    pub run_label: Option<String>,
+    pub order: Option<i64>,
+}
+
+impl AdminBuilder {
+    pub fn finish(self) -> String {
+        let mut object = serde_json::Map::new();
+        let mut put = |key: &str, value: Option<serde_json::Value>| {
+            if let Some(value) = value {
+                object.insert(key.to_string(), value);
+            }
+        };
+        put("visible", self.visible.map(serde_json::Value::from));
+        put("label", self.label.map(serde_json::Value::from));
+        put("group", self.group.map(serde_json::Value::from));
+        put("description", self.description.map(serde_json::Value::from));
+        put("confirm", self.confirm.map(serde_json::Value::from));
+        put("run_label", self.run_label.map(serde_json::Value::from));
+        put("order", self.order.map(serde_json::Value::from));
+        if !self.roles.is_empty() {
+            object.insert("roles".to_string(), serde_json::Value::from(self.roles));
+        }
+        if object.is_empty() {
+            return String::new();
+        }
+        serde_json::to_string(&object).unwrap_or_default()
+    }
+}
+
 /// A curated set of imports for function authors: `use apiplant_function::prelude::*;`.
 pub mod prelude {
     pub use crate::{reply, Context, Hook};
@@ -534,7 +597,8 @@ pub mod prelude {
 #[doc(hidden)]
 pub mod __rt {
     pub use crate::{
-        input_schema_json, invoke_handler, output_schema_json, Context, Exported, Hook,
+        derive_visibility, input_schema_json, invoke_handler, output_schema_json, AdminBuilder,
+        Context, Exported, Hook,
     };
     pub use abi_stable::export_root_module;
     pub use abi_stable::prefix_type::PrefixTypeTrait;
@@ -549,7 +613,7 @@ pub mod __rt {
 
 /// Define and export **one** apiplant function from a plain handler.
 ///
-/// Fields (`version` and `role` optional):
+/// Only `name`, `description`, `method` and `handler` are required:
 ///
 /// ```no_run
 /// # use apiplant_function::prelude::*;
@@ -560,12 +624,54 @@ pub mod __rt {
 ///     version: "1.2.0",            // optional; defaults to CARGO_PKG_VERSION
 ///     description: "Greets people",
 ///     method: Post,                // Get | Post | Put | Delete
-///     visibility: RoleGated,       // Public | Authenticated | RoleGated | Private
-///     role: "admin",               // optional; required when visibility: RoleGated
+///     permission: "role:admin",    // public | authenticated | member | role:<name> | private
 ///     handler: greet,              // fn(&Context<C>, I) -> Result<O, E>
 /// }
 /// # fn main() {}
 /// ```
+///
+/// # Access
+///
+/// `permission` uses the same grammar as a resource's `[permissions]`, so an
+/// app has one access vocabulary rather than two. The older
+/// `visibility: RoleGated` + `role: "admin"` pair still works and means exactly
+/// what it always did; give one or the other, not both.
+///
+/// `member` — any member of the caller's active organisation — is the level
+/// most operator-facing actions want and the reason `permission` exists;
+/// `visibility` cannot express it.
+///
+/// # Appearing in the dashboard
+///
+/// The optional `admin` block controls how `apiplant admin` presents the
+/// function. Every key is optional:
+///
+/// ```no_run
+/// # use apiplant_function::prelude::*;
+/// # type Json = serde_json::Value;
+/// # fn reindex(_ctx: &Context<()>, input: Json) -> Result<Json, String> { Ok(input) }
+/// apiplant_function::function! {
+///     name: "reindex_catalogue",
+///     description: "Rebuilds the product search index.",
+///     method: Post,
+///     permission: "role:admin",
+///     admin: {
+///         visible: true,                        // default: true unless private
+///         roles: ["admin", "manager"],          // who sees it; default: anyone who may call it
+///         label: "Rebuild search index",
+///         group: "Maintenance",
+///         description: "Run this after a bulk import.",
+///         confirm: "Rebuild the index for every product?",
+///         run_label: "Rebuild index",
+///         order: 10,
+///     },
+///     handler: reindex,
+/// }
+/// # fn main() {}
+/// ```
+///
+/// This is presentation only — hiding a function from the dashboard does not
+/// close its endpoint. `permission` is what does that.
 ///
 /// To export several functions from one library, use [`functions!`] — this is
 /// exactly that macro with a single entry.
@@ -627,8 +733,19 @@ macro_rules! functions {
                 $(version: $version:expr,)?
                 description: $description:expr,
                 method: $method:ident,
-                visibility: $visibility:ident,
+                $(visibility: $visibility:ident,)?
+                $(permission: $permission:expr,)?
                 $(role: $role:expr,)?
+                $(admin: {
+                    $(visible: $admin_visible:expr,)?
+                    $(roles: $admin_roles:expr,)?
+                    $(label: $admin_label:expr,)?
+                    $(group: $admin_group:expr,)?
+                    $(description: $admin_description:expr,)?
+                    $(confirm: $admin_confirm:expr,)?
+                    $(run_label: $admin_run_label:expr,)?
+                    $(order: $admin_order:expr,)?
+                },)?
                 handler: $handler:path
                 $(,)?
             }
@@ -659,16 +776,82 @@ macro_rules! functions {
                         $( version = $crate::__rt::RString::from($version); )?
 
                         #[allow(unused_mut)]
-                        let mut role = $crate::__rt::RString::new();
-                        $( role = $crate::__rt::RString::from($role); )?
+                        let mut role = ::std::string::String::new();
+                        $( role = ::std::string::String::from($role); )?
+
+                        // `permission` is the current spelling and `visibility`
+                        // + `role` the original one. Whichever the author used,
+                        // both fields end up populated and agreeing.
+                        #[allow(unused_mut)]
+                        let mut permission = ::std::string::String::new();
+                        $( permission = ::std::string::String::from($permission); )?
+
+                        #[allow(unused_mut)]
+                        let mut declared_visibility:
+                            ::core::option::Option<$crate::__rt::Visibility> =
+                            ::core::option::Option::None;
+                        $(
+                            declared_visibility = ::core::option::Option::Some(
+                                $crate::__rt::Visibility::$visibility,
+                            );
+                        )?
+
+                        let (visibility, role) = match declared_visibility {
+                            ::core::option::Option::Some(visibility) => {
+                                if permission.is_empty() {
+                                    permission = match visibility {
+                                        $crate::__rt::Visibility::Public =>
+                                            "public".to_string(),
+                                        $crate::__rt::Visibility::Authenticated =>
+                                            "authenticated".to_string(),
+                                        $crate::__rt::Visibility::Private =>
+                                            "private".to_string(),
+                                        $crate::__rt::Visibility::RoleGated =>
+                                            ::std::format!("role:{}", role),
+                                    };
+                                }
+                                (visibility, role)
+                            }
+                            ::core::option::Option::None => {
+                                let (visibility, derived_role) =
+                                    $crate::__rt::derive_visibility(&permission);
+                                let role = if role.is_empty() { derived_role } else { role };
+                                (visibility, role)
+                            }
+                        };
+
+                        #[allow(unused_mut)]
+                        let mut admin = $crate::__rt::AdminBuilder::default();
+                        $(
+                            $( admin.visible = ::core::option::Option::Some($admin_visible); )?
+                            $(
+                                admin.roles = $admin_roles
+                                    .iter()
+                                    .map(|role| ::std::string::ToString::to_string(role))
+                                    .collect();
+                            )?
+                            $( admin.label =
+                                ::core::option::Option::Some($admin_label.to_string()); )?
+                            $( admin.group =
+                                ::core::option::Option::Some($admin_group.to_string()); )?
+                            $( admin.description =
+                                ::core::option::Option::Some($admin_description.to_string()); )?
+                            $( admin.confirm =
+                                ::core::option::Option::Some($admin_confirm.to_string()); )?
+                            $( admin.run_label =
+                                ::core::option::Option::Some($admin_run_label.to_string()); )?
+                            $( admin.order = ::core::option::Option::Some($admin_order); )?
+                        )?
 
                         let manifest = $crate::__rt::FunctionManifest {
                             name: $crate::__rt::RString::from($name),
                             version,
                             description: $crate::__rt::RString::from($description),
-                            visibility: $crate::__rt::Visibility::$visibility,
-                            role,
+                            visibility,
+                            role: $crate::__rt::RString::from(role),
                             method: $crate::__rt::HttpMethod::$method,
+                            permission: $crate::__rt::RString::from(permission),
+                            admin: $crate::__rt::RString::from(admin.finish()),
                             config_schema: $crate::__rt::RString::new(),
                             input_schema: $crate::__rt::RString::from(
                                 $crate::__rt::input_schema_json(&$handler),
@@ -965,6 +1148,8 @@ mod tests {
             visibility: apiplant_abi::Visibility::Public,
             role: RString::new(),
             method: apiplant_abi::HttpMethod::Post,
+            permission: RString::new(),
+            admin: RString::new(),
             config_schema: RString::new(),
             input_schema: RString::new(),
             output_schema: RString::new(),
@@ -1145,6 +1330,8 @@ mod tests {
                 visibility: Visibility::Private,
                 role: RString::new(),
                 method: HttpMethod::Post,
+                permission: RString::new(),
+                admin: RString::new(),
                 config_schema: RString::new(),
                 input_schema: RString::new(),
                 output_schema: RString::new(),
@@ -1206,6 +1393,8 @@ mod tests {
                 visibility: Visibility::Public,
                 role: RString::new(),
                 method: HttpMethod::Post,
+                permission: RString::new(),
+                admin: RString::new(),
                 config_schema: RString::new(),
                 input_schema: RString::new(),
                 output_schema: RString::new(),

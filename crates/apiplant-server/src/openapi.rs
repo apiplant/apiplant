@@ -11,7 +11,7 @@
 //! An operation references those schemes whenever its resource/function policy
 //! requires authentication; public operations carry no security requirement.
 
-use apiplant_abi::{HttpMethod, Visibility};
+use apiplant_abi::{FunctionAccess, HttpMethod};
 use apiplant_core::schema::{Access, Field, FieldType};
 use apiplant_core::{App, Resource};
 use serde_json::{json, Map, Value};
@@ -62,7 +62,8 @@ pub fn build(app: &App, functions: &FunctionRegistry) -> Value {
     // and referenced, so function bodies are typed in the docs.
     for f in functions.iter() {
         let m = &f.manifest;
-        if m.visibility == Visibility::Private {
+        let access = m.access();
+        if access == FunctionAccess::Private {
             continue;
         }
         let input_ref = ingest_fn_schema(
@@ -81,10 +82,9 @@ pub fn build(app: &App, functions: &FunctionRegistry) -> Value {
             format!("/functions/{}", m.name),
             function_path(
                 m.method,
-                m.visibility,
+                &access,
                 m.name.as_str(),
                 m.description.as_str(),
-                m.role.as_str(),
                 input_ref,
                 output_ref,
             ),
@@ -534,10 +534,9 @@ fn auth_apikeys_path() -> Value {
 #[allow(clippy::too_many_arguments)]
 fn function_path(
     method: HttpMethod,
-    visibility: Visibility,
+    access: &FunctionAccess,
     name: &str,
     description: &str,
-    role: &str,
     input_ref: Option<String>,
     output_ref: Option<String>,
 ) -> Value {
@@ -547,11 +546,16 @@ fn function_path(
         HttpMethod::Put => "put",
         HttpMethod::Delete => "delete",
     };
-    let note = match visibility {
-        Visibility::Public => "Public — no authentication required.".to_string(),
-        Visibility::Authenticated => "Requires authentication.".to_string(),
-        Visibility::RoleGated => format!("Requires the `{role}` role."),
-        Visibility::Private => "Not exposed.".to_string(),
+    let note = match access {
+        FunctionAccess::Public => "Public — no authentication required.".to_string(),
+        FunctionAccess::Authenticated => "Requires authentication.".to_string(),
+        FunctionAccess::Member => {
+            "Requires membership of the active organization.".to_string()
+        }
+        FunctionAccess::Role(role) => {
+            format!("Requires the `{role}` role in the active organization.")
+        }
+        FunctionAccess::Private => "Not exposed.".to_string(),
     };
     let untyped = || json!({ "type": "object" });
     let response_schema = output_ref.map(|r| ref_to(&r)).unwrap_or_else(untyped);
@@ -570,7 +574,7 @@ fn function_path(
         let request_schema = input_ref.map(|r| ref_to(&r)).unwrap_or_else(untyped);
         op["requestBody"] = json_body(request_schema);
     }
-    if visibility != Visibility::Public {
+    if !access.is_public() {
         op["security"] = json!([{ "bearerAuth": [] }, { "apiKeyAuth": [] }]);
     }
 

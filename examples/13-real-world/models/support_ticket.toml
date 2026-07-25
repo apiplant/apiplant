@@ -10,6 +10,12 @@
 name        = "support_ticket"
 owner_field = "reporter_id"
 
+[admin]
+label = "Ticket"
+group = "Support"
+order = 1
+columns = ["subject", "customer_id", "status", "priority"]
+
 [permissions]
 list   = "member"
 read   = "member"
@@ -52,3 +58,11 @@ default = "open"           # open | pending | resolved
 
 [fields.resolved_at]
 type = "timestamp"
+
+[fields.status.admin]
+widget = "select"
+options = ["open", "pending", "resolved", "closed"]
+
+[fields.priority.admin]
+widget = "select"
+options = ["low", "normal", "high", "urgent"]

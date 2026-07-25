@@ -7,6 +7,12 @@
 [resource]
 name = "variant"
 
+[admin]
+label = "Variant"
+group = "Catalogue"
+order = 2
+columns = ["sku", "product_id", "price_cents"]
+
 [permissions]
 list   = "member"
 read   = "member"

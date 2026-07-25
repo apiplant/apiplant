@@ -23,7 +23,8 @@ use abi_stable::sabi_trait::TD_Opaque;
 use abi_stable::std_types::{RResult, RStr, RString};
 use apiplant_abi::c as cabi;
 use apiplant_abi::{
-    BoxedFunction, Function, FunctionManifest, HostApi_TO, HttpMethod, LogLevel, Visibility,
+    BoxedFunction, Function, FunctionAccess, FunctionManifest, HostApi_TO, HttpMethod, LogLevel,
+    Visibility,
 };
 use libloading::{Library, Symbol};
 use serde_json::Value;
@@ -356,25 +357,30 @@ fn parse_manifest(entry: &Value) -> Result<FunctionManifest, String> {
         }
     };
 
-    let visibility_str = entry
-        .get("visibility")
+    // `permission` is the current key and `visibility` the original one; they
+    // share a grammar, so either may carry the policy and `permission` wins.
+    let access_str = entry
+        .get("permission")
+        .or_else(|| entry.get("visibility"))
         .and_then(Value::as_str)
-        // Default to the closed end: an unreadable or absent visibility should
-        // hide an endpoint, never publish one.
+        // Default to the closed end: an unreadable or absent policy should hide
+        // an endpoint, never publish one.
         .unwrap_or("private");
-    let (visibility, role) = match visibility_str {
-        "public" => (Visibility::Public, String::new()),
-        "authenticated" => (Visibility::Authenticated, String::new()),
-        "private" => (Visibility::Private, String::new()),
-        other => match other.strip_prefix("role:").filter(|r| !r.is_empty()) {
-            Some(role) => (Visibility::RoleGated, role.to_string()),
-            None => {
-                return Err(format!(
-                    "function `{name}` has unknown visibility `{other}`; \
-                     expected \"public\", \"authenticated\", \"role:<name>\" or \"private\""
-                ))
-            }
-        },
+    let access = FunctionAccess::parse(access_str).ok_or_else(|| {
+        format!(
+            "function `{name}` has unknown permission `{access_str}`; expected \
+             \"public\", \"authenticated\", \"member\", \"role:<name>\" or \"private\""
+        )
+    })?;
+    // `visibility` is kept in step so anything still reading it — generated
+    // docs, older tooling — sees the nearest equivalent.
+    let (visibility, role) = match &access {
+        FunctionAccess::Public => (Visibility::Public, String::new()),
+        FunctionAccess::Authenticated | FunctionAccess::Member => {
+            (Visibility::Authenticated, String::new())
+        }
+        FunctionAccess::Role(role) => (Visibility::RoleGated, role.clone()),
+        FunctionAccess::Private => (Visibility::Private, String::new()),
     };
 
     let method_str = entry
@@ -404,6 +410,8 @@ fn parse_manifest(entry: &Value) -> Result<FunctionManifest, String> {
         visibility,
         role: role.into(),
         method,
+        permission: access.as_string().into(),
+        admin: schema("admin"),
         config_schema: schema("config_schema"),
         input_schema: schema("input_schema"),
         output_schema: schema("output_schema"),
@@ -460,8 +468,45 @@ mod tests {
     #[test]
     fn an_unknown_visibility_is_rejected() {
         let err = entry(r#"{"name":"h","visibility":"pubic"}"#).unwrap_err();
-        assert!(err.contains("unknown visibility"), "{err}");
+        assert!(err.contains("unknown permission"), "{err}");
         assert!(entry(r#"{"name":"h","visibility":"role:"}"#).is_err());
+    }
+
+    /// `permission` is the current key for the policy a C library declares, and
+    /// it may say things `visibility` never could.
+    #[test]
+    fn permission_is_read_and_outranks_visibility() {
+        let member = entry(r#"{"name":"h","permission":"member"}"#).unwrap();
+        assert_eq!(member.access(), FunctionAccess::Member);
+        // `member` has no Visibility of its own, so the legacy field carries the
+        // nearest thing rather than something wider.
+        assert_eq!(member.visibility, Visibility::Authenticated);
+
+        let both = entry(r#"{"name":"h","visibility":"public","permission":"role:ops"}"#).unwrap();
+        assert_eq!(both.access(), FunctionAccess::Role("ops".into()));
+        assert_eq!(both.visibility, Visibility::RoleGated);
+        assert_eq!(both.role.as_str(), "ops");
+
+        // Absent means private — a library that says nothing exposes nothing.
+        assert_eq!(
+            entry(r#"{"name":"h"}"#).unwrap().access(),
+            FunctionAccess::Private
+        );
+    }
+
+    /// The dashboard block is passed through verbatim; the admin generator, not
+    /// the loader, is what understands its shape.
+    #[test]
+    fn the_admin_block_survives_as_an_object_or_a_string() {
+        let inline = entry(r#"{"name":"h","admin":{"label":"Do it","order":2}}"#).unwrap();
+        let parsed: Value = serde_json::from_str(inline.admin.as_str()).unwrap();
+        assert_eq!(parsed["label"], "Do it");
+        assert_eq!(parsed["order"], 2);
+
+        let preserialised = entry(r#"{"name":"h","admin":"{\"label\":\"Do it\"}"}"#).unwrap();
+        assert_eq!(preserialised.admin.as_str(), r#"{"label":"Do it"}"#);
+
+        assert!(entry(r#"{"name":"h"}"#).unwrap().admin.is_empty());
     }
 
     #[test]

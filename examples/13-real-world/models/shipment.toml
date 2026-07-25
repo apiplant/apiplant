@@ -4,6 +4,11 @@
 [resource]
 name = "shipment"
 
+[admin]
+group = "Operations"
+order = 3
+columns = ["order_id", "carrier_id", "status", "tracking_code"]
+
 [permissions]
 list   = "member"
 read   = "member"
@@ -40,3 +45,7 @@ type = "timestamp"
 
 [fields.delivered_at]
 type = "timestamp"
+
+[fields.status.admin]
+widget = "select"
+options = ["pending", "in_transit", "delivered", "lost"]

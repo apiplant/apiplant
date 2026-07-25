@@ -5,6 +5,12 @@
 [resource]
 name = "address"
 
+[admin]
+plural = "Addresses"
+group = "Sales"
+order = 6
+columns = ["label", "city", "country_id"]
+
 [permissions]
 list   = "member"
 read   = "member"

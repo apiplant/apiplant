@@ -38,6 +38,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Authentication](docs/authentication.md) | users, API keys, sessions, OAuth, extending `user` |
 | [Functions](docs/functions.md) | writing & loading compiled plugins over the stable ABI |
 | [Lifecycle hooks](docs/hooks.md) | running functions before/after every CRUD operation |
+| [Admin dashboard](docs/admin.md) | the generated operator UI, `[admin]` config, action forms |
 | [API reference](docs/api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](docs/openapi.md) | the generated spec and interactive docs |
 
@@ -406,11 +407,26 @@ permissions, auth model and callable function endpoints into a static frontend,
 and writes a self-contained admin app (`index.html`, `app.js`, `app.css`, a
 JSON manifest, and the shared studio assets) to the output directory. The UI is
 generated from the dedicated top-level **`admin/` Vite app**, built with Solid
-and Tailwind while reusing studio's design system. It is schema-aware rather
-than schema-editing: an authentication-gated control panel for operators with
-sign-in, optional registration, organisation switching, member/role management,
-resource CRUD over the REST API, and manual invocation of callable functions.
-Functions used only as lifecycle hooks are omitted from the admin surface.
+and Tailwind while reusing studio's design system.
+
+It is built for the people who *run* the app, not the developer who wrote the
+models — so it shows names rather than ids, forms rather than JSON, and only
+what the person signed in is allowed to touch:
+
+* **Sign in / create account**, with any required profile fields as real inputs.
+* **A searchable, paginated table** per resource; click a row to open a form
+  carrying every field, its relationships (as pickers that show names), and the
+  records attached to it.
+* **Actions** — callable functions, with a form generated from the handler's own
+  input type and an optional confirmation step. Lifecycle hooks never appear.
+* **Purpose-built screens** for the auth resources — Team, Organization, Your
+  account, API keys — instead of raw `membership` and `user` tables.
+
+Tune it per resource with an `[admin]` section (`label`, `group`, `columns`,
+`roles`, …), per field with `[fields.<name>.admin]` (`widget`, `options`,
+`help`), and per function with an `admin { … }` block. All of it is
+presentation: `[permissions]` is what the server enforces. See
+[docs/admin.md](docs/admin.md).
 
 Develop the admin app like studio itself:
 

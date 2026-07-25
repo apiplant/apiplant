@@ -273,6 +273,67 @@ get product "$BOT"   # → []          17 org-scoped resources, all filtered
 get country "$BOT"   # → [DE, FR]    3 global ones, shared
 ```
 
+## A back office for it
+
+Twenty resources is exactly the point at which a raw table of rows stops being
+usable by anyone who did not write the models. So each one carries an `[admin]`
+section saying what to call it and where it belongs, and the fields whose
+comments already listed their values (`status`, `priority`, `tier`) declare
+those values properly so they render as dropdowns:
+
+```toml
+# models/product.toml
+[admin]
+group   = "Catalogue"
+order   = 1
+columns = ["name", "status", "category_id"]
+
+[fields.status.admin]
+widget  = "select"
+options = ["draft", "active", "discontinued"]
+help    = "Only active products can be sold."
+```
+
+The line resources — `order_line`, `shipment_line`, `purchase_order_line`,
+`ticket_message` — set `visible = false`. They are not hidden from the API; they
+simply have no business being a top-level menu item, because you always reach
+them *through* the order or ticket they belong to, where the record screen
+already lists them. `carrier` and `country` set `roles = ["admin"]`: shared
+reference data that a sales rep should not be editing.
+
+```bash
+apiplant build examples/13-real-world               # the actions, below
+apiplant admin examples/13-real-world --api http://127.0.0.1:8099
+apiplant run   examples/13-real-world               # serves it at /admin/
+```
+
+`functions/back_office.rs` adds the three things no CRUD form covers, one per
+access level — a `member` report, a `role:manager` stock correction that asks
+for confirmation before it writes, and a `role:admin` housekeeping job:
+
+```rust
+{
+    name: "restock_variant",
+    description: "Corrects the recorded stock count for one warehouse line.",
+    method: Post,
+    permission: "role:manager",
+    admin: {
+        label: "Correct stock count",
+        group: "Operations",
+        confirm: "This overwrites the recorded stock for that line. Continue?",
+        run_label: "Update stock",
+    },
+    handler: restock_variant,
+}
+```
+
+Sign in as Ana (admin) and Bo (manager) in turn and the sidebar differs: the
+reference data and the housekeeping job are Ana's, the stock correction is Bo's.
+Nothing enforces that in the dashboard — the API refuses either way — but there
+is no reason to show someone a door that answers `403`.
+
+See [Admin dashboard](../../docs/admin.md).
+
 ## What's deliberately not here
 
 Totals aren't recalculated when a line changes, stock isn't decremented on

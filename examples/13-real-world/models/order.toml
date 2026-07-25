@@ -12,6 +12,11 @@
 name  = "order"
 table = "apiplant_sales_order"
 
+[admin]
+group = "Sales"
+order = 2
+columns = ["number", "customer_id", "status", "total_cents"]
+
 [permissions]
 list   = "member"          # the whole org sees the order book…
 read   = "member"
@@ -62,3 +67,7 @@ type = "timestamp"
 
 [fields.notes]
 type = "text"
+
+[fields.status.admin]
+widget = "select"
+options = ["pending", "confirmed", "shipped", "cancelled"]

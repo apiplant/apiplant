@@ -7,6 +7,13 @@
 [resource]
 name = "inventory_level"
 
+[admin]
+label = "Stock level"
+plural = "Stock levels"
+group = "Operations"
+order = 2
+columns = ["variant_id", "warehouse_id", "on_hand", "reserved"]
+
 [permissions]
 list   = "member"
 read   = "member"

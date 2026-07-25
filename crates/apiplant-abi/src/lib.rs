@@ -92,6 +92,28 @@ pub struct FunctionManifest {
     pub role: RString,
     /// HTTP method the endpoint answers.
     pub method: HttpMethod,
+    /// Access policy in the same string grammar a resource's `[permissions]`
+    /// uses — `"public"`, `"authenticated"`, `"member"`, `"role:admin"`,
+    /// `"private"`. Empty means "derive it from `visibility` and `role`", which
+    /// is what a function that predates this field gets.
+    ///
+    /// This exists because [`Visibility`] cannot express `member` — "anyone in
+    /// the active organisation" — which is the level most operator-facing
+    /// actions actually want, and because sharing one grammar with resources
+    /// means an app has exactly one thing to learn about access.
+    pub permission: RString,
+    /// Dashboard presentation as a JSON object, or empty for the defaults:
+    ///
+    /// ```json
+    /// { "visible": true, "roles": ["admin"], "label": "Reindex catalogue",
+    ///   "group": "Maintenance", "confirm": "Reindex every product?",
+    ///   "run_label": "Reindex", "order": 10 }
+    /// ```
+    ///
+    /// Carried as JSON rather than as struct fields so that adding a
+    /// presentation knob later never changes this struct's layout — and so
+    /// never invalidates an already-compiled function library.
+    pub admin: RString,
     /// Optional JSON-Schema describing the function's config object. Empty = none.
     pub config_schema: RString,
     /// Optional JSON-Schema for the request body. Empty = untyped. Surfaced in
@@ -99,6 +121,82 @@ pub struct FunctionManifest {
     pub input_schema: RString,
     /// Optional JSON-Schema for the response body. Empty = untyped.
     pub output_schema: RString,
+}
+
+/// A function's effective access policy — the resolved form of
+/// [`FunctionManifest::permission`], falling back to [`Visibility`].
+///
+/// Deliberately *not* `StableAbi`: it is derived on the host from fields that
+/// are, so it can grow a variant without touching the wire contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionAccess {
+    /// Anyone, authenticated or not.
+    Public,
+    /// Any authenticated principal.
+    Authenticated,
+    /// Any member of the caller's active organisation.
+    Member,
+    /// A member holding this role in the active organisation.
+    Role(String),
+    /// Not exposed over HTTP at all.
+    Private,
+}
+
+impl FunctionAccess {
+    /// Parse the string grammar shared with a resource's `[permissions]`.
+    /// Returns `None` for anything unrecognised, so a caller can decide whether
+    /// a typo is an error (at build time) or should close the door (at load).
+    pub fn parse(value: &str) -> Option<FunctionAccess> {
+        match value.trim() {
+            "public" => Some(FunctionAccess::Public),
+            "authenticated" => Some(FunctionAccess::Authenticated),
+            "member" => Some(FunctionAccess::Member),
+            "private" => Some(FunctionAccess::Private),
+            other => other
+                .strip_prefix("role:")
+                .filter(|role| !role.is_empty())
+                .map(|role| FunctionAccess::Role(role.to_string())),
+        }
+    }
+
+    /// The canonical string form, round-tripping [`FunctionAccess::parse`].
+    pub fn as_string(&self) -> String {
+        match self {
+            FunctionAccess::Public => "public".to_string(),
+            FunctionAccess::Authenticated => "authenticated".to_string(),
+            FunctionAccess::Member => "member".to_string(),
+            FunctionAccess::Role(role) => format!("role:{role}"),
+            FunctionAccess::Private => "private".to_string(),
+        }
+    }
+
+    /// Whether the endpoint is reachable without credentials.
+    pub fn is_public(&self) -> bool {
+        matches!(self, FunctionAccess::Public)
+    }
+}
+
+impl FunctionManifest {
+    /// The policy the host enforces for this function.
+    ///
+    /// An explicit, parseable `permission` wins. Otherwise the legacy
+    /// `visibility` + `role` pair is used, so libraries compiled before
+    /// `permission` existed keep exactly the access they always had. An
+    /// *unparseable* `permission` collapses to [`FunctionAccess::Private`] —
+    /// the safe direction, matching how the rest of apiplant treats a typo in
+    /// an access string.
+    pub fn access(&self) -> FunctionAccess {
+        if !self.permission.is_empty() {
+            return FunctionAccess::parse(self.permission.as_str())
+                .unwrap_or(FunctionAccess::Private);
+        }
+        match self.visibility {
+            Visibility::Public => FunctionAccess::Public,
+            Visibility::Authenticated => FunctionAccess::Authenticated,
+            Visibility::Private => FunctionAccess::Private,
+            Visibility::RoleGated => FunctionAccess::Role(self.role.to_string()),
+        }
+    }
 }
 
 /// Services the host lends to a function for the duration of one invocation.
@@ -217,3 +315,80 @@ impl RootModule for FunctionMod_Ref {
 
 /// Convenience alias for the boxed function trait object the host works with.
 pub type BoxedFunction = Function_TO<'static, abi_stable::std_types::RBox<()>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(visibility: Visibility, role: &str, permission: &str) -> FunctionManifest {
+        FunctionManifest {
+            name: "act".into(),
+            version: "0.0.0".into(),
+            description: RString::new(),
+            visibility,
+            role: role.into(),
+            method: HttpMethod::Post,
+            permission: permission.into(),
+            admin: RString::new(),
+            config_schema: RString::new(),
+            input_schema: RString::new(),
+            output_schema: RString::new(),
+        }
+    }
+
+    #[test]
+    fn access_round_trips_through_its_string_form() {
+        for value in [
+            FunctionAccess::Public,
+            FunctionAccess::Authenticated,
+            FunctionAccess::Member,
+            FunctionAccess::Role("buyer".into()),
+            FunctionAccess::Private,
+        ] {
+            assert_eq!(FunctionAccess::parse(&value.as_string()), Some(value));
+        }
+        assert_eq!(FunctionAccess::parse("  member "), Some(FunctionAccess::Member));
+        // A bare `role:` names nobody, so it is not a role.
+        assert_eq!(FunctionAccess::parse("role:"), None);
+        assert_eq!(FunctionAccess::parse("owner"), None);
+        assert_eq!(FunctionAccess::parse("wat"), None);
+    }
+
+    #[test]
+    fn permission_wins_over_visibility_and_a_typo_closes_the_door() {
+        // `member` is the level `visibility` cannot express.
+        assert_eq!(
+            manifest(Visibility::Public, "", "member").access(),
+            FunctionAccess::Member
+        );
+        assert_eq!(
+            manifest(Visibility::Private, "", "role:admin").access(),
+            FunctionAccess::Role("admin".into())
+        );
+        // An unreadable permission hides the endpoint rather than exposing it.
+        assert_eq!(
+            manifest(Visibility::Public, "", "membre").access(),
+            FunctionAccess::Private
+        );
+    }
+
+    #[test]
+    fn a_manifest_without_permission_keeps_the_access_visibility_gave_it() {
+        assert_eq!(
+            manifest(Visibility::Public, "", "").access(),
+            FunctionAccess::Public
+        );
+        assert_eq!(
+            manifest(Visibility::Authenticated, "", "").access(),
+            FunctionAccess::Authenticated
+        );
+        assert_eq!(
+            manifest(Visibility::RoleGated, "buyer", "").access(),
+            FunctionAccess::Role("buyer".into())
+        );
+        assert_eq!(
+            manifest(Visibility::Private, "", "").access(),
+            FunctionAccess::Private
+        );
+    }
+}

@@ -6,6 +6,11 @@
 [resource]
 name = "customer"
 
+[admin]
+group = "Sales"
+order = 1
+columns = ["name", "email", "tier", "country_id"]
+
 [permissions]
 list   = "member"
 read   = "member"
@@ -39,3 +44,7 @@ on_delete  = "set_null"    # the rep leaves; the customer stays
 [fields.credit_limit_cents]
 type    = "integer"
 default = 0
+
+[fields.tier.admin]
+widget = "select"
+options = ["standard", "plus", "enterprise"]

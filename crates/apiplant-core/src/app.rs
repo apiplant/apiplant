@@ -1,7 +1,7 @@
 //! The loaded application: an app directory turned into config + resources.
 
 use crate::config::Config;
-use crate::schema::{Field, FieldType, OnDelete, Resource};
+use crate::schema::{Field, FieldAdmin, FieldType, OnDelete, Resource};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -77,6 +77,12 @@ impl App {
                         default: None,
                         max_length: None,
                         on_delete: Some(OnDelete::Cascade),
+                        // Injected and stamped by the framework — an operator
+                        // should never see, let alone type, a tenant id.
+                        admin: FieldAdmin {
+                            visible: false,
+                            ..FieldAdmin::default()
+                        },
                     },
                 );
             }

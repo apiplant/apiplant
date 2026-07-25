@@ -19,6 +19,7 @@ with lifecycle hooks, one idea at a time.
 | [Authentication](authentication.md) | users, organisations, API keys, sessions, extending `user` |
 | [Functions](functions.md) | writing & loading compiled plugins over the stable ABI |
 | [Lifecycle hooks](hooks.md) | running functions before/after every CRUD operation |
+| [Admin dashboard](admin.md) | the generated operator UI, `[admin]` config, action forms |
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](openapi.md) | the generated spec and interactive docs |
 
@@ -45,6 +46,8 @@ my-app/
 * **Hooks** attach those functions to a resource's lifecycle (`before_create`,
   `after_list`, …) so custom logic can validate, rewrite or observe every CRUD
   operation.
+* An **admin dashboard** is generated from all of the above — a static,
+  self-hosted operator UI, tuned per resource and per function with `[admin]`.
 * Migrations are automatic and additive: your schemas *are* the desired state.
 
 Everything is optional. An empty directory is a valid (bare) app.

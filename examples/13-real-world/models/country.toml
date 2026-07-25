@@ -6,6 +6,13 @@
 name  = "country"
 scope = "global"
 
+[admin]
+plural = "Countries"
+group = "Reference data"
+roles = ["admin"]
+order = 2
+columns = ["code", "name", "eu"]
+
 [permissions]
 list   = "public"
 read   = "public"

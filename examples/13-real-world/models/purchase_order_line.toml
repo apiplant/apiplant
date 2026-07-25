@@ -1,6 +1,11 @@
 [resource]
 name = "purchase_order_line"
 
+[admin]
+visible = false
+group = "Procurement"
+order = 3
+
 [permissions]
 list   = "member"
 read   = "member"

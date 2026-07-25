@@ -98,6 +98,10 @@ Each `[fields.<name>]` table declares one column.
 | `references` | `reference` | Target resource name (required for references). |
 | `on_delete` | `reference` | Referential action: `restrict` (default), `set_null`, `cascade`, `no_action`. |
 
+A field may also carry a `[fields.<name>.admin]` sub-table describing how it is
+*presented* in the generated dashboard — a label, help text, a widget, a set of
+choices. See [Admin dashboard](admin.md#admin-on-a-field).
+
 Example with several options:
 
 ```toml
@@ -134,6 +138,28 @@ Available keys are `before_`/`after_` × `list`, `read`, `create`, `update`,
 data each hook receives and what it can return, are in
 [Lifecycle hooks](hooks.md).
 
+## `[admin]`
+
+An optional section controlling how the resource appears in the generated
+[admin dashboard](admin.md) — what to call it, where it sits in the navigation,
+which columns its table shows, and which roles see it at all:
+
+```toml
+[admin]
+label   = "Product"
+plural  = "Products"
+group   = "Catalogue"
+roles   = ["manager"]        # who sees it; empty = anyone who may list it
+columns = ["name", "status", "category_id"]
+```
+
+This is **presentation only**. Hiding a resource here does not close its
+endpoints — that is what `[permissions]` is for, and the two are deliberately
+independent. Every key is optional; without the section a resource still
+appears, with labels and columns inferred from its fields.
+
+Full reference: [Admin dashboard](admin.md#admin-on-a-resource).
+
 ## Migrations
 
 There are **no migration files**. Your resource definitions are the desired
@@ -168,7 +194,9 @@ A resource fails to load (and the server refuses to start) if:
 
 * a field is named `id`,
 * a `reference` field has no `references` target,
-* `[hooks]` contains an unknown key or an empty function name.
+* `[hooks]` contains an unknown key or an empty function name,
+* `[admin]` names a field that does not exist (in `columns`, `display_field`
+  or `search_field`), or carries a key that isn't one of its own.
 
 Invalid SQL identifiers (table/column names outside `[A-Za-z_][A-Za-z0-9_]*`)
 are rejected at query build time.

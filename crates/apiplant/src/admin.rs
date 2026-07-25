@@ -1,10 +1,30 @@
-use std::collections::BTreeSet;
+//! `apiplant admin` — bake a static dashboard for an app.
+//!
+//! The output is a plain directory of files (`index.html`, `app.js`, `app.css`
+//! and a manifest) that can be served from anywhere: it talks to the deployed
+//! API over CORS and holds no secrets. Everything the interface needs to know
+//! about the app — which resources exist, what to call them, which fields to
+//! show, who may see what — is resolved *here*, at build time, and written into
+//! `apiplant-admin.json`. The shipped JavaScript is the same for every app.
+//!
+//! Two things are kept firmly apart, and it matters:
+//!
+//! * `[permissions]` / a function's `permission` decide what the **API**
+//!   allows. They are enforced by the server on every request.
+//! * `[admin]` decides what an **operator is shown**. It is presentation, and
+//!   this generator treats it as such — hiding a resource here does not protect
+//!   it, and the manifest never carries anything a signed-in caller could not
+//!   already read from the API.
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use apiplant_abi::{HttpMethod, Visibility};
-use apiplant_core::schema::{relation_name, Access, Field, FieldType, OnDelete, Resource};
+use apiplant_abi::{FunctionAccess, HttpMethod};
+use apiplant_core::schema::{
+    is_auth_resource, relation_name, titleize, Access, Field, FieldType, OnDelete, Resource, Widget,
+};
 use apiplant_core::App;
 use apiplant_server::functions::FunctionRegistry;
 use serde::Serialize;
@@ -41,21 +61,52 @@ struct AdminManifest {
 
 #[derive(Debug, Serialize)]
 struct AuthManifest {
+    /// The field a person logs in with, and a label to put above the box.
     identity_field: String,
+    identity_label: String,
     allow_registration: bool,
+    /// Extra fields the register form should collect, so nobody has to type
+    /// JSON to create an account.
+    signup_fields: Vec<FieldManifest>,
+    /// Fields the account screen lets someone edit about themselves.
+    profile_fields: Vec<FieldManifest>,
+    /// Roles seen anywhere in the app's permissions, so role pickers can offer
+    /// real choices instead of a free-text box.
+    known_roles: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct ResourceManifest {
     name: String,
+    /// Singular human label ("Purchase order").
+    label: String,
+    /// Collection human label ("Purchase orders").
+    plural: String,
+    /// Sidebar grouping, or `None` for the ungrouped tail.
+    group: Option<String>,
+    order: i64,
     builtin: bool,
+    /// One of the auth/tenancy resources the dashboard manages with a dedicated
+    /// screen rather than a generic table.
+    auth_resource: bool,
+    /// Whether it belongs in the resource navigation at all.
+    visible: bool,
+    /// Organisation roles that may see it; empty means "anyone who can list it".
+    roles: Vec<String>,
     scope: &'static str,
     owner_field: String,
+    /// Field whose value names a record in tables, pickers and headings.
+    display_field: Option<String>,
+    /// Field the list search box filters on.
+    search_field: Option<String>,
+    /// Columns for the list table, in order.
+    columns: Vec<String>,
     fields: Vec<FieldManifest>,
+    /// `belongs_to` edges out of this resource.
     relations: Vec<RelationManifest>,
+    /// `has_many` edges into it — the record screen lists these inline.
+    children: Vec<ChildManifest>,
     permissions: ActionPermissionsManifest,
-    permission_summary: String,
-    endpoint_summary: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,6 +121,8 @@ struct ActionPermissionsManifest {
 #[derive(Debug, Serialize)]
 struct ActionPermissionManifest {
     value: String,
+    /// The role name when `value` is `role:<name>`, so the UI needn't re-parse.
+    role: Option<String>,
     note: String,
     requires_org: bool,
 }
@@ -77,16 +130,34 @@ struct ActionPermissionManifest {
 #[derive(Debug, Serialize)]
 struct FieldManifest {
     name: String,
+    label: String,
     #[serde(rename = "type")]
     ty: &'static str,
+    /// The input to render; `auto` lets the interface choose from `type`.
+    widget: &'static str,
+    help: Option<String>,
+    placeholder: Option<String>,
+    options: Vec<FieldOption>,
     required: bool,
     unique: bool,
+    /// Stripped from API responses entirely (a password hash, say).
     hidden: bool,
+    /// Present in the API but deliberately not shown in the dashboard.
+    admin_visible: bool,
+    readonly: bool,
+    max_length: Option<u32>,
     references: Option<String>,
     relation: Option<String>,
     on_delete: Option<&'static str>,
     default_value: Option<Value>,
+    /// Whether the dashboard may submit this field on create/update.
     writable: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct FieldOption {
+    value: String,
+    label: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,17 +165,58 @@ struct RelationManifest {
     field: String,
     relation: String,
     target: String,
+    /// Human label for the link ("Customer").
+    label: String,
+    required: bool,
+}
+
+/// A resource that points *at* this one — rendered as a related list on the
+/// record screen, which is what turns a table of foreign keys into something a
+/// non-technical operator can actually navigate.
+#[derive(Debug, Serialize)]
+struct ChildManifest {
+    resource: String,
+    /// The child's field that points here.
+    field: String,
+    label: String,
 }
 
 #[derive(Debug, Serialize)]
 struct FunctionManifest {
     name: String,
+    label: String,
     description: String,
+    group: Option<String>,
+    order: i64,
     method: &'static str,
-    visibility: &'static str,
-    visibility_label: String,
+    /// Effective access policy, in the shared `[permissions]` grammar.
+    permission: String,
     role: Option<String>,
-    note: String,
+    permission_note: String,
+    requires_org: bool,
+    /// Whether it belongs in the dashboard's action list.
+    visible: bool,
+    roles: Vec<String>,
+    /// Text for the confirmation step, or `None` to run without one.
+    confirm: Option<String>,
+    run_label: String,
+    /// JSON Schema for the request body; the dashboard renders a form from it.
+    input_schema: Option<Value>,
+    output_schema: Option<Value>,
+}
+
+/// The `admin { … }` block of a function manifest, as carried over the ABI.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct FunctionAdmin {
+    visible: Option<bool>,
+    roles: Vec<String>,
+    label: Option<String>,
+    group: Option<String>,
+    description: Option<String>,
+    confirm: Option<String>,
+    run_label: Option<String>,
+    order: Option<i64>,
 }
 
 pub fn build(app_dir: &Path, options: Options) -> Result<PathBuf> {
@@ -142,17 +254,24 @@ fn build_manifest(
         .and_then(|name| name.to_str())
         .unwrap_or("apiplant app")
         .to_string();
-    let identity_field = app
-        .resources
-        .get("user")
+    let user = app.resources.get("user");
+    let identity_field = user
         .and_then(|resource| resource.auth.as_ref())
         .map(|auth| auth.identity_field.clone())
         .unwrap_or_else(|| "email".to_string());
+    let password_field = user
+        .and_then(|resource| resource.auth.as_ref())
+        .map(|auth| auth.password_field.clone())
+        .unwrap_or_else(|| "password_hash".to_string());
     let docs_url = if app.config.docs.enabled {
         Some(format!("{}{}", api_base_url, app.config.docs.path))
     } else {
         None
     };
+
+    // Functions bound to a resource's lifecycle are machinery, not operator
+    // actions; they never appear as something to "run" even when their
+    // permission would allow it.
     let hook_functions = app
         .resources
         .values()
@@ -164,19 +283,111 @@ fn build_manifest(
         })
         .collect::<BTreeSet<_>>();
 
+    // Reverse index: which resources point at each resource, so a record screen
+    // can offer its related lists.
+    let mut children: BTreeMap<String, Vec<ChildManifest>> = BTreeMap::new();
+    for child in app.resources.values() {
+        let references = child.references();
+        for reference in &references {
+            // A tenancy column is plumbing — every org-scoped row has one, and
+            // "this organization → all its products" is not a relationship
+            // anyone wants to browse from the organisation screen.
+            if reference.field == "organization_id" {
+                continue;
+            }
+            if !app.resources.contains_key(&reference.target) {
+                continue;
+            }
+            // When a child points at the same parent twice — an order's billing
+            // *and* shipping address — the resource name alone names both
+            // lists, so the relation has to disambiguate them.
+            let ambiguous = references
+                .iter()
+                .filter(|other| other.target == reference.target)
+                .count()
+                > 1;
+            let label = if ambiguous {
+                format!(
+                    "{} ({})",
+                    child.admin_plural(),
+                    titleize(&reference.relation).to_lowercase()
+                )
+            } else {
+                child.admin_plural()
+            };
+            children
+                .entry(reference.target.clone())
+                .or_default()
+                .push(ChildManifest {
+                    resource: child.meta.name.clone(),
+                    field: reference.field.clone(),
+                    label,
+                });
+        }
+    }
+
     let resources = app
         .resources
         .values()
-        .map(|resource| resource_manifest(resource, &app.config.server.base_path))
+        .map(|resource| {
+            resource_manifest(
+                resource,
+                &password_field,
+                children
+                    .remove(resource.meta.name.as_str())
+                    .unwrap_or_default(),
+            )
+        })
         .collect::<Vec<_>>();
 
     let mut loaded_functions = functions
         .iter()
-        .filter(|entry| entry.manifest.visibility != Visibility::Private)
         .filter(|entry| !hook_functions.contains(entry.manifest.name.as_str()))
-        .map(|entry| function_manifest(entry.manifest.name.as_str(), &entry.manifest))
+        .map(|entry| function_manifest(&entry.manifest))
+        // A private function has no endpoint at all, so there is nothing for an
+        // operator to run and nothing to show.
+        .filter(|manifest| manifest.permission != "private")
         .collect::<Vec<_>>();
-    loaded_functions.sort_by(|left, right| left.name.cmp(&right.name));
+    loaded_functions.sort_by(|left, right| {
+        left.group
+            .cmp(&right.group)
+            .then(left.order.cmp(&right.order))
+            .then(left.label.cmp(&right.label))
+    });
+
+    let signup_fields = user
+        .map(|resource| {
+            resource
+                .fields
+                .iter()
+                .filter(|(name, field)| {
+                    // The identity and password have their own inputs on the
+                    // form; everything else the model *requires* has to be
+                    // collected too, or registration simply fails.
+                    *name != &identity_field
+                        && *name != &password_field
+                        && field.required
+                        && !field.hidden
+                        && field.admin.visible
+                        && name.as_str() != "organization_id"
+                })
+                .map(|(name, field)| field_manifest(name, field, resource))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let profile_fields = user
+        .map(|resource| {
+            resource
+                .fields
+                .iter()
+                .filter(|(name, field)| {
+                    !field.hidden && field.admin.visible && *name != &password_field
+                })
+                .map(|(name, field)| field_manifest(name, field, resource))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     Ok(AdminManifest {
         title: format!("{app_name} admin"),
@@ -184,115 +395,240 @@ fn build_manifest(
         api_base_url,
         docs_url,
         auth: AuthManifest {
+            identity_label: titleize(&identity_field),
             identity_field,
             allow_registration: app.config.auth.allow_registration,
+            signup_fields,
+            profile_fields,
+            known_roles: known_roles(app, functions),
         },
         resources,
         functions: loaded_functions,
     })
 }
 
-fn resource_manifest(resource: &Resource, base_path: &str) -> ResourceManifest {
+/// Every role named anywhere in the app — resource permissions, function
+/// permissions, `[admin] roles` — so the team screen can offer a dropdown
+/// rather than asking someone to remember how "admin" is spelled.
+fn known_roles(app: &App, functions: &FunctionRegistry) -> Vec<String> {
+    let mut roles: BTreeSet<String> = BTreeSet::new();
+    // `member` is the role the built-in membership defaults describe, and every
+    // app has one whether or not a permission names it.
+    roles.insert("member".to_string());
+    roles.insert("admin".to_string());
+
+    for resource in app.resources.values() {
+        for access in [
+            &resource.permissions.list,
+            &resource.permissions.read,
+            &resource.permissions.create,
+            &resource.permissions.update,
+            &resource.permissions.delete,
+        ] {
+            if let Access::Role(role) = access {
+                roles.insert(role.clone());
+            }
+        }
+        roles.extend(resource.admin.roles.iter().cloned());
+    }
+    for entry in functions.iter() {
+        if let FunctionAccess::Role(role) = entry.manifest.access() {
+            roles.insert(role);
+        }
+        roles.extend(parse_function_admin(&entry.manifest).roles);
+    }
+    roles.into_iter().collect()
+}
+
+fn resource_manifest(
+    resource: &Resource,
+    password_field: &str,
+    children: Vec<ChildManifest>,
+) -> ResourceManifest {
     let fields = resource
         .fields
         .iter()
-        .map(|(name, field)| field_manifest(name, field, &resource.meta.owner_field))
+        .map(|(name, field)| field_manifest(name, field, resource))
         .collect::<Vec<_>>();
     let relations = resource
         .references()
         .into_iter()
+        .filter(|reference| reference.field != "organization_id")
         .map(|reference| RelationManifest {
+            label: titleize(&reference.relation),
             field: reference.field,
             relation: reference.relation,
             target: reference.target,
+            required: reference.required,
         })
         .collect::<Vec<_>>();
-    let scope = if resource.is_org_scoped() {
-        "organization"
-    } else {
-        "global"
-    };
-    let permissions = ActionPermissionsManifest {
-        list: permission_manifest(&resource.permissions.list, resource.is_org_scoped()),
-        read: permission_manifest(&resource.permissions.read, resource.is_org_scoped()),
-        create: permission_manifest(&resource.permissions.create, resource.is_org_scoped()),
-        update: permission_manifest(&resource.permissions.update, resource.is_org_scoped()),
-        delete: permission_manifest(&resource.permissions.delete, resource.is_org_scoped()),
-    };
-    let resource_path = if base_path.is_empty() {
-        format!("/{}", resource.meta.name)
-    } else {
-        format!("{}/{}", base_path, resource.meta.name)
-    };
+    let org_scoped = resource.is_org_scoped();
 
     ResourceManifest {
-        name: resource.meta.name.clone(),
+        label: resource.admin_label(),
+        plural: resource.admin_plural(),
+        group: resource.admin.group.clone(),
+        order: resource.admin.order,
         builtin: is_builtin_resource(&resource.meta.name),
-        scope,
+        auth_resource: is_auth_resource(&resource.meta.name),
+        visible: resource.admin.is_visible(&resource.meta.name),
+        roles: resource.admin.roles.clone(),
+        scope: if org_scoped { "organization" } else { "global" },
         owner_field: resource.meta.owner_field.clone(),
+        display_field: resource.admin_display_field(),
+        search_field: resource.admin_search_field(),
+        columns: resource
+            .admin_columns()
+            .into_iter()
+            // A password column would never render usefully and, on a resource
+            // that names one, is exactly the thing not to put in a table.
+            .filter(|column| column != password_field || resource.meta.name != "user")
+            .collect(),
+        permissions: ActionPermissionsManifest {
+            list: permission_manifest(&resource.permissions.list, org_scoped),
+            read: permission_manifest(&resource.permissions.read, org_scoped),
+            create: permission_manifest(&resource.permissions.create, org_scoped),
+            update: permission_manifest(&resource.permissions.update, org_scoped),
+            delete: permission_manifest(&resource.permissions.delete, org_scoped),
+        },
+        name: resource.meta.name.clone(),
         fields,
         relations,
-        permissions,
-        permission_summary: if resource.is_org_scoped() {
-            "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.".to_string()
-        } else {
-            "Global: no tenant filter is injected, so only the declared action permissions gate access.".to_string()
-        },
-        endpoint_summary: format!(
-            "Collection at {resource_path}; individual records at {resource_path}/{{id}}; nested lists remain available on parents that reference this resource."
-        ),
+        children,
     }
 }
 
 fn is_builtin_resource(name: &str) -> bool {
-    matches!(
-        name,
-        "organization" | "membership" | "user" | "api_key" | "oauth_connection"
-    )
+    is_auth_resource(name)
 }
 
-fn field_manifest(name: &str, field: &Field, owner_field: &str) -> FieldManifest {
+fn field_manifest(name: &str, field: &Field, resource: &Resource) -> FieldManifest {
     let references = field.references.clone();
     let relation = references.as_ref().map(|_| relation_name(name).to_string());
+    // The framework stamps the owner and the tenant itself; offering either as
+    // an input invites someone to fill in a value the server will overwrite.
+    let stamped = name == resource.meta.owner_field || name == "organization_id";
 
     FieldManifest {
-        name: name.to_string(),
+        label: field
+            .admin
+            .label
+            .clone()
+            .unwrap_or_else(|| titleize(name))
+            .to_string(),
         ty: field_type_name(field.ty),
+        widget: resolve_widget(field),
+        help: field.admin.help.clone(),
+        placeholder: field.admin.placeholder.clone(),
+        options: field
+            .admin
+            .options
+            .iter()
+            .map(|option| match option.split_once('|') {
+                Some((value, label)) => FieldOption {
+                    value: value.to_string(),
+                    label: label.to_string(),
+                },
+                None => FieldOption {
+                    value: option.clone(),
+                    label: titleize(option),
+                },
+            })
+            .collect(),
         required: field.required,
         unique: field.unique,
         hidden: field.hidden,
+        admin_visible: field.admin.visible && !field.hidden,
+        readonly: field.admin.readonly,
+        max_length: field.max_length,
         references,
         relation,
         on_delete: field.on_delete.map(on_delete_name),
         default_value: field.default.clone(),
-        writable: !field.hidden && name != owner_field && name != "organization_id",
+        writable: !field.hidden && !field.admin.readonly && !stamped,
+        name: name.to_string(),
+    }
+}
+
+/// Resolve `widget = "auto"` against the field's type, so the interface always
+/// receives a concrete instruction and never has to duplicate this mapping.
+fn resolve_widget(field: &Field) -> &'static str {
+    if field.admin.widget != Widget::Auto {
+        return field.admin.widget.as_str();
+    }
+    if !field.admin.options.is_empty() {
+        return "select";
+    }
+    match field.ty {
+        FieldType::Text => "textarea",
+        FieldType::Boolean => "switch",
+        FieldType::Json => "json",
+        FieldType::Timestamp => "date_time",
+        FieldType::Reference => "reference",
+        FieldType::Integer | FieldType::BigInt | FieldType::Float => "number",
+        FieldType::Uuid => "text",
+        FieldType::String => "text",
     }
 }
 
 fn permission_manifest(access: &Access, org_scoped: bool) -> ActionPermissionManifest {
     ActionPermissionManifest {
         value: access_value(access),
+        role: match access {
+            Access::Role(role) => Some(role.clone()),
+            _ => None,
+        },
         note: access_note(access, org_scoped),
-        requires_org: org_scoped || matches!(access, Access::Role(_)),
+        requires_org: org_scoped || matches!(access, Access::Role(_) | Access::Member),
     }
 }
 
-fn function_manifest(name: &str, manifest: &apiplant_abi::FunctionManifest) -> FunctionManifest {
-    let visibility = visibility_value(manifest.visibility);
-    let role = (!manifest.role.is_empty()).then(|| manifest.role.to_string());
+fn parse_function_admin(manifest: &apiplant_abi::FunctionManifest) -> FunctionAdmin {
+    if manifest.admin.is_empty() {
+        return FunctionAdmin::default();
+    }
+    serde_json::from_str(manifest.admin.as_str()).unwrap_or_default()
+}
+
+fn function_manifest(manifest: &apiplant_abi::FunctionManifest) -> FunctionManifest {
+    let access = manifest.access();
+    let admin = parse_function_admin(manifest);
+    let name = manifest.name.to_string();
+    let label = admin.label.unwrap_or_else(|| titleize(&name));
 
     FunctionManifest {
-        name: name.to_string(),
-        description: manifest.description.to_string(),
+        label: label.clone(),
+        description: admin
+            .description
+            .unwrap_or_else(|| manifest.description.to_string()),
+        group: admin.group,
+        order: admin.order.unwrap_or(0),
         method: method_name(manifest.method),
-        visibility,
-        visibility_label: match &role {
-            Some(role) => format!("role:{role}"),
-            None => visibility.to_string(),
+        permission: access.as_string(),
+        role: match &access {
+            FunctionAccess::Role(role) => Some(role.clone()),
+            _ => None,
         },
-        role,
-        note: visibility_note(manifest.visibility, manifest.role.as_str()),
+        permission_note: function_access_note(&access),
+        requires_org: matches!(access, FunctionAccess::Role(_) | FunctionAccess::Member),
+        visible: admin.visible.unwrap_or(true),
+        roles: admin.roles,
+        confirm: admin.confirm,
+        run_label: admin.run_label.unwrap_or(label),
+        input_schema: parse_schema(manifest.input_schema.as_str()),
+        output_schema: parse_schema(manifest.output_schema.as_str()),
+        name,
     }
+}
+
+/// A manifest's schemas are optional and may be malformed (they come from
+/// another language's library). An unreadable one simply means "no form", not a
+/// failed build.
+fn parse_schema(raw: &str) -> Option<Value> {
+    if raw.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_str(raw).ok()
 }
 
 fn access_value(access: &Access) -> String {
@@ -309,51 +645,29 @@ fn access_value(access: &Access) -> String {
 fn access_note(access: &Access, org_scoped: bool) -> String {
     if org_scoped {
         return match access {
-            Access::Private => "Not exposed.".to_string(),
-            Access::Owner => "Requires membership of the active organization; the API narrows the operation to rows owned by the caller.".to_string(),
-            Access::Role(role) => {
-                format!("Requires the `{role}` role in the active organization.")
-            }
-            _ => "Requires membership of the active organization.".to_string(),
+            Access::Private => "Not available.".to_string(),
+            Access::Owner => "Limited to records you created.".to_string(),
+            Access::Role(role) => format!("Needs the {role} role."),
+            _ => "Available to everyone in this organization.".to_string(),
         };
     }
 
     match access {
-        Access::Public => "Public — no authentication required.".to_string(),
-        Access::Authenticated => "Requires authentication.".to_string(),
-        Access::Member => {
-            "Requires authentication; `member` on a global resource behaves like `authenticated`."
-                .to_string()
-        }
-        Access::Owner => {
-            "Requires authentication; the API narrows the operation to rows owned by the caller."
-                .to_string()
-        }
-        Access::Role(role) => format!("Requires the `{role}` role in the active organization."),
-        Access::Private => "Not exposed.".to_string(),
+        Access::Public => "Available to anyone.".to_string(),
+        Access::Authenticated | Access::Member => "Available once you sign in.".to_string(),
+        Access::Owner => "Limited to records you created.".to_string(),
+        Access::Role(role) => format!("Needs the {role} role."),
+        Access::Private => "Not available.".to_string(),
     }
 }
 
-fn visibility_value(visibility: Visibility) -> &'static str {
-    match visibility {
-        Visibility::Public => "public",
-        Visibility::Authenticated => "authenticated",
-        Visibility::RoleGated => "role",
-        Visibility::Private => "private",
-    }
-}
-
-fn visibility_note(visibility: Visibility, role: &str) -> String {
-    match visibility {
-        Visibility::Public => "Public — callable without authentication.".to_string(),
-        Visibility::Authenticated => "Requires an authenticated user or API key.".to_string(),
-        Visibility::RoleGated => {
-            let role = if role.is_empty() { "required" } else { role };
-            format!("Requires the `{role}` role in the active organization.")
-        }
-        Visibility::Private => {
-            "Private hooks are not emitted into the static admin panel.".to_string()
-        }
+fn function_access_note(access: &FunctionAccess) -> String {
+    match access {
+        FunctionAccess::Public => "Anyone can run this.".to_string(),
+        FunctionAccess::Authenticated => "Available once you sign in.".to_string(),
+        FunctionAccess::Member => "Available to everyone in this organization.".to_string(),
+        FunctionAccess::Role(role) => format!("Needs the {role} role."),
+        FunctionAccess::Private => "Not available.".to_string(),
     }
 }
 
@@ -482,6 +796,45 @@ mod tests {
         dir
     }
 
+    fn build_manifest_for(models: &[(&str, &str)]) -> Value {
+        let app_dir = temp_dir("app");
+        let out_dir = temp_dir("out");
+        fs::create_dir_all(app_dir.join("models")).unwrap();
+        fs::write(
+            app_dir.join("main.toml"),
+            "[server]\nbase_path = \"/api\"\n\n[auth]\nallow_registration = true\n",
+        )
+        .unwrap();
+        for (name, src) in models {
+            fs::write(app_dir.join(format!("models/{name}.toml")), src).unwrap();
+        }
+
+        build(
+            &app_dir,
+            Options {
+                api: "https://example.com".to_string(),
+                out: Some(out_dir.clone()),
+            },
+        )
+        .unwrap();
+
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(out_dir.join("apiplant-admin.json")).unwrap())
+                .unwrap();
+        fs::remove_dir_all(app_dir).unwrap();
+        fs::remove_dir_all(out_dir).unwrap();
+        manifest
+    }
+
+    fn resource<'a>(manifest: &'a Value, name: &str) -> &'a Value {
+        manifest["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["name"] == name)
+            .unwrap_or_else(|| panic!("no `{name}` in manifest"))
+    }
+
     #[test]
     fn api_base_uses_app_base_path_when_only_a_domain_is_given() {
         assert_eq!(
@@ -508,43 +861,10 @@ mod tests {
 
     #[test]
     fn build_writes_static_admin_files_and_manifest() {
-        let app_dir = temp_dir("app");
-        let out_dir = temp_dir("out");
-
+        let app_dir = temp_dir("files");
+        let out_dir = temp_dir("files-out");
         fs::create_dir_all(app_dir.join("models")).unwrap();
-        fs::write(
-            app_dir.join("main.toml"),
-            r#"
-[server]
-base_path = "/api"
-
-[auth]
-allow_registration = true
-"#,
-        )
-        .unwrap();
-        fs::write(
-            app_dir.join("models/post.toml"),
-            r#"
-[resource]
-name = "post"
-
-[permissions]
-list = "public"
-read = "public"
-create = "authenticated"
-update = "owner"
-delete = "role:admin"
-
-[fields.title]
-type = "string"
-required = true
-
-[fields.body]
-type = "text"
-"#,
-        )
-        .unwrap();
+        fs::write(app_dir.join("main.toml"), "[server]\nbase_path = \"/api\"\n").unwrap();
 
         let written = build(
             &app_dir,
@@ -556,25 +876,275 @@ type = "text"
         .unwrap();
 
         assert_eq!(written, out_dir);
-        assert!(out_dir.join("index.html").exists());
-        assert!(out_dir.join("app.js").exists());
-        assert!(out_dir.join("app.css").exists());
-        assert!(out_dir.join("head.png").exists());
-        assert!(out_dir.join("head-inverted.png").exists());
-
-        let manifest: Value =
-            serde_json::from_slice(&fs::read(out_dir.join("apiplant-admin.json")).unwrap())
-                .unwrap();
-        assert_eq!(manifest["api_base_url"], "https://example.com/api");
-        assert_eq!(manifest["auth"]["identity_field"], "email");
-        assert!(manifest["resources"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|resource| resource["name"] == "post"));
-        assert!(manifest["functions"].as_array().unwrap().is_empty());
+        for file in [
+            "index.html",
+            "app.js",
+            "app.css",
+            "head.png",
+            "head-inverted.png",
+            "apiplant-admin.json",
+        ] {
+            assert!(out_dir.join(file).exists(), "{file} was not written");
+        }
 
         fs::remove_dir_all(app_dir).unwrap();
         fs::remove_dir_all(out_dir).unwrap();
+    }
+
+    #[test]
+    fn auth_resources_are_hidden_from_the_resource_navigation_by_default() {
+        let manifest = build_manifest_for(&[(
+            "post",
+            "[resource]\nname = \"post\"\n\n[fields.title]\ntype = \"string\"\n",
+        )]);
+
+        for name in ["user", "organization", "membership", "api_key"] {
+            let auth = resource(&manifest, name);
+            assert_eq!(auth["visible"], false, "{name} should be hidden");
+            assert_eq!(auth["auth_resource"], true);
+        }
+        assert_eq!(resource(&manifest, "post")["visible"], true);
+        assert_eq!(resource(&manifest, "post")["auth_resource"], false);
+    }
+
+    #[test]
+    fn admin_section_overrides_labels_columns_and_role_visibility() {
+        let manifest = build_manifest_for(&[(
+            "product",
+            r#"
+[resource]
+name = "product"
+
+[admin]
+visible = true
+roles = ["manager"]
+label = "Item"
+plural = "Catalogue items"
+group = "Catalogue"
+order = 3
+display_field = "title"
+columns = ["title", "status"]
+
+[fields.title]
+type = "string"
+required = true
+
+[fields.status]
+type = "string"
+default = "draft"
+
+[fields.status.admin]
+label = "Lifecycle"
+widget = "select"
+options = ["draft", "active|Live"]
+help = "Only live items are sold."
+
+[fields.internal_note]
+type = "text"
+
+[fields.internal_note.admin]
+visible = false
+"#,
+        )]);
+
+        let product = resource(&manifest, "product");
+        assert_eq!(product["label"], "Item");
+        assert_eq!(product["plural"], "Catalogue items");
+        assert_eq!(product["group"], "Catalogue");
+        assert_eq!(product["order"], 3);
+        assert_eq!(product["roles"][0], "manager");
+        assert_eq!(product["display_field"], "title");
+        assert_eq!(product["columns"][0], "title");
+        assert_eq!(product["columns"][1], "status");
+
+        let field = |name: &str| {
+            product["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["name"] == name)
+                .unwrap()
+        };
+        let status = field("status");
+        assert_eq!(status["label"], "Lifecycle");
+        assert_eq!(status["widget"], "select");
+        assert_eq!(status["help"], "Only live items are sold.");
+        assert_eq!(status["options"][0]["value"], "draft");
+        assert_eq!(status["options"][0]["label"], "Draft");
+        // `value|Label` splits into an explicit caption.
+        assert_eq!(status["options"][1]["value"], "active");
+        assert_eq!(status["options"][1]["label"], "Live");
+
+        // Hidden in the dashboard, still part of the API.
+        assert_eq!(field("internal_note")["admin_visible"], false);
+        assert_eq!(field("internal_note")["hidden"], false);
+
+        // The injected tenancy column is never an input.
+        assert_eq!(field("organization_id")["writable"], false);
+        assert_eq!(field("organization_id")["admin_visible"], false);
+    }
+
+    #[test]
+    fn labels_and_columns_are_inferred_when_admin_says_nothing() {
+        let manifest = build_manifest_for(&[(
+            "purchase_order",
+            r#"
+[resource]
+name = "purchase_order"
+
+[fields.name]
+type = "string"
+
+[fields.notes]
+type = "text"
+
+[fields.settings]
+type = "json"
+"#,
+        )]);
+
+        let purchase_order = resource(&manifest, "purchase_order");
+        assert_eq!(purchase_order["label"], "Purchase order");
+        assert_eq!(purchase_order["plural"], "Purchase orders");
+        assert_eq!(purchase_order["display_field"], "name");
+        assert_eq!(purchase_order["search_field"], "name");
+
+        // `text` and `json` never read well in a table cell, so they are left
+        // out of the inferred column set.
+        let columns: Vec<&str> = purchase_order["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|column| column.as_str().unwrap())
+            .collect();
+        assert_eq!(columns, vec!["name"]);
+    }
+
+    #[test]
+    fn related_lists_are_derived_from_incoming_references() {
+        let manifest = build_manifest_for(&[
+            (
+                "order",
+                "[resource]\nname = \"order\"\n\n[fields.number]\ntype = \"string\"\n",
+            ),
+            (
+                "order_line",
+                r#"
+[resource]
+name = "order_line"
+
+[fields.order_id]
+type = "reference"
+references = "order"
+required = true
+
+[fields.quantity]
+type = "integer"
+"#,
+            ),
+        ]);
+
+        let order = resource(&manifest, "order");
+        let children = order["children"].as_array().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0]["resource"], "order_line");
+        assert_eq!(children[0]["field"], "order_id");
+        assert_eq!(children[0]["label"], "Order lines");
+
+        // …and the child knows which way its own reference points.
+        let line = resource(&manifest, "order_line");
+        let relation = line["relations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|relation| relation["field"] == "order_id")
+            .unwrap();
+        assert_eq!(relation["target"], "order");
+        assert_eq!(relation["label"], "Order");
+        assert_eq!(relation["required"], true);
+    }
+
+    #[test]
+    fn known_roles_collect_every_role_the_app_names() {
+        let manifest = build_manifest_for(&[(
+            "product",
+            r#"
+[resource]
+name = "product"
+
+[permissions]
+create = "role:buyer"
+delete = "role:auditor"
+
+[fields.name]
+type = "string"
+"#,
+        )]);
+
+        let roles: Vec<&str> = manifest["auth"]["known_roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|role| role.as_str().unwrap())
+            .collect();
+        assert!(roles.contains(&"buyer"));
+        assert!(roles.contains(&"auditor"));
+        // The two roles every app has, whether or not a permission names them.
+        assert!(roles.contains(&"admin"));
+        assert!(roles.contains(&"member"));
+    }
+
+    #[test]
+    fn signup_collects_required_profile_fields_so_nobody_types_json() {
+        let manifest = build_manifest_for(&[(
+            "user",
+            r#"
+[resource]
+name = "user"
+scope = "global"
+
+[auth]
+identity_field = "email"
+password_field = "password_hash"
+
+[fields.email]
+type = "string"
+required = true
+unique = true
+
+[fields.password_hash]
+type = "string"
+hidden = true
+
+[fields.full_name]
+type = "string"
+required = true
+
+[fields.nickname]
+type = "string"
+"#,
+        )]);
+
+        let signup: Vec<&str> = manifest["auth"]["signup_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect();
+        // Required extras only: the identity and password have their own inputs,
+        // and an optional field would just be noise on a sign-up form.
+        assert_eq!(signup, vec!["full_name"]);
+        assert_eq!(manifest["auth"]["identity_label"], "Email");
+
+        // The account screen offers everything editable, including optional
+        // fields — but never the password hash.
+        let profile: Vec<&str> = manifest["auth"]["profile_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect();
+        assert!(profile.contains(&"nickname"));
+        assert!(!profile.contains(&"password_hash"));
     }
 }

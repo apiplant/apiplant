@@ -6,6 +6,11 @@
 [resource]
 name = "product"
 
+[admin]
+group = "Catalogue"
+order = 1
+columns = ["name", "status", "category_id"]
+
 [permissions]
 list   = "member"
 read   = "member"
@@ -36,3 +41,8 @@ default = "draft"          # draft | active | discontinued
 
 [fields.attributes]
 type = "json"              # free-form specs, indexed by nothing, read as-is
+
+[fields.status.admin]
+widget = "select"
+options = ["draft", "active", "discontinued"]
+help = "Only active products can be sold."

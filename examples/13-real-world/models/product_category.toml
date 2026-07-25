@@ -7,6 +7,13 @@
 name  = "product_category"
 scope = "global"
 
+[admin]
+label = "Category"
+plural = "Categories"
+group = "Catalogue"
+order = 3
+columns = ["name", "parent_id"]
+
 [permissions]
 list   = "public"
 read   = "public"

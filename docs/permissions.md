@@ -141,3 +141,14 @@ delete = "role:admin"
 * No/invalid credentials ⇒ anonymous (only `public` actions succeed).
 
 See [Authentication](authentication.md) for details.
+
+## The same grammar elsewhere
+
+Two other things speak this vocabulary:
+
+* A [function](functions.md#permissions) declares a `permission` from the same
+  set — minus `owner`, since a function call has no row to own, and plus
+  nothing else.
+* The [admin dashboard](admin.md) evaluates these policies client-side to
+  decide what to *offer*. That is presentation: it hides doors that would open
+  onto a `403`, and it is never what keeps anyone out. The server is.

@@ -4,6 +4,11 @@
 [resource]
 name = "supplier"
 
+[admin]
+group = "Procurement"
+order = 1
+columns = ["name", "contact_email", "country_id"]
+
 [permissions]
 list   = "member"
 read   = "member"

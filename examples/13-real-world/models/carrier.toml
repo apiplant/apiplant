@@ -4,6 +4,12 @@
 name  = "carrier"
 scope = "global"
 
+[admin]
+group = "Reference data"
+roles = ["admin"]
+order = 1
+columns = ["name", "code"]
+
 [permissions]
 list   = "public"
 read   = "public"

@@ -8,6 +8,11 @@
 [resource]
 name = "payment"
 
+[admin]
+group = "Sales"
+order = 4
+columns = ["order_id", "status", "amount_cents"]
+
 [permissions]
 list   = "member"
 read   = "member"
@@ -43,3 +48,7 @@ hidden = true              # never returned to clients
 
 [fields.captured_at]
 type = "timestamp"
+
+[fields.status.admin]
+widget = "select"
+options = ["pending", "captured", "failed", "refunded"]

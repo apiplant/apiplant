@@ -1,12 +1,86 @@
+/**
+ * The shape of `apiplant-admin.json`, written by `apiplant admin`.
+ *
+ * Everything app-specific lives here; the shipped JavaScript is identical for
+ * every application. Keep this in step with `crates/apiplant/src/admin.rs`.
+ */
+
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-export interface AuthManifest {
-  identity_field: string;
-  allow_registration: boolean;
+export type FieldType =
+  | "string"
+  | "text"
+  | "integer"
+  | "big_int"
+  | "float"
+  | "boolean"
+  | "uuid"
+  | "timestamp"
+  | "json"
+  | "reference";
+
+/** Concrete input to render. The generator resolves `auto` for us. */
+export type Widget =
+  | "text"
+  | "textarea"
+  | "select"
+  | "email"
+  | "url"
+  | "password"
+  | "color"
+  | "date"
+  | "date_time"
+  | "json"
+  | "switch"
+  | "number"
+  | "reference";
+
+export interface FieldOption {
+  value: string;
+  label: string;
 }
 
+export interface FieldManifest {
+  name: string;
+  label: string;
+  type: FieldType;
+  widget: Widget;
+  help: string | null;
+  placeholder: string | null;
+  options: FieldOption[];
+  required: boolean;
+  unique: boolean;
+  /** Stripped from API responses entirely. */
+  hidden: boolean;
+  /** Present in the API but deliberately not shown in the dashboard. */
+  admin_visible: boolean;
+  readonly: boolean;
+  max_length: number | null;
+  references: string | null;
+  relation: string | null;
+  on_delete: "restrict" | "set_null" | "cascade" | "no_action" | null;
+  default_value: JsonValue;
+  writable: boolean;
+}
+
+export interface RelationManifest {
+  field: string;
+  relation: string;
+  target: string;
+  label: string;
+  required: boolean;
+}
+
+export interface ChildManifest {
+  resource: string;
+  field: string;
+  label: string;
+}
+
+/** One of the five CRUD actions, in the shared `[permissions]` grammar. */
 export interface ActionPermissionManifest {
   value: string;
+  role: string | null;
   note: string;
   requires_org: boolean;
 }
@@ -19,45 +93,76 @@ export interface ActionPermissionsManifest {
   delete: ActionPermissionManifest;
 }
 
-export interface FieldManifest {
-  name: string;
-  type: "string" | "text" | "integer" | "big_int" | "float" | "boolean" | "uuid" | "timestamp" | "json" | "reference";
-  required: boolean;
-  unique: boolean;
-  hidden: boolean;
-  references: string | null;
-  relation: string | null;
-  on_delete: "restrict" | "set_null" | "cascade" | "no_action" | null;
-  default_value: JsonValue;
-  writable: boolean;
-}
-
-export interface RelationManifest {
-  field: string;
-  relation: string;
-  target: string;
-}
+export type Action = keyof ActionPermissionsManifest;
 
 export interface ResourceManifest {
   name: string;
+  label: string;
+  plural: string;
+  group: string | null;
+  order: number;
   builtin: boolean;
+  auth_resource: boolean;
+  visible: boolean;
+  roles: string[];
   scope: "organization" | "global";
   owner_field: string;
+  display_field: string | null;
+  search_field: string | null;
+  columns: string[];
   fields: FieldManifest[];
   relations: RelationManifest[];
+  children: ChildManifest[];
   permissions: ActionPermissionsManifest;
-  permission_summary: string;
-  endpoint_summary: string;
 }
 
 export interface FunctionManifest {
   name: string;
+  label: string;
   description: string;
+  group: string | null;
+  order: number;
   method: "GET" | "POST" | "PUT" | "DELETE";
-  visibility: "public" | "authenticated" | "role" | "private";
-  visibility_label: string;
+  permission: string;
   role: string | null;
-  note: string;
+  permission_note: string;
+  requires_org: boolean;
+  visible: boolean;
+  roles: string[];
+  confirm: string | null;
+  run_label: string;
+  input_schema: JsonSchema | null;
+  output_schema: JsonSchema | null;
+}
+
+/** The slice of JSON Schema the action form understands. */
+export interface JsonSchema {
+  type?: string | string[];
+  title?: string;
+  description?: string;
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  enum?: JsonValue[];
+  format?: string;
+  default?: JsonValue;
+  items?: JsonSchema;
+  minimum?: number;
+  maximum?: number;
+  $ref?: string;
+  $defs?: Record<string, JsonSchema>;
+  definitions?: Record<string, JsonSchema>;
+  anyOf?: JsonSchema[];
+  oneOf?: JsonSchema[];
+  allOf?: JsonSchema[];
+}
+
+export interface AuthManifest {
+  identity_field: string;
+  identity_label: string;
+  allow_registration: boolean;
+  signup_fields: FieldManifest[];
+  profile_fields: FieldManifest[];
+  known_roles: string[];
 }
 
 export interface AdminManifest {
@@ -70,83 +175,24 @@ export interface AdminManifest {
   functions: FunctionManifest[];
 }
 
-export type AuthMode = "bearer" | "apiKey";
-export type NoticeKind = "success" | "error" | "warn" | "info";
-export type Page = { kind: "auth" | "dashboard" | "organization" | "resource" | "function"; name: string | null };
+export type ApiRecord = Record<string, unknown>;
 
-export interface Notice {
-  kind: NoticeKind;
+export type ToastKind = "success" | "error" | "info";
+
+export interface Toast {
+  id: number;
+  kind: ToastKind;
   message: string;
 }
 
-export type ApiRecord = Record<string, unknown>;
-
-export interface ResourceState {
-  loading: boolean;
-  saving: boolean;
-  error: string | null;
-  rows: ApiRecord[];
-  selectedId: string;
-  selectedRecord: ApiRecord | null;
-  formDraft: Record<string, string | boolean>;
-  filterField: string;
-  filterValue: string;
-  limit: string;
-  offset: string;
-}
-
-export interface FunctionState {
-  input: string;
-  loading: boolean;
-  error: string | null;
-  output: unknown;
-}
-
-export interface InviteLookup {
-  id: string;
-  label: string;
-}
-
-export interface AdminState {
-  manifest: AdminManifest | null;
-  page: Page;
-  notice: Notice | null;
-  auth: {
-    mode: AuthMode;
-    bearerToken: string;
-    apiKey: string;
-    userId: string | null;
-    profile: ApiRecord | null;
-    organizations: ApiRecord[];
-    selectedOrgId: string;
-    role: string | null;
-    refreshing: boolean;
-  };
-  forms: {
-    loginIdentity: string;
-    loginPassword: string;
-    registerIdentity: string;
-    registerPassword: string;
-    registerExtra: string;
-    manualBearerToken: string;
-    manualApiKey: string;
-    createOrgName: string;
-    createOrgSlug: string;
-    editOrgName: string;
-    editOrgSlug: string;
-    inviteIdentity: string;
-    inviteUserId: string;
-    inviteRole: string;
-  };
-  organizations: {
-    loadingMembers: boolean;
-    membersError: string | null;
-    members: ApiRecord[];
-    memberRoleDrafts: Record<string, string>;
-    inviteLookup: InviteLookup | null;
-    inviteLookupError: string | null;
-    inviteLookupLoading: boolean;
-  };
-  resources: Record<string, ResourceState>;
-  functions: Record<string, FunctionState>;
-}
+/** Where the interface is. Persisted to the URL hash so links survive a reload. */
+export type Route =
+  | { kind: "dashboard" }
+  | { kind: "resource"; name: string }
+  | { kind: "record"; name: string; id: string }
+  | { kind: "new"; name: string }
+  | { kind: "action"; name: string }
+  | { kind: "account" }
+  | { kind: "team" }
+  | { kind: "organization" }
+  | { kind: "keys" };

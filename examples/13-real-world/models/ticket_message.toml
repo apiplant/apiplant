@@ -7,6 +7,11 @@
 name        = "ticket_message"
 owner_field = "author_id"
 
+[admin]
+visible = false
+group = "Support"
+order = 2
+
 [permissions]
 list   = "member"
 read   = "member"
