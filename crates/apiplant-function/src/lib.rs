@@ -542,7 +542,7 @@ pub mod __rt {
     pub use abi_stable::sabi_trait::TD_Opaque;
     pub use abi_stable::std_types::{RBox, RResult, RStr, RString, RVec};
     pub use apiplant_abi::{
-        BoxedFunction, Function, FunctionMod, FunctionMod_Ref, FunctionManifest, Function_TO,
+        BoxedFunction, Function, FunctionManifest, FunctionMod, FunctionMod_Ref, Function_TO,
         HostApi_TO, HttpMethod, Visibility,
     };
 }
@@ -792,9 +792,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(ctx.principal_id(), "user-123");
 
-        let request = &host
-            .config()
-            .into_string();
+        let request = &host.config().into_string();
         assert_eq!(request, "{}");
     }
 
@@ -804,10 +802,7 @@ mod tests {
         let host = HostApi_TO::from_value(host, TD_Opaque);
         let ctx = Context::__new(&host, (), "user-123".into(), None);
 
-        assert_eq!(
-            ctx.execute("DELETE FROM apiplant_post", &[]).unwrap(),
-            3
-        );
+        assert_eq!(ctx.execute("DELETE FROM apiplant_post", &[]).unwrap(), 3);
         ctx.warn("careful");
     }
 
@@ -841,9 +836,11 @@ mod tests {
         let result = invoke_handler::<Config, Input, Output, String, _>(
             &host,
             RStr::from_str("{"),
-            |_ctx, _input| Ok(Output {
-                message: "never".into(),
-            }),
+            |_ctx, _input| {
+                Ok(Output {
+                    message: "never".into(),
+                })
+            },
         );
 
         match result {
@@ -885,24 +882,29 @@ mod tests {
         for (label, handler) in [
             (
                 "unwrap",
-                Box::new(|_: &Context<'_, '_, Config>, input: Input| -> Result<Output, String> {
-                    // Derived from the input so clippy sees a real `Option`
-                    // rather than a literal `None` it can flag at the call site.
-                    let missing = input.name.strip_prefix("nonexistent-prefix");
-                    Ok(Output {
-                        message: missing.unwrap().to_string(),
-                    })
-                }) as Box<dyn Fn(&Context<'_, '_, Config>, Input) -> Result<Output, String>>,
+                Box::new(
+                    |_: &Context<'_, '_, Config>, input: Input| -> Result<Output, String> {
+                        // Derived from the input so clippy sees a real `Option`
+                        // rather than a literal `None` it can flag at the call site.
+                        let missing = input.name.strip_prefix("nonexistent-prefix");
+                        Ok(Output {
+                            message: missing.unwrap().to_string(),
+                        })
+                    },
+                )
+                    as Box<dyn Fn(&Context<'_, '_, Config>, Input) -> Result<Output, String>>,
             ),
             (
                 "index",
-                Box::new(|_: &Context<'_, '_, Config>, input: Input| -> Result<Output, String> {
-                    // Indexed by input length so the compiler can't prove it's
-                    // out of bounds and reject the test with `unconditional_panic`.
-                    let empty: Vec<u8> = Vec::new();
-                    let _ = empty[input.name.len()];
-                    unreachable!()
-                }),
+                Box::new(
+                    |_: &Context<'_, '_, Config>, input: Input| -> Result<Output, String> {
+                        // Indexed by input length so the compiler can't prove it's
+                        // out of bounds and reject the test with `unconditional_panic`.
+                        let empty: Vec<u8> = Vec::new();
+                        let _ = empty[input.name.len()];
+                        unreachable!()
+                    },
+                ),
             ),
         ] {
             let host = MockHost::success("{}", "u1", serde_json::json!([]));
@@ -1063,7 +1065,10 @@ mod tests {
         )
         .unwrap();
         assert!(before.is_before());
-        assert_eq!(before.field("title").and_then(|v| v.as_str()), Some("Draft"));
+        assert_eq!(
+            before.field("title").and_then(|v| v.as_str()),
+            Some("Draft")
+        );
         assert!(before.row().is_null());
 
         let listed = Hook::parse(
@@ -1191,7 +1196,7 @@ mod tests {
 
     #[test]
     fn exported_functions_are_abi_trait_objects() {
-        use apiplant_abi::{Function_TO, FunctionManifest, HttpMethod, Visibility};
+        use apiplant_abi::{FunctionManifest, Function_TO, HttpMethod, Visibility};
 
         let exported: Exported<Config, Input, Output, String, _> = Exported::new(
             FunctionManifest {
@@ -1237,9 +1242,12 @@ mod tests {
 
     #[test]
     fn schema_generation_is_typed() {
-        let handler = |_ctx: &Context<'_, '_, ()>, input: SchemaInput| -> Result<SchemaOutput, String> {
-            Ok(SchemaOutput { ok: !input.name.is_empty() })
-        };
+        let handler =
+            |_ctx: &Context<'_, '_, ()>, input: SchemaInput| -> Result<SchemaOutput, String> {
+                Ok(SchemaOutput {
+                    ok: !input.name.is_empty(),
+                })
+            };
 
         let input_schema = input_schema_json::<(), SchemaInput, SchemaOutput, String, _>(&handler);
         let output_schema =

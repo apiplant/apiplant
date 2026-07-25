@@ -181,7 +181,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        dir.push(format!("apiplant-config-{label}-{}-{stamp}", std::process::id()));
+        dir.push(format!(
+            "apiplant-config-{label}-{}-{stamp}",
+            std::process::id()
+        ));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -194,7 +197,10 @@ mod tests {
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 8080);
         assert_eq!(config.server.base_path, "");
-        assert_eq!(config.database.resolved_url(), "postgres://postgres:postgres@localhost:5432/apiplant");
+        assert_eq!(
+            config.database.resolved_url(),
+            "postgres://postgres:postgres@localhost:5432/apiplant"
+        );
         assert!(config.auth.allow_registration);
         assert!(config.docs.enabled);
         assert_eq!(config.docs.path, "/docs");
@@ -231,7 +237,10 @@ path = "swagger"
         assert_eq!(config.server.base_path, "/api");
         assert_eq!(config.server.workers, Some(8));
         assert_eq!(config.docs.path, "/swagger");
-        assert_eq!(config.database.resolved_url(), "postgres://db.example/custom");
+        assert_eq!(
+            config.database.resolved_url(),
+            "postgres://db.example/custom"
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }

@@ -13,9 +13,10 @@ pub fn json_to_sql(ty: FieldType, v: &serde_json::Value) -> Result<SqlValue, Str
         FieldType::String | FieldType::Text => {
             SqlValue::from(v.as_str().ok_or("expected a string")?.to_string())
         }
-        FieldType::Integer => {
-            SqlValue::from(i32::try_from(v.as_i64().ok_or("expected an integer")?).map_err(|_| "integer out of range")?)
-        }
+        FieldType::Integer => SqlValue::from(
+            i32::try_from(v.as_i64().ok_or("expected an integer")?)
+                .map_err(|_| "integer out of range")?,
+        ),
         FieldType::BigInt => SqlValue::from(v.as_i64().ok_or("expected an integer")?),
         FieldType::Float => SqlValue::from(v.as_f64().ok_or("expected a number")?),
         FieldType::Boolean => SqlValue::from(v.as_bool().ok_or("expected a boolean")?),

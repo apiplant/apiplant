@@ -34,8 +34,9 @@ macro_rules! init_http_app {
         let docs_enabled = state.app.config.docs.enabled;
         let docs_path = state.app.config.docs.path.clone();
         let domain = state.app.config.server.domain.clone();
+        let admin_enabled = state.admin_dir.is_some();
 
-        test::init_service(WebApp::new().state(state.clone()).service({
+        test::init_service({
             let mut scope = web::scope(base_path.as_str());
             if let Some(d) = &domain {
                 scope = scope.guard(guard::Host(d.clone()));
@@ -45,12 +46,15 @@ macro_rules! init_http_app {
                     .route("/openapi.json", web::get().to(openapi_spec))
                     .route(&docs_path, web::get().to(docs_page));
             }
-            scope
+            let scope = scope
                 .route("/_health", web::get().to(health))
                 .route("/auth/register", web::post().to(auth_routes::register))
                 .route("/auth/login", web::post().to(auth_routes::login))
                 .route("/auth/apikeys", web::post().to(auth_routes::create_api_key))
-                .route("/functions/{name}", web::route().to(super::function_routes::invoke))
+                .route(
+                    "/functions/{name}",
+                    web::route().to(super::function_routes::invoke),
+                )
                 .service(
                     web::resource("/{resource}")
                         .route(web::get().to(crud::list))
@@ -63,11 +67,21 @@ macro_rules! init_http_app {
                         .route(web::put().to(crud::update))
                         .route(web::delete().to(crud::delete)),
                 )
-                .route(
-                    "/{parent}/{id}/{child}",
-                    web::get().to(crud::nested_list),
-                )
-        }))
+                .route("/{parent}/{id}/{child}", web::get().to(crud::nested_list));
+            let mut app = WebApp::new().state(state.clone());
+            if admin_enabled {
+                let mut admin_index_route = web::resource("/admin/");
+                let mut admin_asset_route = web::resource("/admin/{path:.*}");
+                if let Some(d) = &domain {
+                    admin_index_route = admin_index_route.guard(guard::Host(d.clone()));
+                    admin_asset_route = admin_asset_route.guard(guard::Host(d.clone()));
+                }
+                app = app
+                    .service(admin_index_route.route(web::get().to(super::admin_index)))
+                    .service(admin_asset_route.route(web::get().to(super::admin_asset)));
+            }
+            app.service(scope)
+        })
         .await
     }};
 }
@@ -180,11 +194,7 @@ fn test_function(name: &str, visibility: Visibility, handler: TestHandler) -> Bo
 
 /// A hook function that only records the context it saw and lets the request
 /// continue untouched.
-fn observer(
-    _host: &HostApi_TO<'_, RBox<()>>,
-    hook: &str,
-    _input: &str,
-) -> Result<String, String> {
+fn observer(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, _input: &str) -> Result<String, String> {
     record(hook);
     Ok(json!({}).to_string())
 }
@@ -251,6 +261,7 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         db,
         auth: Authenticator::new(b"test-secret".to_vec(), 3600),
         functions: Arc::new(functions),
+        admin_dir: root.join("admin").is_dir().then(|| root.join("admin")),
         openapi_json: Arc::new(serde_json::to_string(&spec).unwrap()),
         docs_html: Arc::new(openapi::swagger_ui_html(
             &spec_url,
@@ -728,11 +739,8 @@ type = "string"
     assert_eq!(isolated_resp.status().as_u16(), 200);
     assert_eq!(read_json(isolated_resp).await, json!([]));
 
-    let plan_resp = test::call_service(
-        &app,
-        test::TestRequest::get().uri("/api/plan").to_request(),
-    )
-    .await;
+    let plan_resp =
+        test::call_service(&app, test::TestRequest::get().uri("/api/plan").to_request()).await;
     assert_eq!(plan_resp.status().as_u16(), 200);
     assert_eq!(read_json(plan_resp).await, json!([]));
 
@@ -934,6 +942,72 @@ title = "Doc Test"
 }
 
 #[ntex::test]
+async fn serves_admin_bundle_when_directory_exists() {
+    let db = TempDatabase::create("admin-static").await;
+    let root = temp_dir("admin-static");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    r#"
+[server]
+base_path = "/api"
+
+[database]
+url = "{}"
+"#,
+                    db.url
+                ),
+            ),
+            ("admin/index.html", "<!doctype html><title>Admin</title>"),
+            ("admin/app.css", "body { color: red; }"),
+            ("admin/apiplant-admin.json", "{\"title\":\"Admin\"}"),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let index =
+        test::call_service(&app, test::TestRequest::get().uri("/admin/").to_request()).await;
+    assert_eq!(index.status().as_u16(), 200);
+    assert_eq!(
+        index.headers().get(CONTENT_TYPE).unwrap(),
+        "text/html; charset=utf-8"
+    );
+    let body = String::from_utf8(test::read_body(index).await.to_vec()).unwrap();
+    assert!(body.contains("<title>Admin</title>"));
+
+    let manifest = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/admin/apiplant-admin.json")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(manifest.status().as_u16(), 200);
+    assert_eq!(
+        manifest.headers().get(CONTENT_TYPE).unwrap(),
+        "application/json"
+    );
+    assert_eq!(read_json(manifest).await["title"], "Admin");
+
+    let missing = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/admin/../../main.toml")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(missing.status().as_u16(), 404);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
 async fn migrations_are_additive_for_existing_rows() {
     let db = TempDatabase::create("migrate").await;
     let root = temp_dir("migrate");
@@ -972,10 +1046,10 @@ required = true
         .unwrap();
     let note_v1 = app_v1.resources.get("note").unwrap();
     db_conn
-        .create(note_v1, &serde_json::Map::from_iter([(
-            "title".to_string(),
-            Value::String("first".into()),
-        )]))
+        .create(
+            note_v1,
+            &serde_json::Map::from_iter([("title".to_string(), Value::String("first".into()))]),
+        )
         .await
         .unwrap();
 
@@ -1285,11 +1359,16 @@ default = "queued"
     let state = load_state(&root).await;
     let app = init_http_app!(state);
 
-    let anon_news = test::call_service(&app, test::TestRequest::get().uri("/api/news").to_request()).await;
+    let anon_news =
+        test::call_service(&app, test::TestRequest::get().uri("/api/news").to_request()).await;
     assert_eq!(anon_news.status().as_u16(), 200);
     assert_eq!(read_json(anon_news).await, json!([]));
 
-    let anon_bulletin = test::call_service(&app, test::TestRequest::get().uri("/api/bulletin").to_request()).await;
+    let anon_bulletin = test::call_service(
+        &app,
+        test::TestRequest::get().uri("/api/bulletin").to_request(),
+    )
+    .await;
     assert_eq!(anon_bulletin.status().as_u16(), 401);
 
     let anon_news_create = test::call_service(
@@ -1431,7 +1510,9 @@ default = "queued"
             test::TestRequest::post()
                 .uri("/api/membership")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"user_id":carol_id,"role":"member","team":"support"}).to_string()),
+                .set_payload(
+                    json!({"user_id":carol_id,"role":"member","team":"support"}).to_string(),
+                ),
             &alice_token,
         )
         .to_request(),
@@ -1514,7 +1595,11 @@ default = "queued"
 
     let alice_prefs = test::call_service(
         &app,
-        bearer(test::TestRequest::get().uri("/api/preference"), &alice_token).to_request(),
+        bearer(
+            test::TestRequest::get().uri("/api/preference"),
+            &alice_token,
+        )
+        .to_request(),
     )
     .await;
     assert_eq!(alice_prefs.status().as_u16(), 200);
@@ -1548,7 +1633,9 @@ default = "queued"
 
     let spec_resp = test::call_service(
         &app,
-        test::TestRequest::get().uri("/api/openapi.json").to_request(),
+        test::TestRequest::get()
+            .uri("/api/openapi.json")
+            .to_request(),
     )
     .await;
     assert_eq!(spec_resp.status().as_u16(), 200);
@@ -1573,7 +1660,9 @@ fn post_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Resu
     let mut data: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let title = data["title"].as_str().unwrap_or_default().to_string();
     if title.trim().is_empty() {
-        return Ok(json!({ "error": { "status": 422, "message": "title is required" } }).to_string());
+        return Ok(
+            json!({ "error": { "status": 422, "message": "title is required" } }).to_string(),
+        );
     }
     data["title"] = json!(title.to_uppercase());
     Ok(json!({ "data": data }).to_string())
@@ -1604,7 +1693,11 @@ fn list_wrap(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Resul
 }
 
 /// `before_read`: refuses the request when the caller asks for `?blocked=1`.
-fn read_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, _input: &str) -> Result<String, String> {
+fn read_guard(
+    _host: &HostApi_TO<'_, RBox<()>>,
+    hook: &str,
+    _input: &str,
+) -> Result<String, String> {
     record(hook);
     let context: Value = serde_json::from_str(hook).map_err(|e| e.to_string())?;
     if context["query"]["blocked"] == "1" {
@@ -1623,7 +1716,11 @@ fn read_stamp(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Resu
 }
 
 /// `before_update`: rewrites the submitted body.
-fn update_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+fn update_guard(
+    _host: &HostApi_TO<'_, RBox<()>>,
+    hook: &str,
+    input: &str,
+) -> Result<String, String> {
     record(hook);
     let mut data: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
     data["body"] = json!("normalised by hook");
@@ -1631,7 +1728,11 @@ fn update_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Re
 }
 
 /// `before_delete`: protects locked rows, using the row the host pre-fetched.
-fn delete_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+fn delete_guard(
+    _host: &HostApi_TO<'_, RBox<()>>,
+    hook: &str,
+    input: &str,
+) -> Result<String, String> {
     record(hook);
     let row: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
     if row["locked"] == json!(true) {
@@ -1641,7 +1742,11 @@ fn delete_guard(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Re
 }
 
 /// `after_delete`: answers with the row that was removed instead of a bare 204.
-fn delete_echo(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+fn delete_echo(
+    _host: &HostApi_TO<'_, RBox<()>>,
+    hook: &str,
+    input: &str,
+) -> Result<String, String> {
     record(hook);
     let row: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
     Ok(json!({ "data": { "deleted": row["title"] } }).to_string())
@@ -1709,7 +1814,10 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
         &[
             (
                 "main.toml",
-                &format!("\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n", db.url),
+                &format!(
+                    "\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n",
+                    db.url
+                ),
             ),
             ("models/post.toml", HOOKED_POST_MODEL),
             ("models/audit.toml", AUDIT_MODEL),
@@ -1962,11 +2070,17 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
     assert_eq!(create["organization_id"], org_id);
     assert_eq!(create["role"], "admin");
     assert!(create["record_id"].is_null(), "create has no record id yet");
-    assert_eq!(create["data"]["title"], "hello", "before_create sees the submitted body");
+    assert_eq!(
+        create["data"]["title"], "hello",
+        "before_create sees the submitted body"
+    );
     assert!(create["row"].is_null());
 
     let audit = recorded("after_create");
-    assert_eq!(audit["row"]["title"], "HELLO", "after_create sees the stored row");
+    assert_eq!(
+        audit["row"]["title"], "HELLO",
+        "after_create sees the stored row"
+    );
     assert_eq!(audit["row"]["organization_id"], org_id);
     assert!(audit["data"].is_null());
 
@@ -2029,7 +2143,10 @@ async fn functions_see_no_hook_over_http_and_missing_hooks_fail_closed() {
         &[
             (
                 "main.toml",
-                &format!("\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n", db.url),
+                &format!(
+                    "\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n",
+                    db.url
+                ),
             ),
             (
                 "models/note.toml",
@@ -2086,8 +2203,7 @@ type = "string"
 
     // The row must not have been written despite the hook being unavailable.
     let listed = read_json(
-        test::call_service(&app, test::TestRequest::get().uri("/api/note").to_request())
-            .await,
+        test::call_service(&app, test::TestRequest::get().uri("/api/note").to_request()).await,
     )
     .await;
     assert_eq!(listed.as_array().unwrap().len(), 0);
@@ -2100,14 +2216,20 @@ type = "string"
 
 /// `before_create` on `user`: the hook must never see a plaintext password, and
 /// what it returns is what gets inserted.
-fn user_guard(_host: &HostApi_TO<'_, RBox<()>>, _hook: &str, input: &str) -> Result<String, String> {
+fn user_guard(
+    _host: &HostApi_TO<'_, RBox<()>>,
+    _hook: &str,
+    input: &str,
+) -> Result<String, String> {
     let mut data: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
     if !data["password"].is_null() {
         return Err("the plaintext password reached a hook".to_string());
     }
     let email = data["email"].as_str().unwrap_or_default().to_string();
     if email.ends_with("@blocked.test") {
-        return Ok(json!({ "error": { "status": 403, "message": "domain not allowed" } }).to_string());
+        return Ok(
+            json!({ "error": { "status": 403, "message": "domain not allowed" } }).to_string(),
+        );
     }
     data["display_name"] = json!(email.split('@').next().unwrap_or_default());
     Ok(json!({ "data": data }).to_string())
@@ -2130,7 +2252,10 @@ fn user_join(host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result
     }
 
     let email = row["email"].as_str().unwrap_or_default();
-    let domain = email.rsplit_once('@').map(|(_, d)| d.to_string()).unwrap_or_default();
+    let domain = email
+        .rsplit_once('@')
+        .map(|(_, d)| d.to_string())
+        .unwrap_or_default();
     let query = |sql: &str, params: Value| -> Result<Value, String> {
         let request = json!({ "sql": sql, "params": params }).to_string();
         match host.query(RStr::from_str(&request)) {
@@ -2219,7 +2344,10 @@ async fn registering_runs_the_user_resources_create_hooks() {
         &[
             (
                 "main.toml",
-                &format!("\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n", db.url),
+                &format!(
+                    "\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n",
+                    db.url
+                ),
             ),
             ("models/organization.toml", DOMAIN_ORG_MODEL),
             ("models/users.toml", HOOKED_USER_MODEL),
@@ -2296,7 +2424,11 @@ async fn registering_runs_the_user_resources_create_hooks() {
     let visible = read_json(
         test::call_service(
             &app,
-            bearer(test::TestRequest::get().uri("/api/organization"), &ben_token).to_request(),
+            bearer(
+                test::TestRequest::get().uri("/api/organization"),
+                &ben_token,
+            )
+            .to_request(),
         )
         .await,
     )

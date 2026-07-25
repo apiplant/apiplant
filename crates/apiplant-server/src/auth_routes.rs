@@ -63,7 +63,10 @@ pub async fn register(
     let spec = auth_spec(&state);
 
     let mut data = body.into_inner();
-    let password = match data.remove("password").and_then(|v| v.as_str().map(String::from)) {
+    let password = match data
+        .remove("password")
+        .and_then(|v| v.as_str().map(String::from))
+    {
         Some(p) => p,
         None => return error(400, "`password` is required"),
     };
@@ -161,7 +164,10 @@ pub async fn login(
     let Some(row) = rows.as_array().and_then(|a| a.first()) else {
         return error(401, "invalid credentials");
     };
-    let stored = row.get("password_hash").and_then(|v| v.as_str()).unwrap_or("");
+    let stored = row
+        .get("password_hash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if !state.auth.verify_password(&password, stored) {
         return error(401, "invalid credentials");
     }

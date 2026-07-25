@@ -341,7 +341,7 @@ straight into the organisation that owns its email domain.
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
 | `apiplant`             | the executable                                                     |
 | `examples/`            | runnable apps, from hello-world to a 20-resource domain model — see [examples/](examples/) |
-| `studio/`              | a local browser editor for an app directory — resources, hooks and functions — see [studio/](studio/) |
+| `studio/`              | a local browser editor for an app directory, and the design system reused by the generated static admin panel — see [studio/](studio/) |
 
 ## Quickstart
 
@@ -388,10 +388,29 @@ lifecycle hooks, one concept at a time — and
 apiplant [run] [APP_DIR]     serve the app (default command)
 apiplant build [APP_DIR]     compile functions/* into loadable libraries
 apiplant check [APP_DIR]     load and validate the app, then exit
+apiplant admin [APP_DIR]     emit a static admin panel for the app
 ```
 
 `run` takes `--build` to compile out-of-date sources first; `build` takes
-`--release` and `--force`.
+`--release` and `--force`; `admin` takes `--api <domain-or-base-url>` and
+optionally `--out <dir>`.
+
+### Static admin panel
+
+```bash
+apiplant admin ./my-app --api https://api.example.com --out ./my-app/admin
+```
+
+The command reads the app directory at build time, bakes its resources,
+permissions, auth model and callable function endpoints into a static frontend,
+and writes a self-contained admin app (`index.html`, `app.js`, `app.css`, a
+JSON manifest, and the shared studio assets) to the output directory. The UI is
+schema-aware but **not** schema-editing: it signs users in, switches active
+organisations, manages existing resource rows over the REST API, and invokes
+loaded public/authenticated/role-gated functions.
+
+If that bundle lives in `APP_DIR/admin`, `apiplant run` now serves it
+automatically at `/admin/` on the same host as the API.
 
 ## Built on
 

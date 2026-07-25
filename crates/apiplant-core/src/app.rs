@@ -159,7 +159,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        dir.push(format!("apiplant-app-{label}-{}-{stamp}", std::process::id()));
+        dir.push(format!(
+            "apiplant-app-{label}-{}-{stamp}",
+            std::process::id()
+        ));
         fs::create_dir_all(dir.join("models")).unwrap();
         dir
     }
@@ -252,10 +255,7 @@ hidden = true
 
         assert!(user.fields.contains_key("username"));
         assert!(!user.fields.contains_key("email"));
-        assert_eq!(
-            user.auth.as_ref().unwrap().identity_field,
-            "username"
-        );
+        assert_eq!(user.auth.as_ref().unwrap().identity_field, "username");
 
         fs::remove_dir_all(dir).unwrap();
     }

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>apiplant admin</title>
+    <script>
+      (() => {
+        const key = "apiplant-admin-theme";
+        const stored = localStorage.getItem(key);
+        const theme = stored === "light" || stored === "dark"
+          ? stored
+          : (window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.classList.toggle("light", theme === "light");
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

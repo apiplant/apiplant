@@ -45,7 +45,10 @@ pub enum Filter {
     /// `column = value`.
     Eq { column: String, value: SqlValue },
     /// `column IN (values…)`. An empty set matches no rows.
-    In { column: String, values: Vec<SqlValue> },
+    In {
+        column: String,
+        values: Vec<SqlValue>,
+    },
 }
 
 impl Filter {

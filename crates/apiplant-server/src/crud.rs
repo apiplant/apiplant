@@ -50,11 +50,7 @@ impl AppState {
 
 impl Caller {
     /// The request-scoped context this handler's hooks will see.
-    fn hook_request(
-        &self,
-        req: &HttpRequest,
-        params: &HashMap<String, String>,
-    ) -> HookRequest {
+    fn hook_request(&self, req: &HttpRequest, params: &HashMap<String, String>) -> HookRequest {
         HookRequest::new(req, params, self.principal.as_ref(), self.active_org)
     }
 }
@@ -79,11 +75,7 @@ fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpRes
 
 /// Authorize an action, returning the filters that must scope the query (org
 /// isolation, ownership, org membership set) or an error response.
-fn authorize(
-    access: &Access,
-    caller: &Caller,
-    r: &Resource,
-) -> Result<Vec<Filter>, HttpResponse> {
+fn authorize(access: &Access, caller: &Caller, r: &Resource) -> Result<Vec<Filter>, HttpResponse> {
     if r.is_org_scoped() {
         authorize_org_scoped(access, caller, r)
     } else {
@@ -243,7 +235,11 @@ async fn expand_relations(
             }
         }
 
-        let fetched = state.db.fetch_by_ids(target, &ids).await.map_err(db_error)?;
+        let fetched = state
+            .db
+            .fetch_by_ids(target, &ids)
+            .await
+            .map_err(db_error)?;
         let mut by_id: HashMap<String, serde_json::Value> = HashMap::new();
         if let Some(arr) = fetched.as_array() {
             for row in arr {
@@ -408,13 +404,20 @@ pub async fn nested_list(
         }
         (_, Some(via)) => match refs.into_iter().find(|rf| &rf.field == via) {
             Some(rf) => rf,
-            None => return error(400, format!("`{child_name}` has no reference field `{via}`")),
+            None => {
+                return error(
+                    400,
+                    format!("`{child_name}` has no reference field `{via}`"),
+                )
+            }
         },
         (1, None) => refs.into_iter().next().unwrap(),
         (_, None) => {
             return error(
                 400,
-                format!("`{child_name}` references `{parent_name}` more than once; add ?via=<field>"),
+                format!(
+                    "`{child_name}` references `{parent_name}` more than once; add ?via=<field>"
+                ),
             )
         }
     };
@@ -530,7 +533,15 @@ pub async fn create(
         }
     }
 
-    match hooks::run(&state, r, HookEvent::AfterCreate, &hook_req, created.clone()).await {
+    match hooks::run(
+        &state,
+        r,
+        HookEvent::AfterCreate,
+        &hook_req,
+        created.clone(),
+    )
+    .await
+    {
         Ok(Some(replacement)) => HttpResponse::Created().json(&replacement),
         Ok(None) => HttpResponse::Created().json(&created),
         Err(resp) => resp,
@@ -622,7 +633,15 @@ pub async fn update(
         Err(e) => return db_error(e),
     };
 
-    match hooks::run(&state, r, HookEvent::AfterUpdate, &hook_req, updated.clone()).await {
+    match hooks::run(
+        &state,
+        r,
+        HookEvent::AfterUpdate,
+        &hook_req,
+        updated.clone(),
+    )
+    .await
+    {
         Ok(Some(replacement)) => ok(&replacement),
         Ok(None) => ok(&updated),
         Err(resp) => resp,
@@ -654,8 +673,8 @@ pub async fn delete(
 
     // A delete hook needs the row it is about to lose, so fetch it first — but
     // only when one is actually declared.
-    let has_delete_hook = r.hook(HookEvent::BeforeDelete).is_some()
-        || r.hook(HookEvent::AfterDelete).is_some();
+    let has_delete_hook =
+        r.hook(HookEvent::BeforeDelete).is_some() || r.hook(HookEvent::AfterDelete).is_some();
     let doomed = if has_delete_hook {
         match state.db.get(r, id, &filters).await {
             Ok(Some(row)) => row,
@@ -783,7 +802,8 @@ type = "string"
             Filter::In { column, values } if column == "id" && values.len() == 2
         ));
 
-        let admin_filters = authorize(&Access::Role("admin".into()), &caller, &organization).unwrap();
+        let admin_filters =
+            authorize(&Access::Role("admin".into()), &caller, &organization).unwrap();
         assert!(matches!(
             &admin_filters[0],
             Filter::In { column, values } if column == "id" && values.len() == 1

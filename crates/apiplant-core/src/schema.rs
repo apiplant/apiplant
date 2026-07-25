@@ -117,7 +117,9 @@ impl Resource {
 
     /// Find the reference exposed under a given relation name (`"owner"`).
     pub fn reference_by_relation(&self, relation: &str) -> Option<Reference> {
-        self.references().into_iter().find(|r| r.relation == relation)
+        self.references()
+            .into_iter()
+            .find(|r| r.relation == relation)
     }
 
     /// Whether this resource is isolated per organisation (the default).
@@ -599,7 +601,10 @@ after_list = "redact"
 "#,
         );
 
-        assert_eq!(resource.hook(HookEvent::BeforeCreate), Some("validate_post"));
+        assert_eq!(
+            resource.hook(HookEvent::BeforeCreate),
+            Some("validate_post")
+        );
         assert_eq!(resource.hook(HookEvent::AfterCreate), Some("notify"));
         assert_eq!(resource.hook(HookEvent::AfterList), Some("redact"));
         assert_eq!(resource.hook(HookEvent::BeforeUpdate), None);

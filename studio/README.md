@@ -56,6 +56,19 @@ Two things worth knowing:
 The studio never builds or serves anything. `apiplant build` and `apiplant run`
 stay where they were — the Overview page has the commands for the open app.
 
+The CLI now also reuses this design system for a generated **static admin
+panel**:
+
+```bash
+apiplant admin ./my-app --api https://api.example.com --out ./my-app/admin
+```
+
+That command does **not** read the directory at runtime. It bakes the app's
+schema, permissions, auth rules and loaded function endpoints into a separate
+frontend that talks to the live API, while leaving the studio itself focused on
+editing app directories. When you write that bundle to `APP_DIR/admin`, the
+server now serves it automatically at `/admin/`.
+
 ## Layout
 
 ```

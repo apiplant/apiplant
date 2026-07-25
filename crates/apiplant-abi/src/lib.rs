@@ -36,8 +36,7 @@ pub mod c;
 use abi_stable::{
     declare_root_module_statics,
     library::RootModule,
-    package_version_strings,
-    sabi_trait,
+    package_version_strings, sabi_trait,
     std_types::{RResult, RStr, RString},
     StableAbi,
 };

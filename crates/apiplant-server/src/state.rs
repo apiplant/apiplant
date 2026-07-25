@@ -1,6 +1,7 @@
 //! Shared server state, caller-identity resolution, and active-organisation
 //! resolution.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use apiplant_auth::{Authenticator, OrgMembership, Principal};
@@ -18,6 +19,8 @@ pub struct AppState {
     pub db: Db,
     pub auth: Authenticator,
     pub functions: Arc<FunctionRegistry>,
+    /// Static admin bundle root (`admin/`) when the app ships one.
+    pub admin_dir: Option<PathBuf>,
     /// Pre-rendered OpenAPI document (JSON).
     pub openapi_json: Arc<String>,
     /// Pre-rendered Swagger UI page.
@@ -120,15 +123,19 @@ impl AppState {
 }
 
 fn resolve_active_org(req: &HttpRequest, principal: &Option<Principal>) -> Option<Uuid> {
-        let principal = principal.as_ref()?;
-        if let Some(raw) = req.headers().get("x-organization").and_then(|v| v.to_str().ok()) {
-            let org = Uuid::parse_str(raw.trim()).ok()?;
-            return principal.is_member(org).then_some(org);
-        }
-        if principal.organizations.len() == 1 {
-            return Some(principal.organizations[0].org_id);
-        }
-        None
+    let principal = principal.as_ref()?;
+    if let Some(raw) = req
+        .headers()
+        .get("x-organization")
+        .and_then(|v| v.to_str().ok())
+    {
+        let org = Uuid::parse_str(raw.trim()).ok()?;
+        return principal.is_member(org).then_some(org);
+    }
+    if principal.organizations.len() == 1 {
+        return Some(principal.organizations[0].org_id);
+    }
+    None
 }
 
 #[cfg(test)]

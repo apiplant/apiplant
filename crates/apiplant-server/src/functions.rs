@@ -86,7 +86,9 @@ impl FunctionRegistry {
                         registry.functions.insert(f.manifest.name.to_string(), f);
                     }
                 }
-                Err(e) => tracing::error!(path = %path.display(), error = %e, "failed to load function"),
+                Err(e) => {
+                    tracing::error!(path = %path.display(), error = %e, "failed to load function")
+                }
             }
         }
         registry
@@ -167,7 +169,8 @@ impl FunctionRegistry {
     /// the same name. Lets a host embed functions directly.
     pub fn register(&mut self, func: BoxedFunction, config_json: String) {
         let loaded = LoadedFunction::new(func, config_json);
-        self.functions.insert(loaded.manifest.name.to_string(), loaded);
+        self.functions
+            .insert(loaded.manifest.name.to_string(), loaded);
     }
 
     pub fn get(&self, name: &str) -> Option<&LoadedFunction> {

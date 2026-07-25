@@ -9,9 +9,9 @@
 //! * TLS inferred from the app's `https/` directory.
 
 mod auth_routes;
+pub mod cabi;
 mod crud;
 mod function_routes;
-pub mod cabi;
 pub mod functions;
 pub mod hooks;
 mod openapi;
@@ -21,6 +21,7 @@ mod state;
 mod tests;
 
 use std::sync::Arc;
+use std::{fs, path::Component, path::Path, path::PathBuf};
 
 use apiplant_auth::Authenticator;
 use apiplant_core::{App, TlsPaths};
@@ -47,6 +48,76 @@ async fn docs_page(state: web::types::State<AppState>) -> HttpResponse {
     HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(state.docs_html.as_str().to_owned())
+}
+
+async fn admin_index(state: web::types::State<AppState>) -> HttpResponse {
+    serve_admin(&state, "index.html")
+}
+
+async fn admin_asset(
+    state: web::types::State<AppState>,
+    path: web::types::Path<String>,
+) -> HttpResponse {
+    let path = path.into_inner();
+    serve_admin(&state, &path)
+}
+
+fn serve_admin(state: &AppState, requested: &str) -> HttpResponse {
+    let Some(root) = state.admin_dir.as_deref() else {
+        return HttpResponse::NotFound().finish();
+    };
+    let Some(path) = resolve_admin_path(root, requested) else {
+        return HttpResponse::NotFound().finish();
+    };
+    let body = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return HttpResponse::NotFound().finish();
+        }
+        Err(error) => {
+            tracing::error!(path = %path.display(), error = %error, "failed to read admin asset");
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+    HttpResponse::Ok()
+        .content_type(content_type_for(&path))
+        .body(body)
+}
+
+fn resolve_admin_path(root: &Path, requested: &str) -> Option<PathBuf> {
+    let mut path = root.to_path_buf();
+    let requested = requested.trim_matches('/');
+
+    if requested.is_empty() {
+        path.push("index.html");
+        return Some(path);
+    }
+
+    for component in Path::new(requested).components() {
+        match component {
+            Component::Normal(segment) => path.push(segment),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+
+    if path.is_dir() {
+        path.push("index.html");
+    }
+    Some(path)
+}
+
+fn content_type_for(path: &Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js") => "application/javascript; charset=utf-8",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("txt") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Boot the server for a loaded app and serve until shut down.
@@ -120,9 +191,7 @@ pub async fn run(app: App) -> anyhow::Result<()> {
     let openapi_json = serde_json::to_string(&spec).unwrap_or_else(|_| "{}".to_string());
     let docs_html = openapi::swagger_ui_html(&spec_url, &app.config.docs.title);
     if docs_enabled {
-        tracing::info!(
-            "  docs -> {base_path}{docs_path}  (spec: {spec_url})"
-        );
+        tracing::info!("  docs -> {base_path}{docs_path}  (spec: {spec_url})");
     }
 
     // 6. Assemble shared state and pull out what the closure needs.
@@ -131,12 +200,18 @@ pub async fn run(app: App) -> anyhow::Result<()> {
     let workers = app.config.server.workers;
     let domain = app.config.server.domain.clone();
     let tls = app.tls.clone();
+    let admin_dir = app.root.join("admin");
+    let admin_enabled = admin_dir.is_dir();
+    if admin_enabled {
+        tracing::info!("  admin -> /admin/");
+    }
 
     let state = AppState {
         app: Arc::new(app),
         db,
         auth: authr,
         functions: Arc::new(registry),
+        admin_dir: admin_enabled.then_some(admin_dir),
         openapi_json: Arc::new(openapi_json),
         docs_html: Arc::new(docs_html),
     };
@@ -161,7 +236,10 @@ pub async fn run(app: App) -> anyhow::Result<()> {
             .route("/auth/apikeys", web::post().to(auth_routes::create_api_key))
             // Literal `functions` segment is registered before the generic
             // resource routes so it wins over `/{resource}/{id}`.
-            .route("/functions/{name}", web::route().to(function_routes::invoke))
+            .route(
+                "/functions/{name}",
+                web::route().to(function_routes::invoke),
+            )
             .service(
                 web::resource("/{resource}")
                     .route(web::get().to(crud::list))
@@ -175,11 +253,20 @@ pub async fn run(app: App) -> anyhow::Result<()> {
                     .route(web::delete().to(crud::delete)),
             )
             // Nested has_many: GET /parent/{id}/child
-            .route(
-                "/{parent}/{id}/{child}",
-                web::get().to(crud::nested_list),
-            );
-        WebApp::new().state(state.clone()).service(scope)
+            .route("/{parent}/{id}/{child}", web::get().to(crud::nested_list));
+        let mut app = WebApp::new().state(state.clone());
+        if admin_enabled {
+            let mut admin_index_route = web::resource("/admin/");
+            let mut admin_asset_route = web::resource("/admin/{path:.*}");
+            if let Some(d) = &domain {
+                admin_index_route = admin_index_route.guard(guard::Host(d.clone()));
+                admin_asset_route = admin_asset_route.guard(guard::Host(d.clone()));
+            }
+            app = app
+                .service(admin_index_route.route(web::get().to(admin_index)))
+                .service(admin_asset_route.route(web::get().to(admin_asset)));
+        }
+        app.service(scope)
     });
 
     if let Some(w) = workers {

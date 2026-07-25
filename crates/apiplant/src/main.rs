@@ -4,6 +4,7 @@
 //! apiplant [run] [APP_DIR]     # serve the app in APP_DIR (default: current dir)
 //! apiplant build [APP_DIR]     # compile functions/* into loadable libraries
 //! apiplant check [APP_DIR]     # load & validate the app, then exit
+//! apiplant admin [APP_DIR]     # emit a static admin panel for the app
 //! ```
 //!
 //! An *app directory* holds an optional `main.toml`, an optional `models/`
@@ -13,6 +14,7 @@
 //! `https/` directory with a certificate and key. Every piece is optional; an
 //! empty directory is a valid (if bare) app.
 
+mod admin;
 mod compile;
 
 use apiplant_core::App;
@@ -22,11 +24,14 @@ usage:
   apiplant [run] [APP_DIR]     serve the app (default command, default dir `.`)
   apiplant build [APP_DIR]     compile functions/* into loadable libraries
   apiplant check [APP_DIR]     load and validate the app, then exit
+  apiplant admin [APP_DIR]     emit a static admin panel for the app
 
 options:
   --build           (run) compile any out-of-date function sources first
   --release         (build) compile with optimisations
   --force           (build) rebuild even when the library is up to date
+  --api <URL>       (admin) API domain or full base URL to talk to
+  --out <DIR>       (admin) where to write the static admin build (default: APP_DIR/admin)
   -h, --help        show this message
 
 `build` shells out to a toolchain per language — cargo for .rs, cc for .c, zig
@@ -39,6 +44,7 @@ enum Command {
     Run { build_first: bool },
     Build { release: bool, force: bool },
     Check,
+    Admin { api: String, out: Option<String> },
 }
 
 #[derive(Debug)]
@@ -56,31 +62,83 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
     let mut build_first = false;
     let mut release = false;
     let mut force = false;
+    let mut api = None;
+    let mut out = None;
+    let mut expecting: Option<&str> = None;
 
     for arg in argv {
+        if let Some(flag) = expecting.take() {
+            match flag {
+                "--api" => {
+                    api = Some(arg);
+                    continue;
+                }
+                "--out" => {
+                    out = Some(arg);
+                    continue;
+                }
+                _ => return Err(format!("unknown pending option `{flag}`")),
+            }
+        }
+
         match arg.as_str() {
             "-h" | "--help" => return Ok(None),
             "--build" => build_first = true,
             "--release" => release = true,
             "--force" => force = true,
+            "--api" => expecting = Some("--api"),
+            "--out" => expecting = Some("--out"),
             // Kept for compatibility with the original flag-style invocation.
             "--check" => command = Some("check"),
-            "run" | "build" | "check" if command.is_none() && dir.is_none() => {
+            "run" | "build" | "check" | "admin" if command.is_none() && dir.is_none() => {
                 command = Some(match arg.as_str() {
                     "run" => "run",
                     "build" => "build",
+                    "admin" => "admin",
                     _ => "check",
                 });
             }
             flag if flag.starts_with('-') => return Err(format!("unknown option `{flag}`")),
-            other => dir = Some(other.to_string()),
+            other if dir.is_none() => dir = Some(other.to_string()),
+            other => return Err(format!("unexpected argument `{other}`")),
         }
     }
 
+    if let Some(flag) = expecting {
+        return Err(format!("missing value for `{flag}`"));
+    }
+
     let command = match command.unwrap_or("run") {
-        "build" => Command::Build { release, force },
-        "check" => Command::Check,
-        _ => Command::Run { build_first },
+        "build" => {
+            if build_first {
+                return Err("`--build` only applies to `run`".into());
+            }
+            if api.is_some() || out.is_some() {
+                return Err("`--api` and `--out` only apply to `admin`".into());
+            }
+            Command::Build { release, force }
+        }
+        "check" => {
+            if build_first || release || force || api.is_some() || out.is_some() {
+                return Err("`check` does not take run/build/admin flags".into());
+            }
+            Command::Check
+        }
+        "admin" => {
+            if build_first || release || force {
+                return Err("`admin` does not take run/build flags".into());
+            }
+            Command::Admin {
+                api: api.ok_or_else(|| "`admin` requires `--api <URL>`".to_string())?,
+                out,
+            }
+        }
+        _ => {
+            if release || force || api.is_some() || out.is_some() {
+                return Err("`run` only takes `--build`".into());
+            }
+            Command::Run { build_first }
+        }
     };
     Ok(Some(Args {
         command,
@@ -129,6 +187,25 @@ async fn main() -> anyhow::Result<()> {
                 println!("resource: {name}");
             }
             println!("ok");
+            Ok(())
+        }
+
+        Command::Admin { api, out } => {
+            let stale = compile::stale(dir);
+            if !stale.is_empty() {
+                tracing::warn!(
+                    functions = %stale.join(", "),
+                    "function sources are newer than their compiled libraries — the generated admin panel only includes currently built function endpoints"
+                );
+            }
+            let output = admin::build(
+                dir,
+                admin::Options {
+                    api,
+                    out: out.map(Into::into),
+                },
+            )?;
+            println!("built static admin panel in {}", output.display());
             Ok(())
         }
 
@@ -199,6 +276,10 @@ mod tests {
         assert_eq!(args(&["build", "./my-app"]).dir, "./my-app");
         assert!(matches!(args(&["check", "./app"]).command, Command::Check));
         assert!(matches!(
+            args(&["admin", "./app", "--api", "https://example.com"]).command,
+            Command::Admin { .. }
+        ));
+        assert!(matches!(
             args(&["run", "./app"]).command,
             Command::Run { build_first: false }
         ));
@@ -217,6 +298,22 @@ mod tests {
             args(&["run", "--build", "."]).command,
             Command::Run { build_first: true }
         ));
+        match args(&[
+            "admin",
+            "--api",
+            "https://api.example.com",
+            "--out",
+            "panel",
+            ".",
+        ])
+        .command
+        {
+            Command::Admin { api, out } => {
+                assert_eq!(api, "https://api.example.com");
+                assert_eq!(out.as_deref(), Some("panel"));
+            }
+            other => panic!("expected admin command, got {other:?}"),
+        }
     }
 
     #[test]
@@ -246,5 +343,11 @@ mod tests {
     fn unknown_options_are_rejected() {
         let err = parse(vec!["--wat".to_string()]).unwrap_err();
         assert!(err.contains("--wat"));
+    }
+
+    #[test]
+    fn admin_requires_api_flag() {
+        let err = parse(vec!["admin".to_string(), ".".to_string()]).unwrap_err();
+        assert!(err.contains("--api"));
     }
 }

@@ -65,10 +65,18 @@ pub fn build(app: &App, functions: &FunctionRegistry) -> Value {
         if m.visibility == Visibility::Private {
             continue;
         }
-        let input_ref =
-            ingest_fn_schema(&mut schemas, m.name.as_str(), "Input", m.input_schema.as_str());
-        let output_ref =
-            ingest_fn_schema(&mut schemas, m.name.as_str(), "Output", m.output_schema.as_str());
+        let input_ref = ingest_fn_schema(
+            &mut schemas,
+            m.name.as_str(),
+            "Input",
+            m.input_schema.as_str(),
+        );
+        let output_ref = ingest_fn_schema(
+            &mut schemas,
+            m.name.as_str(),
+            "Output",
+            m.output_schema.as_str(),
+        );
         paths.insert(
             format!("/functions/{}", m.name),
             function_path(
@@ -698,7 +706,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        dir.push(format!("apiplant-openapi-{label}-{}-{stamp}", std::process::id()));
+        dir.push(format!(
+            "apiplant-openapi-{label}-{}-{stamp}",
+            std::process::id()
+        ));
         fs::create_dir_all(dir.join("models")).unwrap();
         dir
     }

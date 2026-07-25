@@ -104,9 +104,11 @@ name = "apiplant"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "apiplant-abi",
  "apiplant-core",
  "apiplant-server",
  "ntex",
+ "serde",
  "serde_json",
  "toml",
  "tracing",
