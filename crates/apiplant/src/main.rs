@@ -222,7 +222,9 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,apiplant=debug".into()),
+                // ntex logs a line per worker at INFO, which drowns out our own
+                // startup output on machines with many cores.
+                .unwrap_or_else(|_| "info,apiplant=debug,ntex_server=warn".into()),
         )
         .init();
 

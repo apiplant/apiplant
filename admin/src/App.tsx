@@ -167,7 +167,7 @@ function TopBar(props: { onToggleNav: () => void }) {
         class="flex items-center gap-2 transition-opacity hover:opacity-80"
         onClick={() => navigate({ kind: "dashboard" })}
       >
-        <HeadMark class="h-7 text-accent" />
+        <HeadMark class="h-7" />
         <span class="hidden text-sm font-semibold tracking-tight text-ink sm:block">
           {manifest()?.app_name}
         </span>
