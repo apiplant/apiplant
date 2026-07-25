@@ -20,3 +20,4 @@ examples/**/functions/**/target/
 
 pgdata
 .apiplant-build/
+examples/**/admin
