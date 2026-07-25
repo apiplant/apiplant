@@ -1,7 +1,7 @@
 # Examples
 
-Twelve self-contained apps, each adding one idea to the last. Every directory is
-a complete app: point the binary at it and it runs.
+Fourteen self-contained apps, each adding one idea to the last. Every directory
+is a complete app: point the binary at it and it runs.
 
 | # | Example | Adds |
 |---|---------|------|
@@ -17,6 +17,8 @@ a complete app: point the binary at it and it runs.
 | 10 | [zig-functions](10-zig-functions) | and in Zig, reaching the ABI through `@cImport` |
 | 11 | [go-functions](11-go-functions) | and in Go, via cgo and the standard library |
 | 12 | [function-dependencies](12-function-dependencies) | function *directories*: crates, modules, multi-file — with dependencies |
+| 13 | [real-world](13-real-world) | all of it at once: 20 resources, self-references, join rows, ledgers |
+| 14 | [email-domains](14-email-domains) | a hook on registration: joining the org that owns your email domain |
 
 ## Running one
 
@@ -27,9 +29,9 @@ createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_resources
 cargo run -p apiplant -- examples/02-resources
 ```
 
-Examples 07–12 have functions, so build them first. Rust functions need `cargo`
-on PATH; the others need their own toolchain (`cc`, `zig`, `go`), and example 12
-needs all four:
+Examples 07–12 and 14 have functions, so build them first. Rust functions need
+`cargo` on PATH; the others need their own toolchain (`cc`, `zig`, `go`), and
+example 12 needs all four:
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hooks
@@ -60,6 +62,8 @@ Each example serves on `127.0.0.1:8099` under `/api`, with Swagger UI at
 | 10-zig-functions | `apiplant_zig_functions` |
 | 11-go-functions | `apiplant_go_functions` |
 | 12-function-dependencies | `apiplant_function_deps` |
+| 13-real-world | `apiplant_real_world` |
+| 14-email-domains | `apiplant_domains` |
 
 Separate databases keep the examples genuinely independent: example 05 redefines
 `user` to log in by username, which cannot share a table with the built-in

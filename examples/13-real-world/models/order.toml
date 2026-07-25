@@ -1,0 +1,64 @@
+# The hub of the graph. Three things worth reading closely:
+#
+#   * `table` — "order" is a SQL keyword, and while apiplant quotes identifiers
+#     anyway, an explicit physical name keeps hand-written SQL pleasant.
+#   * `billing_address_id` + `shipping_address_id` both reference `address`, so
+#     `GET /api/address/{id}/order` needs `?via=` to say which link to follow.
+#   * `owner_id` is the sales rep. It's the resource's `owner_field`, so the
+#     server stamps it with the caller on create and `update = "owner"` then
+#     means "only the rep who took the order may edit it".
+
+[resource]
+name  = "order"
+table = "apiplant_sales_order"
+
+[permissions]
+list   = "member"          # the whole org sees the order book…
+read   = "member"
+create = "member"
+update = "owner"           # …but only its rep edits it
+delete = "role:admin"
+
+[fields.number]
+type     = "string"
+required = true
+unique   = true
+
+[fields.customer_id]
+type       = "reference"
+references = "customer"
+required   = true
+on_delete  = "restrict"    # never orphan an order from its customer
+
+[fields.billing_address_id]
+type       = "reference"
+references = "address"
+on_delete  = "restrict"
+
+[fields.shipping_address_id]
+type       = "reference"
+references = "address"
+on_delete  = "restrict"
+
+[fields.owner_id]
+type       = "reference"
+references = "user"
+on_delete  = "set_null"
+
+[fields.status]
+type    = "string"
+default = "pending"        # pending | confirmed | shipped | cancelled
+
+[fields.currency]
+type    = "string"
+default = "EUR"
+
+[fields.total_cents]
+type    = "integer"
+default = 0
+
+[fields.placed_at]
+type = "timestamp"
+
+[fields.notes]
+type = "text"

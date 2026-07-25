@@ -62,6 +62,27 @@ Ordering guarantees:
 first (respecting the same permission filters). That extra read only happens
 when one of those hooks is declared.
 
+### Registration fires the `user` create hooks
+
+`POST <base>/auth/register` writes a row to the `user` table, so it is a
+`create` on the `user` resource: its `before_create` and `after_create` hooks
+run there exactly as they do on `POST <base>/user`. One function covers both
+doors into the same table. Two details follow from what registration is:
+
+* the plaintext `password` has already been swapped for the hashed
+  `password_field` before `before_create` sees the body, so a hook never handles
+  the secret;
+* the caller is anonymous — `authenticated` is `false` and `principal_id` is
+  null. The new account is the row `after_create` receives, and its id is also
+  in `record_id`.
+
+A replacement returned from `after_create` replaces the `user` object in the
+register response, leaving the issued `token` alone. Aborting from
+`before_create` fails the registration and writes nothing.
+
+[`examples/14-email-domains`](../examples/14-email-domains) uses this to put a
+new account straight into the organisation that owns its email domain.
+
 ## Writing a hook
 
 A hook is an ordinary function; nothing in the `function!` block changes. What's

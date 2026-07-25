@@ -2095,3 +2095,238 @@ type = "string"
     fs::remove_dir_all(root).unwrap();
     db.cleanup().await;
 }
+
+// --- registration as a create on `user` -------------------------------------
+
+/// `before_create` on `user`: the hook must never see a plaintext password, and
+/// what it returns is what gets inserted.
+fn user_guard(_host: &HostApi_TO<'_, RBox<()>>, _hook: &str, input: &str) -> Result<String, String> {
+    let mut data: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    if !data["password"].is_null() {
+        return Err("the plaintext password reached a hook".to_string());
+    }
+    let email = data["email"].as_str().unwrap_or_default().to_string();
+    if email.ends_with("@blocked.test") {
+        return Ok(json!({ "error": { "status": 403, "message": "domain not allowed" } }).to_string());
+    }
+    data["display_name"] = json!(email.split('@').next().unwrap_or_default());
+    Ok(json!({ "data": data }).to_string())
+}
+
+/// `after_create` on `user`: join the organisation owning the address's domain,
+/// the way `examples/14-email-domains` does, and report it in the response.
+fn user_join(host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
+    let context: Value = serde_json::from_str(hook).map_err(|e| e.to_string())?;
+    let mut row: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+
+    // Registration leaves the caller anonymous; the new account is the row, and
+    // its id is echoed in `record_id`.
+    if context["authenticated"] != json!(false) || !context["principal_id"].is_null() {
+        return Err("registration should reach hooks anonymously".to_string());
+    }
+    let user_id = row["id"].as_str().unwrap_or_default().to_string();
+    if context["record_id"] != json!(user_id) {
+        return Err("record_id should name the created account".to_string());
+    }
+
+    let email = row["email"].as_str().unwrap_or_default();
+    let domain = email.rsplit_once('@').map(|(_, d)| d.to_string()).unwrap_or_default();
+    let query = |sql: &str, params: Value| -> Result<Value, String> {
+        let request = json!({ "sql": sql, "params": params }).to_string();
+        match host.query(RStr::from_str(&request)) {
+            RResult::ROk(s) => serde_json::from_str(s.as_str()).map_err(|e| e.to_string()),
+            RResult::RErr(e) => Err(e.into_string()),
+        }
+    };
+
+    let found = query(
+        "SELECT id::text AS id FROM apiplant_organization WHERE domain = $1",
+        json!([domain]),
+    )?;
+    if let Some(org_id) = found[0]["id"].as_str().map(str::to_string) {
+        query(
+            "INSERT INTO apiplant_membership (user_id, organization_id, role) \
+             VALUES ($1::uuid, $2::uuid, $3)",
+            json!([user_id, org_id, "member"]),
+        )?;
+        row["joined"] = json!(org_id);
+    }
+    Ok(json!({ "data": row }).to_string())
+}
+
+const DOMAIN_ORG_MODEL: &str = r#"
+[resource]
+name = "organization"
+scope = "global"
+timestamps = true
+
+[permissions]
+list = "member"
+read = "member"
+create = "authenticated"
+update = "role:admin"
+delete = "role:admin"
+
+[fields.name]
+type = "string"
+required = true
+
+[fields.domain]
+type = "string"
+unique = true
+"#;
+
+const HOOKED_USER_MODEL: &str = r#"
+[resource]
+name = "user"
+scope = "global"
+timestamps = true
+
+[permissions]
+list = "authenticated"
+read = "owner"
+create = "public"
+update = "owner"
+delete = "private"
+
+[auth]
+identity_field = "email"
+password_field = "password_hash"
+
+[hooks]
+before_create = "user_guard"
+after_create = "user_join"
+
+[fields.email]
+type = "string"
+required = true
+unique = true
+
+[fields.password_hash]
+type = "string"
+hidden = true
+
+[fields.display_name]
+type = "string"
+"#;
+
+#[ntex::test]
+async fn registering_runs_the_user_resources_create_hooks() {
+    let db = TempDatabase::create("register_hooks").await;
+    let root = temp_dir("register-hooks");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!("\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n", db.url),
+            ),
+            ("models/organization.toml", DOMAIN_ORG_MODEL),
+            ("models/users.toml", HOOKED_USER_MODEL),
+        ],
+    );
+
+    let state = load_state_with(
+        &root,
+        vec![
+            test_function("user_guard", Visibility::Private, user_guard),
+            test_function("user_join", Visibility::Private, user_join),
+        ],
+    )
+    .await;
+    let app = init_http_app!(state);
+
+    // Ana registers before any organisation exists: `before_create` still runs
+    // (her display name is derived), `after_create` finds nothing to join.
+    let ana = read_json(
+        test::call_service(
+            &app,
+            req_json(
+                "POST",
+                "/api/auth/register",
+                json!({"email":"ana@acme.test","password":"pw"}),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(ana["user"]["display_name"], "ana");
+    assert!(ana["user"]["joined"].is_null());
+    let ana_token = ana["token"].as_str().unwrap().to_string();
+
+    let org = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::post()
+                    .uri("/api/organization")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({"name":"Acme","domain":"acme.test"}).to_string()),
+                &ana_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    let org_id = org["id"].as_str().unwrap().to_string();
+
+    // Ben registers into a claimed domain: the hook makes him a member, and its
+    // replacement lands in the response's `user` — the token is untouched.
+    let ben = read_json(
+        test::call_service(
+            &app,
+            req_json(
+                "POST",
+                "/api/auth/register",
+                json!({"email":"ben@acme.test","password":"pw"}),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(ben["user"]["joined"], org_id);
+    assert_eq!(ben["user"]["display_name"], "ben");
+    assert!(ben["token"].as_str().is_some_and(|t| !t.is_empty()));
+    // Hidden fields stay hidden even when a hook hands the row back.
+    assert!(ben["user"]["password_hash"].is_null());
+
+    // The membership is real: Ben sees Acme without ever having been invited.
+    let ben_token = ben["token"].as_str().unwrap().to_string();
+    let visible = read_json(
+        test::call_service(
+            &app,
+            bearer(test::TestRequest::get().uri("/api/organization"), &ben_token).to_request(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(visible.as_array().unwrap().len(), 1);
+    assert_eq!(visible[0]["id"], org_id);
+
+    // A `before_create` abort fails the registration and writes no user.
+    let blocked = test::call_service(
+        &app,
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({"email":"mal@blocked.test","password":"pw"}),
+        ),
+    )
+    .await;
+    assert_eq!(blocked.status().as_u16(), 403);
+    assert_eq!(read_json(blocked).await["error"], "domain not allowed");
+
+    let users = read_json(
+        test::call_service(
+            &app,
+            bearer(test::TestRequest::get().uri("/api/user"), &ana_token).to_request(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(users.as_array().unwrap().len(), 2);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}

@@ -1,0 +1,38 @@
+# Org-scoped (no `scope` line): each tenant has its own catalogue, isolated
+# automatically. It points at a *global* category — scoped rows may reference
+# shared reference data, and the framework still filters the product list to
+# your organisation.
+
+[resource]
+name = "product"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"
+delete = "role:admin"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.slug]
+type     = "string"
+required = true
+
+[fields.description]
+type = "text"
+
+[fields.category_id]
+type       = "reference"
+references = "product_category"
+required   = true
+on_delete  = "restrict"    # a category in use can't disappear
+
+[fields.status]
+type    = "string"
+default = "draft"          # draft | active | discontinued
+
+[fields.attributes]
+type = "json"              # free-form specs, indexed by nothing, read as-is

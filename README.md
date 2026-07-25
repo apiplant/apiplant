@@ -324,6 +324,11 @@ over HTTP, fully wired into the lifecycle. One library can carry a resource's
 whole set: see [`examples/08-hooks`](examples/08-hooks)
 and the [Hooks guide](docs/hooks.md).
 
+`POST /auth/register` is a create on `user`, so the `user` model's create hooks
+fire there too — which is how
+[`examples/14-email-domains`](examples/14-email-domains) drops a new account
+straight into the organisation that owns its email domain.
+
 ## Workspace layout
 
 | Crate                  | Responsibility                                                    |
@@ -335,7 +340,7 @@ and the [Hooks guide](docs/hooks.md).
 | `apiplant-auth`        | passwords, JWT sessions, API keys, permission evaluation          |
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
 | `apiplant`             | the executable                                                     |
-| `examples/`            | twelve runnable apps, from hello-world to multi-language function directories — see [examples/](examples/) |
+| `examples/`            | runnable apps, from hello-world to a 20-resource domain model — see [examples/](examples/) |
 
 ## Quickstart
 
@@ -372,7 +377,9 @@ curl -s -XPOST localhost:8099/api/functions/greet \
 ```
 
 The [examples](examples/) go from a bare `main.toml` to a full app with
-lifecycle hooks, one concept at a time.
+lifecycle hooks, one concept at a time — and
+[`examples/13-real-world`](examples/13-real-world) puts the lot together in a
+20-resource domain model.
 
 ## The CLI
 

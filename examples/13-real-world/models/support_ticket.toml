@@ -1,0 +1,54 @@
+# Two references to `user` — who raised it and who's handling it — so the
+# nested endpoint needs `?via=`:
+#   GET /api/user/{id}/support_ticket?via=assignee_id    → my queue
+#
+# `owner_field` points at `reporter_id`, so the server stamps the caller there
+# on create: the reporter is whoever actually made the request, never a value
+# from the body. `assignee_id` is a plain reference and stays assignable.
+
+[resource]
+name        = "support_ticket"
+owner_field = "reporter_id"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"          # anyone in the org can raise one
+update = "role:agent"      # only support agents triage
+delete = "role:admin"
+
+[fields.subject]
+type     = "string"
+required = true
+
+[fields.customer_id]
+type       = "reference"
+references = "customer"
+required   = true
+on_delete  = "cascade"
+
+[fields.order_id]
+type       = "reference"
+references = "order"
+on_delete  = "set_null"    # optional: not every ticket is about an order
+
+[fields.reporter_id]
+type       = "reference"
+references = "user"
+on_delete  = "set_null"
+
+[fields.assignee_id]
+type       = "reference"
+references = "user"
+on_delete  = "set_null"
+
+[fields.priority]
+type    = "string"
+default = "normal"         # low | normal | urgent
+
+[fields.status]
+type    = "string"
+default = "open"           # open | pending | resolved
+
+[fields.resolved_at]
+type = "timestamp"

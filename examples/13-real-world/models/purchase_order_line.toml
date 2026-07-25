@@ -1,0 +1,33 @@
+[resource]
+name = "purchase_order_line"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"
+delete = "role:manager"
+
+[fields.purchase_order_id]
+type       = "reference"
+references = "purchase_order"
+required   = true
+on_delete  = "cascade"
+
+[fields.variant_id]
+type       = "reference"
+references = "variant"
+required   = true
+on_delete  = "restrict"    # keep the paper trail: a bought SKU can't vanish
+
+[fields.quantity]
+type     = "integer"
+required = true
+
+[fields.unit_cost_cents]
+type     = "integer"
+required = true
+
+[fields.received_quantity]
+type    = "integer"
+default = 0

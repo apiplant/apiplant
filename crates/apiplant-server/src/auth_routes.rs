@@ -5,11 +5,14 @@
 //! (configurable identity/password field names).
 
 use apiplant_core::schema::AuthSpec;
+use apiplant_core::HookEvent;
 use ntex::web::types::{Json, State};
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::crud::parse_query;
+use crate::hooks::{self, HookRequest};
 use crate::response::{db_error, error};
 use crate::state::AppState;
 
@@ -33,7 +36,20 @@ fn quote(ident: &str) -> String {
 }
 
 /// `POST <base>/auth/register` — create a user and return a session token.
+///
+/// Registration is a `create` on the `user` resource, so the `user` model's
+/// `before_create` / `after_create` [hooks](crate::hooks) fire here exactly as
+/// they do on `POST <base>/user` — the same function serves both doors into the
+/// same table. Two differences follow from what registration is:
+///
+/// * the plaintext `password` is swapped for the hashed `password_field`
+///   *before* `before_create` runs, so a hook never sees the secret;
+/// * the caller is anonymous, so `after_create` identifies the new account
+///   through the hook context's `record_id` (and the row it receives) rather
+///   than through `principal_id`. A replacement it returns replaces the `user`
+///   object in the response, leaving the issued `token` alone.
 pub async fn register(
+    req: HttpRequest,
     state: State<AppState>,
     body: Json<serde_json::Map<String, Value>>,
 ) -> HttpResponse {
@@ -57,6 +73,29 @@ pub async fn register(
     };
     data.insert(spec.password_field.clone(), Value::String(hash));
 
+    // Nobody is authenticated yet: whoever is registering has no principal and
+    // no organisation, so the hook context carries the request alone.
+    let hook_req = HookRequest::new(&req, &parse_query(req.query_string()), None, None);
+    match hooks::run(
+        &state,
+        user_r,
+        HookEvent::BeforeCreate,
+        &hook_req,
+        Value::Object(data.clone()),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => {
+            let hook = user_r.hook(HookEvent::BeforeCreate).unwrap_or_default();
+            match hooks::replacement_object(replacement, hook) {
+                Ok(map) => data = map,
+                Err(resp) => return resp,
+            }
+        }
+        Ok(None) => {}
+        Err(resp) => return resp,
+    }
+
     let created = match state.db.create(user_r, &data).await {
         Ok(row) => row,
         Err(e) => return db_error(e),
@@ -68,8 +107,23 @@ pub async fn register(
     let Some(user_id) = user_id else {
         return error(500, "created user missing id");
     };
+
+    let user = match hooks::run(
+        &state,
+        user_r,
+        HookEvent::AfterCreate,
+        &hook_req.with_record(user_id),
+        created.clone(),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => replacement,
+        Ok(None) => created,
+        Err(resp) => return resp,
+    };
+
     match state.auth.issue_token(user_id) {
-        Ok(token) => HttpResponse::Created().json(&json!({ "token": token, "user": created })),
+        Ok(token) => HttpResponse::Created().json(&json!({ "token": token, "user": user })),
         Err(_) => error(500, "failed to issue token"),
     }
 }

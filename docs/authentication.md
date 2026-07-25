@@ -68,6 +68,11 @@ POST /api/auth/register
   never stored.
 * Honours `auth.allow_registration` (`403` when disabled).
 * Returns `{ "token": "...", "user": { ... } }` (with hidden fields stripped).
+* Registering is a `create` on the `user` resource, so the `user` model's
+  `before_create` / `after_create` [hooks](hooks.md#registration-fires-the-user-create-hooks)
+  fire here too — the usual place to give a new account a starting
+  organisation, as [`examples/14-email-domains`](../examples/14-email-domains)
+  does.
 
 ### Login
 

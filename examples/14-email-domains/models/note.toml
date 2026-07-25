@@ -1,0 +1,22 @@
+# An ordinary organisation-scoped resource. Nothing here knows about domains —
+# it exists so the example can show what auto-joining actually buys the new
+# user: `organization_id` is stamped and filtered for them from their first
+# request, because the hook already made them a member.
+
+[resource]
+name = "note"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "owner"
+delete = "owner"
+
+[fields.body]
+type     = "text"
+required = true
+
+[fields.owner_id]
+type       = "reference"
+references = "user"

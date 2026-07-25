@@ -1,0 +1,42 @@
+# One order can ship in several parcels, each from a warehouse, each with a
+# carrier — so `shipment` reaches into three different branches of the graph.
+
+[resource]
+name = "shipment"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"
+delete = "role:admin"
+
+[fields.order_id]
+type       = "reference"
+references = "order"
+required   = true
+on_delete  = "cascade"
+
+[fields.warehouse_id]
+type       = "reference"
+references = "warehouse"
+required   = true
+on_delete  = "restrict"
+
+[fields.carrier_id]
+type       = "reference"
+references = "carrier"
+on_delete  = "restrict"
+
+[fields.tracking_code]
+type = "string"
+
+[fields.status]
+type    = "string"
+default = "preparing"      # preparing | in_transit | delivered | lost
+
+[fields.shipped_at]
+type = "timestamp"
+
+[fields.delivered_at]
+type = "timestamp"

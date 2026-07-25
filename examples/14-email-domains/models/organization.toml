@@ -1,0 +1,41 @@
+# The built-in `organization`, plus one field of our own: `domain`.
+#
+# A model file *replaces* the built-in of the same name rather than merging with
+# it, so everything the framework relies on — the `global` scope, the membership
+# -based permissions — is repeated here verbatim. Only `[fields.domain]` at the
+# bottom is new.
+#
+# Publishes the usual GET/POST /api/organization, GET/PATCH/DELETE /api/organization/{id}.
+
+[resource]
+name = "organization"
+scope = "global"           # organisations *are* the tenants; they aren't inside one
+timestamps = true
+
+[permissions]
+list   = "member"          # organisations you belong to
+read   = "member"
+create = "authenticated"   # anyone may start one (and becomes its admin)
+update = "role:admin"      # an admin *of that organisation*
+delete = "role:admin"
+
+[fields.name]
+type = "string"
+required = true
+
+[fields.slug]
+type = "string"
+unique = true
+
+# The email domain this organisation owns, e.g. "acme.com". Anyone who registers
+# with an address at this domain is made a member automatically — see
+# functions/domain_join.rs.
+#
+# `unique` makes a domain belong to at most one organisation, so "which org does
+# this address belong to?" always has a single answer. It is nullable: an
+# organisation without a domain simply never auto-admits anyone, and Postgres
+# allows any number of NULLs in a unique column.
+[fields.domain]
+type       = "string"
+unique     = true
+max_length = 253           # the longest a DNS name can be

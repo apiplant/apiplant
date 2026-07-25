@@ -175,7 +175,7 @@ fn authorize_global(
     }
 }
 
-fn parse_query(qs: &str) -> HashMap<String, String> {
+pub(crate) fn parse_query(qs: &str) -> HashMap<String, String> {
     serde_urlencoded::from_str(qs).unwrap_or_default()
 }
 

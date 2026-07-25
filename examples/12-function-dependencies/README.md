@@ -102,3 +102,6 @@ Reach for a directory only when a single file can't express what you need:
 
 Otherwise a single `.rs` / `.c` / `.zig` / `.go` file (examples 07–11) is less to
 carry. The two forms live side by side in the same `functions/` directory.
+
+**Next:** [13 · A real-world app](../13-real-world) — every idea so far in one
+20-resource domain model.
