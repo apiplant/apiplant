@@ -405,9 +405,21 @@ The command reads the app directory at build time, bakes its resources,
 permissions, auth model and callable function endpoints into a static frontend,
 and writes a self-contained admin app (`index.html`, `app.js`, `app.css`, a
 JSON manifest, and the shared studio assets) to the output directory. The UI is
-schema-aware but **not** schema-editing: it signs users in, switches active
-organisations, manages existing resource rows over the REST API, and invokes
-loaded public/authenticated/role-gated functions.
+generated from the dedicated top-level **`admin/` Vite app**, built with Solid
+and Tailwind while reusing studio's design system. It is schema-aware rather
+than schema-editing: an authentication-gated control panel for operators with
+sign-in, optional registration, organisation switching, member/role management,
+resource CRUD over the REST API, and manual invocation of callable functions.
+Functions used only as lifecycle hooks are omitted from the admin surface.
+
+Develop the admin app like studio itself:
+
+```bash
+cd admin
+pnpm install
+pnpm dev
+pnpm build
+```
 
 If that bundle lives in `APP_DIR/admin`, `apiplant run` now serves it
 automatically at `/admin/` on the same host as the API.

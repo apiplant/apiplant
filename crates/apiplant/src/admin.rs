@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,10 +10,9 @@ use apiplant_server::functions::FunctionRegistry;
 use serde::Serialize;
 use serde_json::Value;
 
-const INDEX_HTML: &str = include_str!("admin/index.html");
-const APP_JS: &str = include_str!("admin/app.js");
-const STUDIO_CSS: &str = include_str!(env!("APIPLANT_STUDIO_CSS_PATH"));
-const EXTRA_CSS: &str = include_str!("admin/extra.css");
+const INDEX_HTML: &str = include_str!(env!("APIPLANT_ADMIN_INDEX_PATH"));
+const APP_JS: &str = include_str!(env!("APIPLANT_ADMIN_JS_PATH"));
+const APP_CSS: &str = include_str!(env!("APIPLANT_ADMIN_CSS_PATH"));
 const HEAD_PNG: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../studio/public/head.png"
@@ -48,6 +48,7 @@ struct AuthManifest {
 #[derive(Debug, Serialize)]
 struct ResourceManifest {
     name: String,
+    builtin: bool,
     scope: &'static str,
     owner_field: String,
     fields: Vec<FieldManifest>,
@@ -152,6 +153,16 @@ fn build_manifest(
     } else {
         None
     };
+    let hook_functions = app
+        .resources
+        .values()
+        .flat_map(|resource| {
+            resource
+                .hooks
+                .iter()
+                .map(|(_, function)| function.to_string())
+        })
+        .collect::<BTreeSet<_>>();
 
     let resources = app
         .resources
@@ -162,6 +173,7 @@ fn build_manifest(
     let mut loaded_functions = functions
         .iter()
         .filter(|entry| entry.manifest.visibility != Visibility::Private)
+        .filter(|entry| !hook_functions.contains(entry.manifest.name.as_str()))
         .map(|entry| function_manifest(entry.manifest.name.as_str(), &entry.manifest))
         .collect::<Vec<_>>();
     loaded_functions.sort_by(|left, right| left.name.cmp(&right.name));
@@ -215,6 +227,7 @@ fn resource_manifest(resource: &Resource, base_path: &str) -> ResourceManifest {
 
     ResourceManifest {
         name: resource.meta.name.clone(),
+        builtin: is_builtin_resource(&resource.meta.name),
         scope,
         owner_field: resource.meta.owner_field.clone(),
         fields,
@@ -229,6 +242,13 @@ fn resource_manifest(resource: &Resource, base_path: &str) -> ResourceManifest {
             "Collection at {resource_path}; individual records at {resource_path}/{{id}}; nested lists remain available on parents that reference this resource."
         ),
     }
+}
+
+fn is_builtin_resource(name: &str) -> bool {
+    matches!(
+        name,
+        "organization" | "membership" | "user" | "api_key" | "oauth_connection"
+    )
 }
 
 fn field_manifest(name: &str, field: &Field, owner_field: &str) -> FieldManifest {
@@ -425,10 +445,9 @@ fn normalize_api_base(raw: &str, base_path: &str, prefer_https: bool) -> Result<
 }
 
 fn admin_css() -> String {
-    let studio = STUDIO_CSS
+    APP_CSS
         .replace("url(/head.png)", "url(./head.png)")
-        .replace("url(/head-inverted.png)", "url(./head-inverted.png)");
-    format!("{studio}\n{EXTRA_CSS}\n")
+        .replace("url(/head-inverted.png)", "url(./head-inverted.png)")
 }
 
 fn write_text(path: PathBuf, text: &str) -> Result<()> {

@@ -1,0 +1,2956 @@
+{
+  "title": "13-real-world admin",
+  "app_name": "13-real-world",
+  "api_base_url": "http://127.0.0.1:8099/api",
+  "docs_url": "http://127.0.0.1:8099/api/docs",
+  "auth": {
+    "identity_field": "email",
+    "allow_registration": true
+  },
+  "resources": [
+    {
+      "name": "address",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "city",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "country_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "country",
+          "relation": "country",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "customer_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "customer",
+          "relation": "customer",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "line1",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "line2",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "postal_code",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "country_id",
+          "relation": "country",
+          "target": "country"
+        },
+        {
+          "field": "customer_id",
+          "relation": "customer",
+          "target": "customer"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/address; individual records at /api/address/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "api_key",
+      "builtin": true,
+      "scope": "global",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "owner_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "owner",
+          "on_delete": null,
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "token_hash",
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "hidden": true,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": false
+        }
+      ],
+      "relations": [
+        {
+          "field": "owner_id",
+          "relation": "owner",
+          "target": "user"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "owner",
+          "note": "Requires authentication; the API narrows the operation to rows owned by the caller.",
+          "requires_org": false
+        },
+        "read": {
+          "value": "owner",
+          "note": "Requires authentication; the API narrows the operation to rows owned by the caller.",
+          "requires_org": false
+        },
+        "create": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "update": {
+          "value": "private",
+          "note": "Not exposed.",
+          "requires_org": false
+        },
+        "delete": {
+          "value": "owner",
+          "note": "Requires authentication; the API narrows the operation to rows owned by the caller.",
+          "requires_org": false
+        }
+      },
+      "permission_summary": "Global: no tenant filter is injected, so only the declared action permissions gate access.",
+      "endpoint_summary": "Collection at /api/api_key; individual records at /api/api_key/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "carrier",
+      "builtin": false,
+      "scope": "global",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": true,
+          "writable": true
+        },
+        {
+          "name": "code",
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "tracking_url_template",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [],
+      "permissions": {
+        "list": {
+          "value": "public",
+          "note": "Public — no authentication required.",
+          "requires_org": false
+        },
+        "read": {
+          "value": "public",
+          "note": "Public — no authentication required.",
+          "requires_org": false
+        },
+        "create": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "update": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "delete": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        }
+      },
+      "permission_summary": "Global: no tenant filter is injected, so only the declared action permissions gate access.",
+      "endpoint_summary": "Collection at /api/carrier; individual records at /api/carrier/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "country",
+      "builtin": false,
+      "scope": "global",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "code",
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "eu",
+          "type": "boolean",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": false,
+          "writable": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [],
+      "permissions": {
+        "list": {
+          "value": "public",
+          "note": "Public — no authentication required.",
+          "requires_org": false
+        },
+        "read": {
+          "value": "public",
+          "note": "Public — no authentication required.",
+          "requires_org": false
+        },
+        "create": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "update": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "delete": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        }
+      },
+      "permission_summary": "Global: no tenant filter is injected, so only the declared action permissions gate access.",
+      "endpoint_summary": "Collection at /api/country; individual records at /api/country/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "customer",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "account_manager_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "account_manager",
+          "on_delete": "set_null",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "country_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "country",
+          "relation": "country",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "credit_limit_cents",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": 0,
+          "writable": true
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "tier",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "standard",
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "account_manager_id",
+          "relation": "account_manager",
+          "target": "user"
+        },
+        {
+          "field": "country_id",
+          "relation": "country",
+          "target": "country"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/customer; individual records at /api/customer/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "inventory_level",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "on_hand",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": 0,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "reorder_point",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": 0,
+          "writable": true
+        },
+        {
+          "name": "reserved",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": 0,
+          "writable": true
+        },
+        {
+          "name": "variant_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "variant",
+          "relation": "variant",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "warehouse_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "warehouse",
+          "relation": "warehouse",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "variant_id",
+          "relation": "variant",
+          "target": "variant"
+        },
+        {
+          "field": "warehouse_id",
+          "relation": "warehouse",
+          "target": "warehouse"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/inventory_level; individual records at /api/inventory_level/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "membership",
+      "builtin": true,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": null,
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "user_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "user",
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "user_id",
+          "relation": "user",
+          "target": "user"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/membership; individual records at /api/membership/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "oauth_connection",
+      "builtin": true,
+      "scope": "global",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "owner_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "owner",
+          "on_delete": null,
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "provider",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "provider_user_id",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "owner_id",
+          "relation": "owner",
+          "target": "user"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "owner",
+          "note": "Requires authentication; the API narrows the operation to rows owned by the caller.",
+          "requires_org": false
+        },
+        "read": {
+          "value": "owner",
+          "note": "Requires authentication; the API narrows the operation to rows owned by the caller.",
+          "requires_org": false
+        },
+        "create": {
+          "value": "private",
+          "note": "Not exposed.",
+          "requires_org": false
+        },
+        "update": {
+          "value": "private",
+          "note": "Not exposed.",
+          "requires_org": false
+        },
+        "delete": {
+          "value": "owner",
+          "note": "Requires authentication; the API narrows the operation to rows owned by the caller.",
+          "requires_org": false
+        }
+      },
+      "permission_summary": "Global: no tenant filter is injected, so only the declared action permissions gate access.",
+      "endpoint_summary": "Collection at /api/oauth_connection; individual records at /api/oauth_connection/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "order",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "billing_address_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "address",
+          "relation": "billing_address",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "currency",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "EUR",
+          "writable": true
+        },
+        {
+          "name": "customer_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "customer",
+          "relation": "customer",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "notes",
+          "type": "text",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "number",
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "owner_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "owner",
+          "on_delete": "set_null",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "placed_at",
+          "type": "timestamp",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "shipping_address_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "address",
+          "relation": "shipping_address",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "pending",
+          "writable": true
+        },
+        {
+          "name": "total_cents",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": 0,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "billing_address_id",
+          "relation": "billing_address",
+          "target": "address"
+        },
+        {
+          "field": "customer_id",
+          "relation": "customer",
+          "target": "customer"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "owner_id",
+          "relation": "owner",
+          "target": "user"
+        },
+        {
+          "field": "shipping_address_id",
+          "relation": "shipping_address",
+          "target": "address"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "owner",
+          "note": "Requires membership of the active organization; the API narrows the operation to rows owned by the caller.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/order; individual records at /api/order/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "order_line",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "discount_cents",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": 0,
+          "writable": true
+        },
+        {
+          "name": "order_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "order",
+          "relation": "order",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "quantity",
+          "type": "integer",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "unit_price_cents",
+          "type": "integer",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "variant_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "variant",
+          "relation": "variant",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "order_id",
+          "relation": "order",
+          "target": "order"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "variant_id",
+          "relation": "variant",
+          "target": "variant"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/order_line; individual records at /api/order_line/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "organization",
+      "builtin": true,
+      "scope": "global",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "slug",
+          "type": "string",
+          "required": false,
+          "unique": true,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires authentication; `member` on a global resource behaves like `authenticated`.",
+          "requires_org": false
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires authentication; `member` on a global resource behaves like `authenticated`.",
+          "requires_org": false
+        },
+        "create": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "update": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Global: no tenant filter is injected, so only the declared action permissions gate access.",
+      "endpoint_summary": "Collection at /api/organization; individual records at /api/organization/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "payment",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "amount_cents",
+          "type": "integer",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "captured_at",
+          "type": "timestamp",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "gateway_payload",
+          "type": "json",
+          "required": false,
+          "unique": false,
+          "hidden": true,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "gateway_reference",
+          "type": "string",
+          "required": false,
+          "unique": true,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "order_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "order",
+          "relation": "order",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "captured",
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "order_id",
+          "relation": "order",
+          "target": "order"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "private",
+          "note": "Not exposed.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "private",
+          "note": "Not exposed.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/payment; individual records at /api/payment/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "product",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "attributes",
+          "type": "json",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "category_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "product_category",
+          "relation": "category",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "slug",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "draft",
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "category_id",
+          "relation": "category",
+          "target": "product_category"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/product; individual records at /api/product/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "product_category",
+      "builtin": false,
+      "scope": "global",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "parent_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "product_category",
+          "relation": "parent",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "slug",
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "parent_id",
+          "relation": "parent",
+          "target": "product_category"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "public",
+          "note": "Public — no authentication required.",
+          "requires_org": false
+        },
+        "read": {
+          "value": "public",
+          "note": "Public — no authentication required.",
+          "requires_org": false
+        },
+        "create": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "update": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "delete": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        }
+      },
+      "permission_summary": "Global: no tenant filter is injected, so only the declared action permissions gate access.",
+      "endpoint_summary": "Collection at /api/product_category; individual records at /api/product_category/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "purchase_order",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "expected_at",
+          "type": "timestamp",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "received_at",
+          "type": "timestamp",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "reference",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "draft",
+          "writable": true
+        },
+        {
+          "name": "supplier_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "supplier",
+          "relation": "supplier",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "warehouse_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "warehouse",
+          "relation": "warehouse",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "supplier_id",
+          "relation": "supplier",
+          "target": "supplier"
+        },
+        {
+          "field": "warehouse_id",
+          "relation": "warehouse",
+          "target": "warehouse"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/purchase_order; individual records at /api/purchase_order/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "purchase_order_line",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "purchase_order_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "purchase_order",
+          "relation": "purchase_order",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "quantity",
+          "type": "integer",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "received_quantity",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": 0,
+          "writable": true
+        },
+        {
+          "name": "unit_cost_cents",
+          "type": "integer",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "variant_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "variant",
+          "relation": "variant",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "purchase_order_id",
+          "relation": "purchase_order",
+          "target": "purchase_order"
+        },
+        {
+          "field": "variant_id",
+          "relation": "variant",
+          "target": "variant"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/purchase_order_line; individual records at /api/purchase_order_line/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "refund",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "amount_cents",
+          "type": "integer",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "approved_by_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "approved_by",
+          "on_delete": "set_null",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "payment_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "payment",
+          "relation": "payment",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "reason",
+          "type": "text",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "refunded_at",
+          "type": "timestamp",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "approved_by_id",
+          "relation": "approved_by",
+          "target": "user"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "payment_id",
+          "relation": "payment",
+          "target": "payment"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "private",
+          "note": "Not exposed.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "private",
+          "note": "Not exposed.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/refund; individual records at /api/refund/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "shipment",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "carrier_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "carrier",
+          "relation": "carrier",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "delivered_at",
+          "type": "timestamp",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "order_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "order",
+          "relation": "order",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "shipped_at",
+          "type": "timestamp",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "preparing",
+          "writable": true
+        },
+        {
+          "name": "tracking_code",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "warehouse_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "warehouse",
+          "relation": "warehouse",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "carrier_id",
+          "relation": "carrier",
+          "target": "carrier"
+        },
+        {
+          "field": "order_id",
+          "relation": "order",
+          "target": "order"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "warehouse_id",
+          "relation": "warehouse",
+          "target": "warehouse"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/shipment; individual records at /api/shipment/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "shipment_line",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "order_line_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "order_line",
+          "relation": "order_line",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "quantity",
+          "type": "integer",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "shipment_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "shipment",
+          "relation": "shipment",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "order_line_id",
+          "relation": "order_line",
+          "target": "order_line"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "shipment_id",
+          "relation": "shipment",
+          "target": "shipment"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/shipment_line; individual records at /api/shipment_line/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "supplier",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": true,
+          "writable": true
+        },
+        {
+          "name": "contact_email",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "country_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "country",
+          "relation": "country",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "lead_time_days",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": 14,
+          "writable": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        }
+      ],
+      "relations": [
+        {
+          "field": "country_id",
+          "relation": "country",
+          "target": "country"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/supplier; individual records at /api/supplier/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "support_ticket",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "reporter_id",
+      "fields": [
+        {
+          "name": "assignee_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "assignee",
+          "on_delete": "set_null",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "customer_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "customer",
+          "relation": "customer",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "order_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "order",
+          "relation": "order",
+          "on_delete": "set_null",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "priority",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "normal",
+          "writable": true
+        },
+        {
+          "name": "reporter_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "reporter",
+          "on_delete": "set_null",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "resolved_at",
+          "type": "timestamp",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": "open",
+          "writable": true
+        },
+        {
+          "name": "subject",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "assignee_id",
+          "relation": "assignee",
+          "target": "user"
+        },
+        {
+          "field": "customer_id",
+          "relation": "customer",
+          "target": "customer"
+        },
+        {
+          "field": "order_id",
+          "relation": "order",
+          "target": "order"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "reporter_id",
+          "relation": "reporter",
+          "target": "user"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:agent",
+          "note": "Requires the `agent` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/support_ticket; individual records at /api/support_ticket/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "ticket_message",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "author_id",
+      "fields": [
+        {
+          "name": "author_id",
+          "type": "reference",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": "user",
+          "relation": "author",
+          "on_delete": "set_null",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "body",
+          "type": "text",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "internal",
+          "type": "boolean",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": false,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "ticket_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "support_ticket",
+          "relation": "ticket",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "author_id",
+          "relation": "author",
+          "target": "user"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "ticket_id",
+          "relation": "ticket",
+          "target": "support_ticket"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "owner",
+          "note": "Requires membership of the active organization; the API narrows the operation to rows owned by the caller.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/ticket_message; individual records at /api/ticket_message/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "user",
+      "builtin": true,
+      "scope": "global",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "display_name",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "password_hash",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": true,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": false
+        }
+      ],
+      "relations": [],
+      "permissions": {
+        "list": {
+          "value": "authenticated",
+          "note": "Requires authentication.",
+          "requires_org": false
+        },
+        "read": {
+          "value": "owner",
+          "note": "Requires authentication; the API narrows the operation to rows owned by the caller.",
+          "requires_org": false
+        },
+        "create": {
+          "value": "public",
+          "note": "Public — no authentication required.",
+          "requires_org": false
+        },
+        "update": {
+          "value": "owner",
+          "note": "Requires authentication; the API narrows the operation to rows owned by the caller.",
+          "requires_org": false
+        },
+        "delete": {
+          "value": "private",
+          "note": "Not exposed.",
+          "requires_org": false
+        }
+      },
+      "permission_summary": "Global: no tenant filter is injected, so only the declared action permissions gate access.",
+      "endpoint_summary": "Collection at /api/user; individual records at /api/user/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "variant",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "barcode",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        },
+        {
+          "name": "price_cents",
+          "type": "integer",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "product_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "product",
+          "relation": "product",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "sku",
+          "type": "string",
+          "required": true,
+          "unique": true,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "weight_grams",
+          "type": "integer",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        }
+      ],
+      "relations": [
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        },
+        {
+          "field": "product_id",
+          "relation": "product",
+          "target": "product"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/variant; individual records at /api/variant/{id}; nested lists remain available on parents that reference this resource."
+    },
+    {
+      "name": "warehouse",
+      "builtin": false,
+      "scope": "organization",
+      "owner_field": "owner_id",
+      "fields": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": true,
+          "writable": true
+        },
+        {
+          "name": "city",
+          "type": "string",
+          "required": false,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "code",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "country_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "country",
+          "relation": "country",
+          "on_delete": "restrict",
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": null,
+          "relation": null,
+          "on_delete": null,
+          "default_value": null,
+          "writable": true
+        },
+        {
+          "name": "organization_id",
+          "type": "reference",
+          "required": true,
+          "unique": false,
+          "hidden": false,
+          "references": "organization",
+          "relation": "organization",
+          "on_delete": "cascade",
+          "default_value": null,
+          "writable": false
+        }
+      ],
+      "relations": [
+        {
+          "field": "country_id",
+          "relation": "country",
+          "target": "country"
+        },
+        {
+          "field": "organization_id",
+          "relation": "organization",
+          "target": "organization"
+        }
+      ],
+      "permissions": {
+        "list": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "read": {
+          "value": "member",
+          "note": "Requires membership of the active organization.",
+          "requires_org": true
+        },
+        "create": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "update": {
+          "value": "role:manager",
+          "note": "Requires the `manager` role in the active organization.",
+          "requires_org": true
+        },
+        "delete": {
+          "value": "role:admin",
+          "note": "Requires the `admin` role in the active organization.",
+          "requires_org": true
+        }
+      },
+      "permission_summary": "Org-scoped: every request runs inside the active organization, and the API still enforces owner and role checks per user.",
+      "endpoint_summary": "Collection at /api/warehouse; individual records at /api/warehouse/{id}; nested lists remain available on parents that reference this resource."
+    }
+  ],
+  "functions": []
+}

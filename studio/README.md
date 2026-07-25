@@ -66,8 +66,14 @@ apiplant admin ./my-app --api https://api.example.com --out ./my-app/admin
 That command does **not** read the directory at runtime. It bakes the app's
 schema, permissions, auth rules and loaded function endpoints into a separate
 frontend that talks to the live API, while leaving the studio itself focused on
-editing app directories. When you write that bundle to `APP_DIR/admin`, the
-server now serves it automatically at `/admin/`.
+editing app directories. The generated app comes from the repository's
+top-level **`admin/`** package — its own Vite app, with its own `index.html`,
+using the same **Solid + Tailwind** stack and design language as studio, but as
+a CMS-style, authentication-gated admin panel: sign in, optionally register
+when the API allows it, switch organisations, manage members and roles, work
+with existing resource data, and run callable functions without exposing schema
+editing or hook-only functions. When you write that bundle to `APP_DIR/admin`,
+the server now serves it automatically at `/admin/`.
 
 ## Layout
 

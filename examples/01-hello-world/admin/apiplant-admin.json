@@ -1,8 +1,8 @@
 {
   "title": "01-hello-world admin",
   "app_name": "01-hello-world",
-  "api_base_url": "http://127.0.0.1:8099/api",
-  "docs_url": "http://127.0.0.1:8099/api/docs",
+  "api_base_url": "http://localhost:8099/api",
+  "docs_url": "http://localhost:8099/api/docs",
   "auth": {
     "identity_field": "email",
     "allow_registration": true
@@ -10,6 +10,7 @@
   "resources": [
     {
       "name": "api_key",
+      "builtin": true,
       "scope": "global",
       "owner_field": "owner_id",
       "fields": [
@@ -89,6 +90,7 @@
     },
     {
       "name": "membership",
+      "builtin": true,
       "scope": "organization",
       "owner_field": "owner_id",
       "fields": [
@@ -173,6 +175,7 @@
     },
     {
       "name": "oauth_connection",
+      "builtin": true,
       "scope": "global",
       "owner_field": "owner_id",
       "fields": [
@@ -252,6 +255,7 @@
     },
     {
       "name": "organization",
+      "builtin": true,
       "scope": "global",
       "owner_field": "owner_id",
       "fields": [
@@ -313,6 +317,7 @@
     },
     {
       "name": "user",
+      "builtin": true,
       "scope": "global",
       "owner_field": "owner_id",
       "fields": [

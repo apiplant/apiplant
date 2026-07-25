@@ -1,23 +1,30 @@
 use std::env;
-use std::fs;
 use std::path::PathBuf;
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let assets_dir = manifest_dir.join("../../studio/dist/assets");
+    let admin_dist_dir = manifest_dir.join("../../admin/dist");
 
-    let css_path = fs::read_dir(&assets_dir)
-        .expect("studio/dist/assets must exist")
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("css"))
-        .expect("studio/dist/assets must contain a built CSS file");
+    let index_path = admin_dist_dir.join("index.html");
+    let js_path = admin_dist_dir.join("app.js");
+    let css_path = admin_dist_dir.join("app.css");
+    if !index_path.is_file() || !js_path.is_file() || !css_path.is_file() {
+        panic!("admin/dist/index.html, app.js and app.css must exist; run `pnpm build` in admin/");
+    }
 
     println!(
-        "cargo:rustc-env=APIPLANT_STUDIO_CSS_PATH={}",
+        "cargo:rustc-env=APIPLANT_ADMIN_INDEX_PATH={}",
+        index_path.display()
+    );
+    println!(
+        "cargo:rustc-env=APIPLANT_ADMIN_JS_PATH={}",
+        js_path.display()
+    );
+    println!(
+        "cargo:rustc-env=APIPLANT_ADMIN_CSS_PATH={}",
         css_path.display()
     );
-    println!("cargo:rerun-if-changed={}", assets_dir.display());
+    println!("cargo:rerun-if-changed={}", admin_dist_dir.display());
     println!(
         "cargo:rerun-if-changed={}",
         manifest_dir.join("../../studio/public/head.png").display()
@@ -27,17 +34,5 @@ fn main() {
         manifest_dir
             .join("../../studio/public/head-inverted.png")
             .display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest_dir.join("src/admin/index.html").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest_dir.join("src/admin/app.js").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest_dir.join("src/admin/extra.css").display()
     );
 }
