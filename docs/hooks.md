@@ -290,6 +290,30 @@ if input["locked"] == json!(true) {
 Ok(reply::proceed())
 ```
 
+## Built-in functions
+
+Some hooks ship with the framework. A **built-in** is an ordinary Rust function
+compiled into the server and registered in the same function registry your
+`functions/` libraries land in — same host API, same reply protocol, same
+`[hooks]` wiring. The only differences: it is always present, it is always
+`private` (no HTTP endpoint), and its name lives in the reserved **`apiplant_`**
+namespace, so a function of your own can never collide with one.
+
+| Function | Wired to | What it does |
+|----------|----------|--------------|
+| `apiplant_organization_join` | `membership.before_create` | Resolves the person being added — by `user_id`, or by the identity field they registered with (`email` by default). `422` if the body names neither, `404` if nobody is registered with that identity, `409` if they already belong to the organisation. |
+
+They exist for work that has to happen *behind* the API rather than in front of
+it. `apiplant_organization_join` is the case in point: `user` reads as `member`,
+so the admin adding a newcomer cannot resolve that newcomer's email to an id
+themselves — the server does it for them, for that one purpose, and returns
+nothing else about the account.
+
+Declaring a function of your own with a built-in's exact name replaces it — the
+escape hatch when you want the hook but not this version of it. Because you have
+to type the reserved prefix to do so, it can't happen by accident; the server
+logs a warning when it does.
+
 ## Failure modes
 
 | Situation | Result |

@@ -144,6 +144,7 @@ macro_rules! build_app {
 
 pub mod admin;
 mod auth_routes;
+pub mod builtins;
 pub mod cabi;
 mod crud;
 mod function_routes;
@@ -413,7 +414,7 @@ pub async fn run(app: App) -> anyhow::Result<()> {
     }
 
     // 3. Load dynamic functions.
-    let registry = FunctionRegistry::load_dir(&app.functions_dir);
+    let registry = FunctionRegistry::load(&app);
     for f in registry.iter() {
         // A `Private` function has no route — it exists to be called from a
         // hook — so don't advertise one it would answer 404 on.

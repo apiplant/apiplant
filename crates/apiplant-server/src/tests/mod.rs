@@ -197,7 +197,7 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         .unwrap();
     apiplant_db::migrate(db.connection(), &app).await.unwrap();
 
-    let mut functions_registry = FunctionRegistry::load_dir(&app.functions_dir);
+    let mut functions_registry = FunctionRegistry::load(&app);
     for function in functions {
         functions_registry.register(function, "{}".to_string());
     }

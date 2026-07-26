@@ -225,7 +225,7 @@ pub fn build(app_dir: &Path, options: Options) -> Result<PathBuf> {
         app.tls.is_some(),
     )?;
     let output_dir = options.out.unwrap_or_else(|| app_dir.join("admin"));
-    let registry = FunctionRegistry::load_dir(&app.functions_dir);
+    let registry = FunctionRegistry::load(&app);
     let manifest = build_manifest(&app, &registry, api_base_url.clone())?;
 
     fs::create_dir_all(&output_dir)

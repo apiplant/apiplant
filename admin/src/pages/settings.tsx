@@ -301,8 +301,13 @@ export function TeamPage() {
 }
 
 /**
- * Adding a teammate is two API calls — find the user, then create the
- * membership — but one step for the person doing it.
+ * Adding a teammate is one call: the membership is created from the person's
+ * identity, and the server resolves it to an account.
+ *
+ * Looking the user up from here would not work — a member may only read users
+ * they already share an organization with, which the person being added is by
+ * definition not. The `organization_join` hook on `membership` does it instead,
+ * and answers 404 when nobody is registered with that identity.
  */
 function InviteDialog(props: { open: boolean; roles: string[]; onClose: () => void; onAdded: () => void }) {
   const [identity, setIdentity] = createSignal("");
@@ -322,15 +327,9 @@ function InviteDialog(props: { open: boolean; roles: string[]; onClose: () => vo
     setError(null);
     try {
       const field = manifest()!.auth.identity_field;
-      const found = asRecords(
-        await api(`/user?${encodeURIComponent(field)}=${encodeURIComponent(value)}&limit=1`),
-      )[0];
-      if (!found) {
-        throw new Error(`Nobody is registered with that ${label().toLowerCase()}. Ask them to sign up first.`);
-      }
       await api("/membership", {
         method: "POST",
-        body: { user_id: String(found.id ?? ""), role: role() },
+        body: { [field]: value, role: role() },
         org: true,
       });
       notify("success", `${value} can now work in ${organizationLabel(currentOrganization())}.`);

@@ -145,8 +145,34 @@ fn authorize_org_scoped(
     Ok(filters)
 }
 
+/// [`authorize`] plus the scoping that needs a database round-trip.
+///
+/// Only one policy does: `member` on the global `user` resource, which means
+/// "shares an organisation with me" and so has to look the co-members up. Every
+/// handler that turns a policy into a query goes through here.
+async fn scope(
+    state: &AppState,
+    access: &Access,
+    caller: &Caller,
+    r: &Resource,
+) -> Result<Vec<Filter>, HttpResponse> {
+    let mut filters = authorize(access, caller, r)?;
+    if *access == Access::Member && !r.is_org_scoped() && r.meta.name == "user" {
+        // `authorize` let the caller through as authenticated; narrow the rows
+        // to the people they actually share an organisation with.
+        let principal = caller
+            .principal
+            .as_ref()
+            .expect("member access requires a principal");
+        let ids = state.co_member_user_ids(principal).await;
+        filters.push(Filter::in_uuids("id", ids));
+    }
+    Ok(filters)
+}
+
 /// Global resources: no org isolation; the policy alone decides. `member`/`role`
-/// are only meaningful on the `organization` resource (scoped to your orgs).
+/// are only meaningful on `organization` (scoped to your orgs) and on `user`
+/// (scoped to your co-members, in [`scope`]).
 fn authorize_global(
     access: &Access,
     caller: &Caller,
@@ -256,7 +282,7 @@ async fn expand_relations(
         let Some(target) = state.app.resources.get(&reference.target) else {
             continue;
         };
-        let scope = match authorize(&target.permissions.read, caller, target) {
+        let scope = match scope(state, &target.permissions.read, caller, target).await {
             Ok(filters) => filters,
             Err(_) => {
                 for row in rows.iter_mut() {
@@ -315,7 +341,7 @@ pub async fn list(req: HttpRequest, state: State<AppState>, path: Path<String>) 
     let params = parse_query(req.query_string());
     let caller = state.caller(&req).await;
 
-    let mut filters = match authorize(&r.permissions.list, &caller, r) {
+    let mut filters = match scope(&state, &r.permissions.list, &caller, r).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -379,7 +405,7 @@ pub async fn get(
     };
     let params = parse_query(req.query_string());
     let caller = state.caller(&req).await;
-    let filters = match authorize(&r.permissions.read, &caller, r) {
+    let filters = match scope(&state, &r.permissions.read, &caller, r).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -467,7 +493,7 @@ pub async fn nested_list(
     };
 
     let caller = state.caller(&req).await;
-    let mut filters = match authorize(&child.permissions.list, &caller, child) {
+    let mut filters = match scope(&state, &child.permissions.list, &caller, child).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -653,7 +679,7 @@ pub async fn update(
         Err(_) => return error(400, "invalid id"),
     };
     let caller = state.caller(&req).await;
-    let filters = match authorize(&r.permissions.update, &caller, r) {
+    let filters = match scope(&state, &r.permissions.update, &caller, r).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -720,7 +746,7 @@ pub async fn delete(
         Err(_) => return error(400, "invalid id"),
     };
     let caller = state.caller(&req).await;
-    let filters = match authorize(&r.permissions.delete, &caller, r) {
+    let filters = match scope(&state, &r.permissions.delete, &caller, r).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };

@@ -33,6 +33,7 @@ The same `list` policy also governs the nested `GET /parent/{id}/res` endpoint
 |-------|---------------|
 | `public` | anyone, no authentication |
 | `authenticated` | any authenticated caller (session token or API key) |
+| `member` | a member of the active organisation (see [below](#member-on-global-resources) for global resources) |
 | `owner` | authenticated **and** the row belongs to them (see [Ownership](#ownership)) |
 | `role:<name>` | authenticated **and** holding the named role in the active organisation |
 | `private` | nobody — the endpoint isn't exposed (returns 404 / omitted from docs) |
@@ -49,6 +50,23 @@ apply — **member-only within the active organisation**:
 | `create` | `member` |
 | `update` | `member` |
 | `delete` | `member` |
+
+## `member` on global resources
+
+On an org-scoped resource `member` is implicit — every request is already
+filtered to the active organisation. On a `scope = "global"` resource there is no
+tenant column to filter on, so `member` is interpreted per resource:
+
+| Resource | What `member` scopes to |
+|----------|-------------------------|
+| `organization` | the organisations you belong to |
+| `user` | users who share at least one organisation with you (plus yourself) |
+| anything else global | any authenticated caller (same as `authenticated`) |
+
+This is why the built-in `user` ships with `list = "member"` and
+`read = "member"`: colleagues can see each other's name and email — so a
+membership list can `?expand=user` — while strangers stay invisible. The
+password column is `hidden` either way and never leaves the server.
 
 ## Decision model
 

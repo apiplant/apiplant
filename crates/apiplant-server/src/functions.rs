@@ -19,12 +19,27 @@ use apiplant_cache::Cache;
 use apiplant_db::Db;
 use apiplant_email::Mailer;
 
+/// A function implemented in the framework itself rather than loaded from a
+/// library: an ordinary Rust `fn` over the same [`HostBridge`] a dynamic
+/// function sees. See [`crate::builtins`].
+pub type BuiltinHandler = fn(&HostBridge, &str) -> Result<String, String>;
+
+/// Where a registered function's code lives. Nothing outside this module cares
+/// which it is: both arrive through [`LoadedFunction::invoke`].
+enum Body {
+    /// Loaded from a shared library in `functions/`.
+    Dynamic(BoxedFunction),
+    /// Compiled into the server (see [`crate::builtins`]).
+    Builtin(BuiltinHandler),
+}
+
 /// One loaded function plus its resolved config.
 pub struct LoadedFunction {
     pub manifest: FunctionManifest,
     /// Config JSON merged from `functions/<name>.toml` (or `{}` if absent).
+    /// For a built-in, whatever the framework handed it at registration.
     pub config_json: String,
-    func: BoxedFunction,
+    body: Body,
 }
 
 impl LoadedFunction {
@@ -34,17 +49,36 @@ impl LoadedFunction {
         LoadedFunction {
             manifest: func.manifest(),
             config_json,
-            func,
+            body: Body::Dynamic(func),
+        }
+    }
+
+    /// Wrap a built-in: a handler the framework provides, with a manifest it
+    /// declares rather than one read across the ABI.
+    pub fn builtin(
+        manifest: FunctionManifest,
+        handler: BuiltinHandler,
+        config_json: String,
+    ) -> Self {
+        LoadedFunction {
+            manifest,
+            config_json,
+            body: Body::Builtin(handler),
         }
     }
 
     /// Invoke the function. Must be called from a blocking context (see
     /// [`FunctionRegistry`] docs) because the host bridge blocks on the DB.
     pub fn invoke(&self, bridge: HostBridge, input: &str) -> Result<String, String> {
-        let host = HostApi_TO::from_value(bridge, TD_Opaque);
-        match self.func.invoke(host, RStr::from_str(input)) {
-            RResult::ROk(s) => Ok(s.into_string()),
-            RResult::RErr(e) => Err(e.into_string()),
+        match &self.body {
+            Body::Builtin(handler) => handler(&bridge, input),
+            Body::Dynamic(func) => {
+                let host = HostApi_TO::from_value(bridge, TD_Opaque);
+                match func.invoke(host, RStr::from_str(input)) {
+                    RResult::ROk(s) => Ok(s.into_string()),
+                    RResult::RErr(e) => Err(e.into_string()),
+                }
+            }
         }
     }
 }
@@ -56,6 +90,38 @@ pub struct FunctionRegistry {
 }
 
 impl FunctionRegistry {
+    /// The registry an app runs with: the framework's [built-ins](crate::builtins)
+    /// first, then everything in the app's `functions/` directory.
+    ///
+    /// Built-ins live in the reserved [`apiplant_`](crate::builtins::PREFIX)
+    /// namespace, so an app function can't shadow one by accident. Naming one
+    /// into that namespace on purpose still replaces the built-in — the escape
+    /// hatch for an app that wants the hook but not our version of it — and says
+    /// so in the log.
+    pub fn load(app: &apiplant_core::App) -> Self {
+        let mut registry = FunctionRegistry::default();
+        crate::builtins::register_all(&mut registry, app);
+        for (name, f) in Self::load_dir(&app.functions_dir).functions {
+            if registry.functions.contains_key(&name) {
+                tracing::warn!(function = %name, "app function replaces the built-in of the same name");
+            }
+            registry.functions.insert(name, f);
+        }
+        registry
+    }
+
+    /// Add a built-in under its manifest name. See [`crate::builtins`].
+    pub fn register_builtin(
+        &mut self,
+        manifest: FunctionManifest,
+        handler: BuiltinHandler,
+        config_json: String,
+    ) {
+        let loaded = LoadedFunction::builtin(manifest, handler, config_json);
+        self.functions
+            .insert(loaded.manifest.name.to_string(), loaded);
+    }
+
     /// Scan a directory for function libraries and load them all. Missing dir =
     /// empty registry. A single bad library is logged and skipped, never fatal.
     pub fn load_dir(dir: &Path) -> Self {
@@ -144,7 +210,7 @@ impl FunctionRegistry {
             loaded.push(LoadedFunction {
                 manifest,
                 config_json,
-                func,
+                body: Body::Dynamic(func),
             });
         }
         Ok(loaded)

@@ -144,10 +144,246 @@ async fn updates_cannot_move_a_row_between_organisations_or_write_a_password() {
     db.cleanup().await;
 }
 
+/// `user` reads as `member`: people who share an organisation can see each
+/// other, which is what makes a membership list expandable into names and
+/// emails. Someone with no organisation in common stays invisible.
+#[ntex::test]
+async fn org_members_can_read_each_other_but_strangers_cannot() {
+    let db = TempDatabase::create("user-comembers").await;
+    let root = temp_dir("user-comembers");
+    write_files(
+        &root,
+        &[(
+            "main.toml",
+            &format!(
+                "[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n",
+                db.url
+            ),
+        )],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let register = |email: &str| {
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({"email": email, "password": "pw"}),
+        )
+    };
+    let admin = read_json(test::call_service(&app, register("admin@example.com")).await).await;
+    let admin_token = admin["token"].as_str().unwrap().to_string();
+    let colleague =
+        read_json(test::call_service(&app, register("colleague@example.com")).await).await;
+    let colleague_token = colleague["token"].as_str().unwrap().to_string();
+    let colleague_id = colleague["user"]["id"].as_str().unwrap().to_string();
+    let stranger =
+        read_json(test::call_service(&app, register("stranger@example.com")).await).await;
+    let stranger_token = stranger["token"].as_str().unwrap().to_string();
+
+    let org = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::post()
+                    .uri("/api/organization")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({"name":"Acme"}).to_string()),
+                &admin_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    let org_id = org["id"].as_str().unwrap().to_string();
+
+    let added = test::call_service(
+        &app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/membership")
+                .header("x-organization", org_id.clone())
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"user_id": colleague_id, "role": "member"}).to_string()),
+            &admin_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(added.status().as_u16(), 201);
+
+    // The team page: memberships with the user inlined, not just an id.
+    let members = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::get()
+                    .uri("/api/membership?expand=user")
+                    .header("x-organization", org_id.clone()),
+                &admin_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    let colleague_row = members
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["user_id"] == colleague_id)
+        .expect("the colleague's membership");
+    assert_eq!(colleague_row["user"]["email"], "colleague@example.com");
+
+    // Directly, too — and in both directions.
+    let read_as = |token: &str, id: &str| {
+        bearer(
+            test::TestRequest::get().uri(&format!("/api/user/{id}")),
+            token,
+        )
+        .to_request()
+    };
+    let seen = test::call_service(&app, read_as(&colleague_token, &colleague_id)).await;
+    assert_eq!(seen.status().as_u16(), 200);
+    let seen = test::call_service(&app, read_as(&admin_token, &colleague_id)).await;
+    assert_eq!(seen.status().as_u16(), 200);
+
+    // A user with no organisation in common sees neither the row nor the list.
+    let refused = test::call_service(&app, read_as(&stranger_token, &colleague_id)).await;
+    assert_eq!(refused.status().as_u16(), 404);
+    let listed = read_json(
+        test::call_service(
+            &app,
+            bearer(test::TestRequest::get().uri("/api/user"), &stranger_token).to_request(),
+        )
+        .await,
+    )
+    .await;
+    let listed = listed.as_array().unwrap();
+    assert_eq!(listed.len(), 1, "only themselves");
+    assert_eq!(listed[0]["email"], "stranger@example.com");
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+/// Adding a teammate by email goes through the `apiplant_organization_join`
+/// built-in, because the admin doing it cannot look that email up themselves.
+#[ntex::test]
+async fn a_member_is_added_by_email_through_the_builtin_hook() {
+    let db = TempDatabase::create("join-hook").await;
+    let root = temp_dir("join-hook");
+    write_files(
+        &root,
+        &[(
+            "main.toml",
+            &format!(
+                "[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n",
+                db.url
+            ),
+        )],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let register = |email: &str| {
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({"email": email, "password": "pw"}),
+        )
+    };
+    let admin = read_json(test::call_service(&app, register("boss@example.com")).await).await;
+    let admin_token = admin["token"].as_str().unwrap().to_string();
+    let newcomer =
+        read_json(test::call_service(&app, register("New.Hire@example.com")).await).await;
+    let newcomer_id = newcomer["user"]["id"].as_str().unwrap().to_string();
+
+    let org = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::post()
+                    .uri("/api/organization")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({"name":"Acme"}).to_string()),
+                &admin_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    let org_id = org["id"].as_str().unwrap().to_string();
+
+    let add = |body: serde_json::Value| {
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/membership")
+                .header("x-organization", org_id.clone())
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(body.to_string()),
+            &admin_token,
+        )
+        .to_request()
+    };
+
+    // The email is resolved server-side — and case-insensitively, since it is
+    // typed by a human, not copied from a listing.
+    let created = test::call_service(
+        &app,
+        add(json!({"email":"new.hire@example.com","role":"member"})),
+    )
+    .await;
+    assert_eq!(created.status().as_u16(), 201);
+    let created = read_json(created).await;
+    assert_eq!(created["user_id"], newcomer_id);
+    assert_eq!(created["role"], "member");
+    // `email` was an instruction to the hook, not a column.
+    assert!(created.get("email").is_none());
+
+    // Adding them twice is refused rather than duplicated.
+    let again = test::call_service(&app, add(json!({"email":"new.hire@example.com"}))).await;
+    assert_eq!(again.status().as_u16(), 409);
+
+    // An address nobody registered with, and a body naming nobody at all.
+    let unknown = test::call_service(&app, add(json!({"email":"ghost@example.com"}))).await;
+    assert_eq!(unknown.status().as_u16(), 404);
+    let empty = test::call_service(&app, add(json!({"role":"member"}))).await;
+    assert_eq!(empty.status().as_u16(), 422);
+
+    // `user_id` still works: the hook resolves an identity, it does not replace
+    // the field.
+    let by_id = test::call_service(
+        &app,
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/membership")
+                .header("x-organization", org_id.clone())
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({"user_id": newcomer_id, "role":"member"}).to_string()),
+            &admin_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(
+        by_id.status().as_u16(),
+        409,
+        "already a member, by either name"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
 /// `?expand=` is a read of the *target* resource and is authorized as one.
 ///
-/// `user` reads as `owner`, so expanding the author of someone else's post must
-/// not hand back the row `GET /user/{id}` would refuse — email included.
+/// With `user` narrowed to `read = "owner"`, expanding the author of someone
+/// else's post must not hand back the row `GET /user/{id}` would refuse.
 #[ntex::test]
 async fn expanding_a_relation_respects_the_target_permissions() {
     let db = TempDatabase::create("expand-auth").await;
@@ -180,6 +416,37 @@ required = true
 [fields.owner_id]
 type = "reference"
 references = "user"
+"#,
+            ),
+            // `user` ships with `read = "member"`, which co-members pass. Narrow
+            // it to `owner` so the expansion below has a policy to be refused by.
+            (
+                "models/user.toml",
+                r#"
+[resource]
+name = "user"
+scope = "global"
+timestamps = true
+
+[permissions]
+list   = "authenticated"
+read   = "owner"
+create = "public"
+update = "owner"
+delete = "private"
+
+[auth]
+identity_field = "email"
+password_field = "password_hash"
+
+[fields.email]
+type = "string"
+required = true
+unique = true
+
+[fields.password_hash]
+type = "string"
+hidden = true
 "#,
             ),
         ],

@@ -107,12 +107,25 @@ curl -XPOST $API/post -H "authorization: Bearer $TOKEN" -d '{"title":"hello"}'
 # organization_id + owner_id stamped for you
 ```
 
-**Inviting members** — an org admin creates memberships:
+**Inviting members** — an org admin creates memberships, naming the person
+either by id or by the address they registered with:
 
 ```bash
 curl -XPOST $API/membership -H "authorization: Bearer $ADMIN_TOKEN" \
-     -d '{"user_id":"<uuid>","role":"member"}'   # organization_id stamped automatically
+     -d '{"email":"new.hire@example.com","role":"member"}'   # organization_id stamped automatically
+
+curl -XPOST $API/membership -H "authorization: Bearer $ADMIN_TOKEN" \
+     -d '{"user_id":"<uuid>","role":"member"}'
 ```
+
+The email form matters because it is the only one that works for someone you
+have never worked with: `user` reads as `member`, so an admin can look up their
+colleagues but not a stranger — and a stranger is exactly who they are adding.
+The lookup therefore happens on the server, in the built-in
+`apiplant_organization_join` hook on `membership` (see
+[Lifecycle hooks](hooks.md#built-in-functions)). It answers `404` when nobody is
+registered with that address and `409` when they are already a member, and
+`email` never reaches the table — it is an instruction to the hook, not a column.
 
 **Switching org** — send `X-Organization: <org-id>` (must be one you belong to).
 

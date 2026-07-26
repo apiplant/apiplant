@@ -173,6 +173,54 @@ impl AppState {
             .unwrap_or_default()
     }
 
+    /// Every user who shares at least one organisation with `principal`
+    /// (including the caller themselves).
+    ///
+    /// This is what `member` means on the global `user` resource: colleagues are
+    /// visible to each other, strangers are not. Resolved per request from the
+    /// membership table, like the memberships themselves, so a user removed from
+    /// an organisation stops being visible immediately.
+    pub async fn co_member_user_ids(&self, principal: &Principal) -> Vec<Uuid> {
+        let orgs = principal.org_ids();
+        let mut ids = vec![principal.user_id];
+        if orgs.is_empty() {
+            return ids;
+        }
+        let Some(membership_tbl) = self.table("membership") else {
+            return ids;
+        };
+        let placeholders = (1..=orgs.len())
+            .map(|i| format!("${i}::uuid"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT DISTINCT user_id::text AS uid FROM {membership_tbl} \
+             WHERE organization_id IN ({placeholders})"
+        );
+        let params: Vec<serde_json::Value> = orgs
+            .iter()
+            .map(|id| serde_json::Value::String(id.to_string()))
+            .collect();
+        let rows = match self.db.raw_json(&sql, &params).await {
+            Ok(v) => v,
+            Err(_) => return ids,
+        };
+        if let Some(arr) = rows.as_array() {
+            for row in arr {
+                if let Some(id) = row
+                    .get("uid")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+        }
+        ids
+    }
+
     /// Resolve the caller's active organisation for this request:
     ///
     /// 1. the `X-Organization` header if it names an org the caller belongs to,

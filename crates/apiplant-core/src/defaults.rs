@@ -50,6 +50,12 @@ create = "role:admin"      # admins add members
 update = "role:admin"
 delete = "role:admin"
 
+# Built-in function: lets `create` name the person by `email` instead of by
+# `user_id`, and refuses a duplicate membership. The lookup has to happen here
+# because `user` is only readable by people you already share an org with.
+[hooks]
+before_create = "apiplant_organization_join"
+
 [fields.user_id]
 type = "reference"
 references = "user"
@@ -73,8 +79,8 @@ scope = "global"
 timestamps = true
 
 [permissions]
-list   = "authenticated"
-read   = "owner"
+list   = "member"          # people you share an organisation with
+read   = "member"
 create = "public"          # registration
 update = "owner"
 delete = "private"
