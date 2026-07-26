@@ -197,4 +197,6 @@ export type Route =
   | { kind: "account" }
   | { kind: "team" }
   | { kind: "organization" }
-  | { kind: "keys" };
+  | { kind: "keys" }
+  /** The `apiplant cli` handoff — see `pages/cli.tsx`. */
+  | { kind: "cli" };

@@ -5,6 +5,7 @@
 //! apiplant build [APP_DIR]     # compile functions/* into loadable libraries
 //! apiplant check [APP_DIR]     # load & validate the app, then exit
 //! apiplant admin [APP_DIR]     # bake a static admin panel to host elsewhere
+//! apiplant cli [APP_DIR]       # interactive console for the running app
 //! apiplant studio              # serve the visual editor from this binary
 //! ```
 //!
@@ -15,6 +16,7 @@
 //! `https/` directory with a certificate and key. Every piece is optional; an
 //! empty directory is a valid (if bare) app.
 
+mod cli;
 mod compile;
 mod studio;
 
@@ -27,6 +29,7 @@ usage:
   apiplant build [APP_DIR]     compile functions/* into loadable libraries
   apiplant check [APP_DIR]     load and validate the app, then exit
   apiplant admin [APP_DIR]     bake a static admin panel to host elsewhere
+  apiplant cli [APP_DIR]       interactive console for the app's running server
   apiplant studio              serve the visual editor on http://127.0.0.1:5273
 
 options:
@@ -34,6 +37,8 @@ options:
   --release         (build) compile with optimisations
   --force           (build) rebuild even when the library is up to date
   --api <URL>       (admin) API domain or full base URL the panel talks to
+                    (cli) the running server to connect to, instead of the
+                    address in main.toml
   --out <DIR>       (admin) where to write it (default: APP_DIR/admin)
   --host <ADDR>     (studio) interface to bind (default 127.0.0.1)
   --port <PORT>     (studio) port to listen on (default 5273)
@@ -55,6 +60,7 @@ enum Command {
     Build { release: bool, force: bool },
     Check,
     Admin { api: String, out: Option<String> },
+    Cli { api: Option<String> },
     Studio { host: String, port: u16 },
 }
 
@@ -123,13 +129,14 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--port" => expecting = Some("--port"),
             // Kept for compatibility with the original flag-style invocation.
             "--check" => command = Some("check"),
-            "run" | "build" | "check" | "admin" | "studio"
+            "run" | "build" | "check" | "admin" | "cli" | "studio"
                 if command.is_none() && dir.is_none() =>
             {
                 command = Some(match arg.as_str() {
                     "run" => "run",
                     "build" => "build",
                     "admin" => "admin",
+                    "cli" => "cli",
                     "studio" => "studio",
                     _ => "check",
                 });
@@ -190,6 +197,15 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
                 api: api.ok_or_else(|| "`admin` requires `--api <URL>`".to_string())?,
                 out,
             }
+        }
+        "cli" => {
+            if build_first || release || force || out.is_some() {
+                return Err("`cli` only takes `--api`".into());
+            }
+            if host.is_some() || port.is_some() {
+                return Err("`--host` and `--port` only apply to `studio`".into());
+            }
+            Command::Cli { api }
         }
         "studio" => {
             if build_first || release || force || api.is_some() || out.is_some() {
@@ -300,6 +316,22 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
+        Command::Cli { api } => {
+            // The console owns the terminal and talks HTTP on its own schedule;
+            // giving it a runtime of its own keeps it clear of the one ntex
+            // builds for serving, which is single-threaded and shaped for a
+            // different job entirely.
+            let dir = dir.to_path_buf();
+            std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(cli::run(&dir, api))
+            })
+            .join()
+            .map_err(|_| anyhow::anyhow!("the console stopped unexpectedly"))?
+        }
+
         Command::Studio { host, port } => studio::serve(&host, port).await,
 
         Command::Run { build_first } => {
@@ -406,6 +438,31 @@ mod tests {
             }
             other => panic!("expected admin command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_console_takes_a_directory_and_an_optional_api() {
+        // The address normally comes from the directory's main.toml, so `--api`
+        // is the exception rather than the requirement it is for `admin`.
+        match args(&["cli", "./app"]).command {
+            Command::Cli { api } => assert!(api.is_none()),
+            other => panic!("expected cli command, got {other:?}"),
+        }
+        assert_eq!(args(&["cli", "./app"]).dir, "./app");
+
+        match args(&["cli", "--api", "https://api.example.com"]).command {
+            Command::Cli { api } => assert_eq!(api.as_deref(), Some("https://api.example.com")),
+            other => panic!("expected cli command, got {other:?}"),
+        }
+
+        let err = parse(
+            ["cli", "--out", "panel"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )
+        .unwrap_err();
+        assert!(err.contains("only takes `--api`"), "{err}");
     }
 
     #[test]

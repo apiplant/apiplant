@@ -70,10 +70,40 @@ back; a directory left in the app is just files.
 | Organization | The workspace's details, and switching between workspaces. |
 | Your account | Their own profile. |
 | API keys | Issuing and revoking keys. |
+| Create your organization | The first thing after signing in, when the account belongs to none. |
+| Connect a terminal | Handing a key to [`apiplant cli`](cli.md) — reached only from the link that command opens. |
 
 Everything is derived from your app. There is no dashboard code to write, and
 the shipped JavaScript is byte-identical for every application — only
 `apiplant-admin.json` differs.
+
+### The first organization
+
+Almost every resource is scoped to an organisation, so someone who belongs to
+none sees empty tables and gets an error from every write — which reads as a
+broken dashboard rather than as an account that is not finished. So a full-page
+step stands in front of the interface until it is resolved.
+
+What it offers is the app's decision, not the dashboard's. When `organization`
+lets an authenticated caller `create` — the built-in default — it is a form
+built from that resource's fields, and [the server makes the creator its
+admin](multitenancy.md). When the app has narrowed that policy because it
+provisions tenants itself, there is nothing useful to offer: the page says an
+administrator has to add them, and offers to re-check. A `role:` policy counts
+as narrowed, since nobody with no organisation can satisfy one.
+
+The console handoff is the one route this step does not block — issuing an API
+key needs no organisation, and blocking it would strand `apiplant cli` behind a
+step it cannot complete.
+
+### Connecting the console
+
+`apiplant cli` opens `#/cli?callback=…` here, pointing at a one-request listener
+on the operator's own machine. The screen names what is asking, and on a press
+mints a key and posts it back, so no secret is copied between two windows. The
+callback is refused unless it is plain HTTP on a loopback host — the address
+arrives in a link, and a link is something anyone can send — and nothing is
+minted without that press. See [the console](cli.md).
 
 ## Two kinds of "who can"
 

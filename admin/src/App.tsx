@@ -23,6 +23,8 @@ import { DashboardPage } from "./pages/dashboard";
 import { AuthPage } from "./pages/auth";
 import { RecordPage, ResourceListPage } from "./pages/resource";
 import { ActionPage } from "./pages/action";
+import { CliPage } from "./pages/cli";
+import { OnboardingPage } from "./pages/onboarding";
 import { AccountPage, ApiKeysPage, OrganizationPage, TeamPage } from "./pages/settings";
 import {
   currentOrganization,
@@ -33,6 +35,7 @@ import {
   manifest,
   navigate,
   navigationGroups,
+  needsOrganization,
   organizationLabel,
   refreshSession,
   reportError,
@@ -105,6 +108,15 @@ export function App() {
         </Match>
         <Match when={!isSignedIn()}>
           <AuthPage />
+        </Match>
+        {/*
+          Somewhere to work comes before everything else — except the console
+          handoff, which only issues an API key and needs no organization at
+          all. Blocking that would strand `apiplant cli` behind a step it has no
+          way to complete.
+        */}
+        <Match when={needsOrganization() && route().kind !== "cli"}>
+          <OnboardingPage />
         </Match>
         <Match when={true}>
           <Shell />
@@ -405,6 +417,9 @@ function CurrentPage() {
       </Match>
       <Match when={route().kind === "keys"}>
         <ApiKeysPage />
+      </Match>
+      <Match when={route().kind === "cli"}>
+        <CliPage />
       </Match>
       <Match
         when={

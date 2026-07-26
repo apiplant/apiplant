@@ -15,11 +15,11 @@ import {
   api,
   asRecord,
   manifest,
-  navigate,
   notify,
   persistSession,
   refreshSession,
   session,
+  syncRouteFromHash,
 } from "../store";
 import type { FieldManifest, ResourceManifest } from "../types";
 
@@ -106,7 +106,10 @@ export function AuthPage() {
       persistSession();
       setPassword("");
       await refreshSession();
-      navigate({ kind: "dashboard" });
+      // Adopt the address bar rather than jumping to the dashboard: someone who
+      // followed a link here — a console handoff, a shared record — was going
+      // somewhere, and signing in is not a reason to lose it.
+      syncRouteFromHash();
       notify("success", mode() === "signin" ? "Welcome back." : "Your account is ready.");
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));

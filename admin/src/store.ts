@@ -85,13 +85,21 @@ function routeToHash(next: Route): string {
       return `#/r/${encodeURIComponent(next.name)}/${encodeURIComponent(next.id)}`;
     case "action":
       return `#/a/${encodeURIComponent(next.name)}`;
+    case "cli":
+      // The console handoff carries its callback in the hash's query, and this
+      // is the one route whose address is not reconstructible from its kind —
+      // so keep whatever is already there.
+      return window.location.hash || "#/cli";
     default:
       return `#/${next.kind}`;
   }
 }
 
 export function parseHash(hash: string): Route {
-  const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  // Only the console handoff uses a query string, and it belongs to the page,
+  // not to the path.
+  const [path] = hash.split("?");
+  const parts = path.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "r" && parts[1]) {
     if (parts[2] === "new") return { kind: "new", name: parts[1] };
     if (parts[2]) return { kind: "record", name: parts[1], id: parts[2] };
@@ -102,6 +110,7 @@ export function parseHash(hash: string): Route {
   if (parts[0] === "team") return { kind: "team" };
   if (parts[0] === "organization") return { kind: "organization" };
   if (parts[0] === "keys") return { kind: "keys" };
+  if (parts[0] === "cli") return { kind: "cli" };
   return { kind: "dashboard" };
 }
 
@@ -377,6 +386,31 @@ export function isFunctionVisible(fn: FunctionManifest): boolean {
     default:
       return fn.role ? session.role === fn.role : false;
   }
+}
+
+/**
+ * Whether the person signed in has nowhere to work yet.
+ *
+ * Almost everything in an app is scoped to an organisation, so a session with
+ * none is a session where most screens are empty and every write fails. That is
+ * a state to resolve on the way in, not one to let someone wander around in.
+ */
+export function needsOrganization(): boolean {
+  return isSignedIn() && !session.loading && session.organizations.length === 0;
+}
+
+/**
+ * Whether this app lets a member start an organisation of their own.
+ *
+ * The built-in `organization` resource says `create = "authenticated"`, so they
+ * can — but an app that provisions tenants itself will have narrowed that, and
+ * then the only way in is for someone who is already an admin to add them. A
+ * `role:` policy can never be satisfied by someone with no organisation, so it
+ * counts as "no" here.
+ */
+export function mayCreateOrganization(): boolean {
+  const policy = resourceByName("organization")?.permissions.create;
+  return policy?.value === "public" || policy?.value === "authenticated";
 }
 
 export function resourceByName(name: string | null | undefined): ResourceManifest | null {

@@ -22,6 +22,7 @@ with lifecycle hooks, one idea at a time.
 | [Sending email](email.md) | one `[email]` provider — SMTP, SES, SendGrid, Brevo, Mailjet… |
 | [Caching](caching.md) | the optional `[cache]` Redis a function can reach |
 | [Admin dashboard](admin.md) | the built-in operator UI, `[admin]` config, action forms |
+| [The console](cli.md) | `apiplant cli` — the dashboard's job in a terminal |
 | [Security model](security.md) | what the server enforces, and what you must configure before exposing it |
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](openapi.md) | the generated spec and interactive docs |

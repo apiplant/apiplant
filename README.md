@@ -433,12 +433,14 @@ apiplant run [APP_DIR]       serve the app (APP_DIR defaults to `.`)
 apiplant build [APP_DIR]     compile functions/* into loadable libraries
 apiplant check [APP_DIR]     load and validate the app, then exit
 apiplant admin [APP_DIR]     bake a static admin panel to host elsewhere
+apiplant cli [APP_DIR]       interactive console for the app's running server
 apiplant studio              serve the visual editor from this binary
 ```
 
 `run` takes `--build` to compile out-of-date sources first; `build` takes
 `--release` and `--force`; `admin` takes `--api <domain-or-base-url>` and
-optionally `--out <dir>`; `studio` takes `--host` and `--port`.
+optionally `--out <dir>`; `cli` takes `--api` to reach a server other than the
+one `main.toml` describes; `studio` takes `--host` and `--port`.
 
 The command is always spelled out — `apiplant ./my-app` is an error that tells
 you to write `apiplant run ./my-app` — and an app directory that doesn't exist
@@ -456,6 +458,34 @@ The interface is embedded in the `apiplant` binary and its manifest — resource
 permissions, auth model, callable functions — is derived from the app on boot,
 so it talks to its own origin and never goes stale after a model change. Turn it
 off with `[admin] enabled = false`, or move it with `[admin] path`.
+
+### The console
+
+```bash
+apiplant cli ./my-app
+```
+
+The dashboard's job, in a terminal. It reads the app directory only to work out
+where that app is served, then asks the *server* what it holds — the same
+manifest the dashboard loads — so it never describes an app different from the
+one running.
+
+Signing in offers three doors: open the dashboard in a browser and have it hand
+a key straight back to the console, sign in with an email and password (the
+console mints and saves a key for you), or paste a key you already have. The key
+is saved per server in `~/.config/apiplant/cli.json`, so the next run starts
+connected.
+
+If your account belongs to no organisation yet, the first thing after signing in
+is a modal to create one — or, when the app provisions tenants itself, a note
+saying which administrator to ask. The dashboard does the same as a full page.
+
+Inside, a sidebar lists every resource and callable function you are allowed to
+reach. Lists page and search, records open into forms, references are pickers
+rather than UUIDs to type, and functions get a form generated from their input
+schema. Press `?` for the keys.
+
+See [the console guide](docs/cli.md).
 
 ### A public directory
 
