@@ -4,6 +4,12 @@
 //! falls back to a safe default. The only piece of configuration that is
 //! *inferred* rather than declared is TLS: if the app directory contains an
 //! `https/` folder with a cert + key, the server serves HTTPS.
+//!
+//! ## Environment variables
+//!
+//! Any string value here — like any string in any of the app's TOML files — may
+//! reference the environment: `url = "$DATABASE_URL"`,
+//! `port = "${PORT:-8080}"`. See [`crate::env`] for the syntax.
 
 use serde::Deserialize;
 use std::path::Path;
@@ -18,6 +24,8 @@ pub struct Config {
     pub docs: DocsConfig,
     pub admin: AdminConfig,
     pub public: PublicConfig,
+    pub email: EmailConfig,
+    pub cache: CacheConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -190,6 +198,147 @@ impl Default for PublicConfig {
     }
 }
 
+/// Outbound email: which provider sends it, and the credentials to do so.
+///
+/// Off by default (`provider = "none"`): an app that never sends mail carries
+/// no configuration and no client. Turning it on is one line plus a key, and
+/// every provider is reached through the same [`send_email`] call from a
+/// function — swapping SendGrid for SES is a config change, not a code change.
+///
+/// [`send_email`]: https://docs.rs/apiplant-function
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct EmailConfig {
+    /// `none` (default), `smtp`, `ses`, `sendgrid`, `brevo` (aka `sendinblue`),
+    /// `mailjet`, `mailgun`, `postmark` or `resend`.
+    pub provider: String,
+    /// Envelope sender, e.g. `no-reply@example.com`. Required once enabled; a
+    /// message may override it per-send.
+    pub from: String,
+    /// Display name shown beside `from`.
+    pub from_name: String,
+    /// Default `Reply-To`. Empty = none.
+    pub reply_to: String,
+    /// The provider's API key. For `ses` this is the AWS access key id; for
+    /// `mailjet` the public key; for `smtp` it is unused (see [`SmtpConfig`]).
+    pub api_key: String,
+    /// The second half of a two-part credential: the AWS secret access key for
+    /// `ses`, the private key for `mailjet`. Unused elsewhere.
+    pub api_secret: String,
+    /// AWS region for `ses`, e.g. `eu-west-1`.
+    pub region: String,
+    /// Sending domain for `mailgun`, e.g. `mg.example.com`.
+    pub domain: String,
+    /// How long one send may take before it is abandoned.
+    pub timeout_secs: u64,
+    /// Connection details for `provider = "smtp"`.
+    pub smtp: SmtpConfig,
+}
+
+impl Default for EmailConfig {
+    fn default() -> Self {
+        EmailConfig {
+            provider: "none".to_string(),
+            from: String::new(),
+            from_name: String::new(),
+            reply_to: String::new(),
+            api_key: String::new(),
+            api_secret: String::new(),
+            region: String::new(),
+            domain: String::new(),
+            timeout_secs: 15,
+            smtp: SmtpConfig::default(),
+        }
+    }
+}
+
+impl EmailConfig {
+    /// Whether a provider is configured at all. `none` and the empty string
+    /// both mean "this app doesn't send mail".
+    pub fn enabled(&self) -> bool {
+        !matches!(
+            self.provider.trim().to_ascii_lowercase().as_str(),
+            "" | "none"
+        )
+    }
+}
+
+/// SMTP transport settings, used only when `provider = "smtp"`.
+///
+/// Every provider here also speaks SMTP, so this is the escape hatch for one
+/// that has no first-class entry above — or for a company relay that has no API
+/// at all.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SmtpConfig {
+    pub host: String,
+    /// `0` (the default) picks the port that matches `encryption`: 465 for
+    /// `tls`, 587 for `starttls`, 25 for `none`.
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    /// `starttls` (default), `tls` (implicit TLS, usually port 465) or `none`.
+    pub encryption: String,
+}
+
+impl Default for SmtpConfig {
+    fn default() -> Self {
+        SmtpConfig {
+            host: String::new(),
+            port: 0,
+            username: String::new(),
+            password: String::new(),
+            encryption: "starttls".to_string(),
+        }
+    }
+}
+
+/// An optional Redis cache.
+///
+/// Nothing in the framework caches through it: resources, permissions and the
+/// admin manifest all behave exactly the same whether it is configured or not.
+/// It exists so a *function* has somewhere to put a rate-limit counter, a
+/// memoised third-party response or a short-lived token — see the `cache_*`
+/// helpers on a function's `Context`.
+///
+/// Off unless `url` is set, so an app that doesn't want one pays nothing.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CacheConfig {
+    /// Turn the configured cache off without deleting its settings.
+    pub enabled: bool,
+    /// Connection URL, e.g. `redis://127.0.0.1:6379` or `rediss://…/0`. Empty
+    /// (the default) means no cache.
+    pub url: String,
+    /// Prepended to every key a function uses, so several apps can share one
+    /// Redis without colliding.
+    pub prefix: String,
+    /// Expiry applied to a `set` that doesn't ask for one. `0` = keys persist.
+    pub default_ttl_secs: u64,
+    /// How long one cache operation may take before it is abandoned.
+    pub timeout_secs: u64,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        CacheConfig {
+            enabled: true,
+            url: String::new(),
+            prefix: String::new(),
+            default_ttl_secs: 0,
+            timeout_secs: 5,
+        }
+    }
+}
+
+impl CacheConfig {
+    /// Whether a cache should be connected: switched on *and* pointed at a
+    /// server.
+    pub fn is_active(&self) -> bool {
+        self.enabled && !self.url.trim().is_empty()
+    }
+}
+
 impl Config {
     /// Load `main.toml` from an app directory, applying defaults for anything
     /// absent. A missing file is not an error.
@@ -200,7 +349,10 @@ impl Config {
                 path: path.clone(),
                 source: e,
             })?;
-            toml::from_str::<Config>(&text).map_err(|e| crate::Error::Toml { path, source: e })?
+            // `$VAR` in any string value is read from the environment here,
+            // which is what keeps credentials out of a committed main.toml.
+            crate::env::parse_toml::<Config>(&text, "main.toml")
+                .map_err(|e| crate::Error::Toml { path, source: e })?
         } else {
             tracing::info!("no main.toml found, using defaults");
             Config::default()
@@ -273,7 +425,110 @@ mod tests {
         assert!(config.public.enabled);
         assert_eq!(config.public.dir, "public");
         assert_eq!(config.public.not_found, None);
+        // Email and cache are opt-in: an app that says nothing gets neither.
+        assert!(!config.email.enabled());
+        assert!(!config.cache.is_active());
 
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn email_and_cache_load_from_their_sections() {
+        let dir = temp_dir("email-cache");
+        fs::write(
+            dir.join("main.toml"),
+            r#"
+[email]
+provider = "sendgrid"
+from = "no-reply@example.com"
+from_name = "Example"
+api_key = "SG.literal"
+
+[cache]
+url = "redis://127.0.0.1:6379"
+prefix = "example:"
+default_ttl_secs = 300
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load(&dir).unwrap();
+
+        assert!(config.email.enabled());
+        assert_eq!(config.email.provider, "sendgrid");
+        assert_eq!(config.email.from, "no-reply@example.com");
+        assert_eq!(config.email.api_key, "SG.literal");
+        // Untouched defaults still apply inside a section that was given.
+        assert_eq!(config.email.timeout_secs, 15);
+        assert_eq!(config.email.smtp.encryption, "starttls");
+
+        assert!(config.cache.is_active());
+        assert_eq!(config.cache.prefix, "example:");
+        assert_eq!(config.cache.default_ttl_secs, 300);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `enabled = false` has to beat a perfectly good URL, or switching the
+    /// cache off would mean deleting the settings needed to switch it back on.
+    #[test]
+    fn a_disabled_cache_stays_off_even_with_a_url() {
+        let config = CacheConfig {
+            enabled: false,
+            url: "redis://127.0.0.1:6379".into(),
+            ..CacheConfig::default()
+        };
+        assert!(!config.is_active());
+    }
+
+    /// `Config::load` reads its file through the same expansion every other
+    /// app-directory TOML gets — including a URL assembled from several
+    /// variables, which is the case a whole-value substitution can't do.
+    #[test]
+    fn load_expands_environment_references_anywhere_in_the_file() {
+        std::env::set_var("APIPLANT_TEST_JWT", "from-env-jwt");
+        std::env::set_var("APIPLANT_TEST_MAIL", "from-env-key");
+        std::env::set_var("APIPLANT_TEST_DB_USER", "alice");
+        std::env::set_var("APIPLANT_TEST_DB_PASS", "s3cret");
+        let dir = temp_dir("env");
+        fs::write(
+            dir.join("main.toml"),
+            r#"
+[server]
+domain = "${APIPLANT_TEST_DOMAIN:-api.example.com}"
+
+[database]
+url = "postgres://$APIPLANT_TEST_DB_USER:$APIPLANT_TEST_DB_PASS@db:5432/app"
+
+[auth]
+jwt_secret = "$APIPLANT_TEST_JWT"
+
+[email]
+provider = "brevo"
+api_key = "${APIPLANT_TEST_MAIL}"
+from = "no-reply@example.com"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load(&dir).unwrap();
+        assert_eq!(
+            config.database.resolved_url(),
+            "postgres://alice:s3cret@db:5432/app"
+        );
+        assert_eq!(config.auth.jwt_secret, "from-env-jwt");
+        assert_eq!(config.email.api_key, "from-env-key");
+        // An unset variable falls back to the default written beside it.
+        assert_eq!(config.server.domain.as_deref(), Some("api.example.com"));
+
+        for name in [
+            "APIPLANT_TEST_JWT",
+            "APIPLANT_TEST_MAIL",
+            "APIPLANT_TEST_DB_USER",
+            "APIPLANT_TEST_DB_PASS",
+        ] {
+            std::env::remove_var(name);
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 

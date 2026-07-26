@@ -214,6 +214,10 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         db,
         auth: Authenticator::new(b"test-secret".to_vec(), 3600),
         functions: Arc::new(functions),
+        // The integration tests configure neither, so a function that reaches
+        // for one gets the same "not configured" error a real app would.
+        mailer: None,
+        cache: None,
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),
         openapi_json: Arc::new(serde_json::to_string(&spec).unwrap()),

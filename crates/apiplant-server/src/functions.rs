@@ -15,7 +15,9 @@ use abi_stable::std_types::{RResult, RStr, RString};
 use apiplant_abi::{
     BoxedFunction, FunctionManifest, FunctionMod_Ref, HostApi, HostApi_TO, LogLevel,
 };
+use apiplant_cache::Cache;
 use apiplant_db::Db;
+use apiplant_email::Mailer;
 
 /// One loaded function plus its resolved config.
 pub struct LoadedFunction {
@@ -127,9 +129,15 @@ impl FunctionRegistry {
             // Per-deployment config: functions/<name>.toml → JSON. Each function
             // in a library reads its own file.
             let config_path = path.with_file_name(format!("{name}.toml"));
+            // Expanded like every other app-directory TOML, so a function's
+            // config can hold `api_key = "$STRIPE_KEY"` rather than the key.
             let config_json = std::fs::read_to_string(&config_path)
                 .ok()
                 .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+                .map(|mut v| {
+                    apiplant_core::expand_document(&mut v, &format!("{name}.toml"));
+                    v
+                })
                 .and_then(|v| serde_json::to_string(&v).ok())
                 .unwrap_or_else(|| "{}".to_string());
 
@@ -187,9 +195,15 @@ impl FunctionRegistry {
 /// Constructed on the async side (capturing a runtime [`Handle`]) and moved into
 /// the blocking worker; its [`HostApi::query`] blocks on the async database via
 /// that handle, which is safe because functions run outside any async context.
+/// [`HostApi::send_email`] and [`HostApi::cache`] work the same way.
 pub struct HostBridge {
     db: Db,
     handle: tokio::runtime::Handle,
+    /// The app's configured mailer, when it has one. Built once at boot and
+    /// shared, so a function sending mail reuses pooled connections.
+    mailer: Option<Mailer>,
+    /// The app's configured cache, when it has one.
+    cache: Option<Cache>,
     config_json: String,
     principal_id: String,
     /// Lifecycle-hook context JSON, or empty for a plain HTTP invocation.
@@ -206,10 +220,23 @@ impl HostBridge {
         HostBridge {
             db,
             handle,
+            mailer: None,
+            cache: None,
             config_json,
             principal_id,
             hook_json: String::new(),
         }
+    }
+
+    /// Lend the function the app's email provider and cache.
+    ///
+    /// Both are optional and both stay `None` when the app configured neither,
+    /// which is what makes `send_email` and `cache` fail with "not configured"
+    /// rather than silently doing nothing.
+    pub fn with_services(mut self, mailer: Option<Mailer>, cache: Option<Cache>) -> Self {
+        self.mailer = mailer;
+        self.cache = cache;
+        self
     }
 
     /// Mark this invocation as a resource lifecycle hook and attach its context.
@@ -236,6 +263,42 @@ impl HostApi for HostBridge {
             .block_on(async { self.db.raw_json(&req.sql, &req.params).await });
         match result {
             Ok(v) => RResult::ROk(v.to_string().into()),
+            Err(e) => RResult::RErr(e.to_string().into()),
+        }
+    }
+
+    fn send_email(&self, request: RStr<'_>) -> RResult<RString, RString> {
+        let Some(mailer) = &self.mailer else {
+            return RResult::RErr(
+                "no email provider configured — set [email] provider in main.toml"
+                    .to_string()
+                    .into(),
+            );
+        };
+        let message: apiplant_email::Message = match serde_json::from_str(request.as_str()) {
+            Ok(m) => m,
+            Err(e) => return RResult::RErr(format!("invalid email: {e}").into()),
+        };
+        match self.handle.block_on(mailer.send(&message)) {
+            Ok(sent) => RResult::ROk(
+                serde_json::to_string(&sent)
+                    .unwrap_or_else(|_| "{}".to_string())
+                    .into(),
+            ),
+            Err(e) => RResult::RErr(e.to_string().into()),
+        }
+    }
+
+    fn cache(&self, request: RStr<'_>) -> RResult<RString, RString> {
+        let Some(cache) = &self.cache else {
+            return RResult::RErr(
+                "no cache configured — set [cache] url in main.toml"
+                    .to_string()
+                    .into(),
+            );
+        };
+        match self.handle.block_on(cache.execute(request.as_str())) {
+            Ok(value) => RResult::ROk(value.to_string().into()),
             Err(e) => RResult::RErr(e.to_string().into()),
         }
     }

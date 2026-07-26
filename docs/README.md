@@ -19,6 +19,8 @@ with lifecycle hooks, one idea at a time.
 | [Authentication](authentication.md) | users, organisations, API keys, sessions, extending `user` |
 | [Functions](functions.md) | writing & loading compiled plugins over the stable ABI |
 | [Lifecycle hooks](hooks.md) | running functions before/after every CRUD operation |
+| [Sending email](email.md) | one `[email]` provider — SMTP, SES, SendGrid, Brevo, Mailjet… |
+| [Caching](caching.md) | the optional `[cache]` Redis a function can reach |
 | [Admin dashboard](admin.md) | the built-in operator UI, `[admin]` config, action forms |
 | [Security model](security.md) | what the server enforces, and what you must configure before exposing it |
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
@@ -47,8 +49,15 @@ my-app/
 * **Hooks** attach those functions to a resource's lifecycle (`before_create`,
   `after_list`, …) so custom logic can validate, rewrite or observe every CRUD
   operation.
+* **Email** and a **cache** are optional services a function can reach: name a
+  provider in `[email]` and a Redis in `[cache]`, and `ctx.send_email(…)` /
+  `ctx.cache_get(…)` work. Neither is used by the framework itself.
 * An **admin dashboard** is generated from all of the above — a static,
   self-hosted operator UI, tuned per resource and per function with `[admin]`.
 * Migrations are automatic and additive: your schemas *are* the desired state.
+* Any string in any of these files can reference the environment —
+  `url = "$DATABASE_URL"`, `region = "${AWS_REGION:-eu-west-1}"` — so the files
+  you commit hold no credentials. See
+  [Configuration](configuration.md#environment-variables).
 
 Everything is optional. An empty directory is a valid (bare) app.

@@ -1,0 +1,74 @@
+# apiplant demo app configuration. Every key here is optional; delete the file
+# entirely and the framework still boots with safe defaults.
+
+[server]
+host = "127.0.0.1"
+port = 8099
+base_path = "/api"          # the API is mounted under /api
+
+[database]
+# Any string in any of an app's TOML files may reference the environment:
+# `$VAR`, `${VAR}`, or `${VAR:-default}` as here — so this line works
+# unchanged locally and against a managed database in production.
+url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:55432/apiplant_email}"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true   # the welcome mail hangs off /auth/register
+
+[docs]
+enabled = true
+path = "/docs"
+title = "15 · Email"
+
+# ---------------------------------------------------------------------------
+# The whole point of this example. Naming a provider here is all it takes for
+# `ctx.send_email(...)` to work inside a function — the code below never
+# mentions SMTP, SendGrid or SES.
+#
+# It ships pointed at a local catcher (MailHog, Mailpit, `python3 -m aiosmtpd`)
+# so the example runs without an account anywhere. Swap the three lines under
+# `provider` for one of the blocks further down to send for real.
+# ---------------------------------------------------------------------------
+[email]
+provider  = "smtp"
+from      = "no-reply@example.com"
+from_name = "Example"
+reply_to  = "help@example.com"
+
+[email.smtp]
+host       = "127.0.0.1"
+port       = 1025
+encryption = "none"         # a catcher on localhost; never do this over a network
+
+# SendGrid — one key, nothing else:
+#   [email]
+#   provider = "sendgrid"
+#   from     = "no-reply@example.com"
+#   api_key  = "${SENDGRID_API_KEY}"
+#
+# Brevo (formerly Sendinblue), Postmark and Resend look identical apart from
+# the provider name.
+#
+# Mailjet needs both halves of its credential:
+#   [email]
+#   provider   = "mailjet"
+#   from       = "no-reply@example.com"
+#   api_key    = "${MAILJET_API_KEY}"
+#   api_secret = "${MAILJET_SECRET_KEY}"
+#
+# Amazon SES needs a region as well:
+#   [email]
+#   provider   = "ses"
+#   from       = "no-reply@example.com"
+#   api_key    = "${AWS_ACCESS_KEY_ID}"
+#   api_secret = "${AWS_SECRET_ACCESS_KEY}"
+#   region     = "eu-west-1"
+#
+# Mailgun needs its sending domain:
+#   [email]
+#   provider = "mailgun"
+#   from     = "no-reply@example.com"
+#   api_key  = "${MAILGUN_API_KEY}"
+#   domain   = "mg.example.com"

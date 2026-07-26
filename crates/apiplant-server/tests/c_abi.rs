@@ -1,8 +1,8 @@
 //! End-to-end test of the [plain C ABI](apiplant_abi::c).
 //!
 //! Compiles a C fixture with the system compiler, loads it the way the server
-//! does, and drives it through every part of the contract: each status code, all
-//! five host callbacks, and the two-way ownership rules for strings. Unit tests
+//! does, and drives it through every part of the contract: each status code,
+//! every host callback, and the two-way ownership rules for strings. Unit tests
 //! can check manifest parsing, but only a real shared library exercises the
 //! marshalling and the allocator boundary.
 //!
@@ -22,8 +22,8 @@ use abi_stable::sabi_trait::TD_Opaque;
 use abi_stable::std_types::{RResult, RStr, RString};
 use apiplant_abi::{BoxedFunction, HostApi, HostApi_TO, LogLevel};
 
-/// Exercises the whole contract: config, query, log, principal_id, hook, every
-/// status code, and freeing what the host hands over.
+/// Exercises the whole contract: config, query, log, principal_id, hook,
+/// send_email, cache, every status code, and freeing what the host hands over.
 const FIXTURE: &str = r#"
 #include <apiplant.h>
 #include <stdlib.h>
@@ -41,7 +41,8 @@ static const char *const MANIFEST =
     "[{\"name\":\"echo\",\"version\":\"2.1.0\",\"description\":\"Echoes.\","
     "  \"visibility\":\"public\",\"method\":\"POST\","
     "  \"input_schema\":{\"type\":\"object\"}},"
-    " {\"name\":\"gated\",\"visibility\":\"role:admin\",\"method\":\"GET\"}]";
+    " {\"name\":\"gated\",\"visibility\":\"role:admin\",\"method\":\"GET\"},"
+    " {\"name\":\"notify\",\"visibility\":\"public\",\"method\":\"POST\"}]";
 
 uint32_t apiplant_abi_version(void) { return APIPLANT_ABI_VERSION; }
 const char *apiplant_manifest(void) { return MANIFEST; }
@@ -89,6 +90,23 @@ int32_t apiplant_invoke(const char *name, const char *input,
         return APIPLANT_OK;
     }
 
+    /* The two services the host lends beyond the database. */
+    if (strcmp(name, "notify") == 0) {
+        char *receipt = host->send_email(host->ctx,
+            "{\"to\":\"ann@example.com\",\"subject\":\"Hi\",\"text\":\"Hello\"}");
+        char *cached = host->cache(host->ctx, "{\"op\":\"get\",\"key\":\"hits\"}");
+
+        size_t n = strlen(receipt) + strlen(cached) + 64;
+        char *body = malloc(n);
+        snprintf(body, n, "{\"sent\":%s,\"cached\":%s}", receipt, cached);
+
+        host->free_string(host->ctx, receipt);
+        host->free_string(host->ctx, cached);
+
+        *out = body;
+        return APIPLANT_OK;
+    }
+
     if (strcmp(name, "gated") == 0) {
         *out = dup_string("{\"ok\":true}");
         return APIPLANT_OK;
@@ -120,6 +138,8 @@ uint32_t apiplant_abi_version(void) { return 1u; }
 struct MockHost {
     logs: Mutex<Vec<(LogLevel, String)>>,
     queries: Mutex<Vec<String>>,
+    emails: Mutex<Vec<String>>,
+    cache_ops: Mutex<Vec<String>>,
     hook_json: String,
 }
 
@@ -128,6 +148,8 @@ impl MockHost {
         MockHost {
             logs: Mutex::new(Vec::new()),
             queries: Mutex::new(Vec::new()),
+            emails: Mutex::new(Vec::new()),
+            cache_ops: Mutex::new(Vec::new()),
             hook_json: String::new(),
         }
     }
@@ -144,6 +166,16 @@ impl HostApi for MockHost {
             .unwrap()
             .push((level, message.as_str().into()));
     }
+    fn send_email(&self, request: RStr<'_>) -> RResult<RString, RString> {
+        self.emails.lock().unwrap().push(request.as_str().into());
+        RResult::ROk(RString::from(
+            r#"{"provider":"smtp","id":"msg-1","recipients":1}"#,
+        ))
+    }
+    fn cache(&self, request: RStr<'_>) -> RResult<RString, RString> {
+        self.cache_ops.lock().unwrap().push(request.as_str().into());
+        RResult::ROk(RString::from(r#"{"hit":true,"value":42}"#))
+    }
     fn config(&self) -> RString {
         RString::from(r#"{"greeting":"Ciao"}"#)
     }
@@ -155,6 +187,34 @@ impl HostApi for MockHost {
     }
 }
 
+/// A [`MockHost`] the test still holds after the ABI has taken ownership —
+/// `invoke` consumes its host, and the recordings are the point.
+struct SharedHost(std::sync::Arc<MockHost>);
+
+impl HostApi for SharedHost {
+    fn query(&self, r: RStr<'_>) -> RResult<RString, RString> {
+        self.0.query(r)
+    }
+    fn log(&self, l: LogLevel, m: RStr<'_>) {
+        self.0.log(l, m)
+    }
+    fn send_email(&self, r: RStr<'_>) -> RResult<RString, RString> {
+        self.0.send_email(r)
+    }
+    fn cache(&self, r: RStr<'_>) -> RResult<RString, RString> {
+        self.0.cache(r)
+    }
+    fn config(&self) -> RString {
+        self.0.config()
+    }
+    fn principal_id(&self) -> RString {
+        self.0.principal_id()
+    }
+    fn hook(&self) -> RString {
+        self.0.hook()
+    }
+}
+
 /// A host that fails every query, to check the `{"error": …}` envelope.
 struct FailingHost;
 impl HostApi for FailingHost {
@@ -162,6 +222,12 @@ impl HostApi for FailingHost {
         RResult::RErr(RString::from("relation does not exist"))
     }
     fn log(&self, _l: LogLevel, _m: RStr<'_>) {}
+    fn send_email(&self, _r: RStr<'_>) -> RResult<RString, RString> {
+        RResult::RErr(RString::from("no email provider configured"))
+    }
+    fn cache(&self, _r: RStr<'_>) -> RResult<RString, RString> {
+        RResult::RErr(RString::from("no cache configured"))
+    }
     fn config(&self) -> RString {
         RString::from("{}")
     }
@@ -359,6 +425,58 @@ fn a_failed_query_reaches_c_as_an_error_envelope() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// The email and cache callbacks, driven from C. They were appended to
+/// `ApiplantHost` after the original five, so this is also the check that
+/// appending didn't disturb the offsets of the fields already there.
+#[test]
+fn a_c_function_can_send_email_and_use_the_cache() {
+    let dir = scratch("services");
+    let Some(library) = compile(&dir, FIXTURE) else {
+        eprintln!("skipping: no C compiler available");
+        return;
+    };
+    let notify = load_one(&library, "notify");
+
+    let host = std::sync::Arc::new(MockHost::new());
+    let body = invoke(&notify, SharedHost(host.clone()), "{}").expect("should succeed");
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+    assert_eq!(body["sent"]["provider"], "smtp");
+    assert_eq!(body["sent"]["id"], "msg-1");
+    assert_eq!(body["cached"]["value"], 42);
+
+    let emails = host.emails.lock().unwrap();
+    assert_eq!(emails.len(), 1);
+    let sent: serde_json::Value = serde_json::from_str(&emails[0]).unwrap();
+    assert_eq!(sent["to"], "ann@example.com");
+    assert_eq!(sent["subject"], "Hi");
+
+    let ops = host.cache_ops.lock().unwrap();
+    assert_eq!(ops.len(), 1);
+    assert!(ops[0].contains(r#""op":"get""#), "{}", ops[0]);
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A failing service must reach C as the in-band `{"error": …}` envelope, not
+/// as a null pointer the fixture would dereference.
+#[test]
+fn a_service_failure_reaches_c_as_an_error_object() {
+    let dir = scratch("services-fail");
+    let Some(library) = compile(&dir, FIXTURE) else {
+        eprintln!("skipping: no C compiler available");
+        return;
+    };
+    let notify = load_one(&library, "notify");
+
+    let body = invoke(&notify, FailingHost, "{}").expect("the call itself should succeed");
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["sent"]["error"], "no email provider configured");
+    assert_eq!(body["cached"]["error"], "no cache configured");
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn many_invocations_do_not_leak_or_corrupt_state() {
     let dir = scratch("repeat");
@@ -391,26 +509,7 @@ fn host_callbacks_are_reached_with_the_right_level_and_sql() {
 
     // Keep the mock so its recordings can be inspected after the call.
     let host = std::sync::Arc::new(MockHost::new());
-    struct Shared(std::sync::Arc<MockHost>);
-    impl HostApi for Shared {
-        fn query(&self, r: RStr<'_>) -> RResult<RString, RString> {
-            self.0.query(r)
-        }
-        fn log(&self, l: LogLevel, m: RStr<'_>) {
-            self.0.log(l, m)
-        }
-        fn config(&self) -> RString {
-            self.0.config()
-        }
-        fn principal_id(&self) -> RString {
-            self.0.principal_id()
-        }
-        fn hook(&self) -> RString {
-            self.0.hook()
-        }
-    }
-
-    invoke(&echo, Shared(host.clone()), r#"{"name":"Ann"}"#).unwrap();
+    invoke(&echo, SharedHost(host.clone()), r#"{"name":"Ann"}"#).unwrap();
 
     let logs = host.logs.lock().unwrap();
     assert_eq!(logs.len(), 1);

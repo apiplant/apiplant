@@ -42,6 +42,16 @@ path    = "/admin"           # where it mounts (outside base_path)
 enabled   = true             # serve `dir` at the site root when it exists
 dir       = "public"         # static site directory, relative to the app root
 not_found = "404.html"       # page for unmatched requests (default when present)
+
+[email]                      # optional: outbound mail, off unless configured
+provider = "sendgrid"        # none | smtp | ses | sendgrid | brevo | mailjet |
+                             # mailgun | postmark | resend
+from     = "no-reply@example.com"
+api_key  = "${SENDGRID_API_KEY}"
+
+[cache]                      # optional: Redis, off unless a url is given
+url    = "redis://127.0.0.1:6379"
+prefix = "my-app:"
 ```
 
 ## `[server]`
@@ -119,6 +129,107 @@ CRUD routes. A path with no file *and* no route — `/no/such/page` — gets the
 404 page. Two-segment paths belong to the API's `/{resource}/{id}` and keep
 answering in JSON.
 
+## `[email]`
+
+Outbound mail, for functions to send. Off by default (`provider = "none"`), and
+never used by the framework itself — nothing sends a message you didn't write.
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `provider` | `none` | `smtp`, `ses` (`aws`), `sendgrid`, `brevo` (`sendinblue`), `mailjet`, `mailgun`, `postmark` or `resend`. |
+| `from` | *(empty)* | Envelope sender. Required once a provider is named; a message may override it. |
+| `from_name` | *(empty)* | Display name beside `from`. |
+| `reply_to` | *(empty)* | Default `Reply-To`. |
+| `api_key` | *(empty)* | The provider's key — the AWS access key id for `ses`, the public key for `mailjet`, the server token for `postmark`. |
+| `api_secret` | *(empty)* | The second half of a two-part credential: `ses`, `mailjet`. |
+| `region` | *(empty)* | `ses` only, e.g. `eu-west-1`. |
+| `domain` | *(empty)* | `mailgun` only, e.g. `mg.example.com`. |
+| `timeout_secs` | `15` | How long one send may take. |
+
+`[email.smtp]`, for `provider = "smtp"`:
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `host` | *(empty)* | Required for `smtp`. |
+| `port` | `0` | `0` picks from `encryption`: 465 (`tls`), 587 (`starttls`), 25 (`none`). |
+| `username` / `password` | *(empty)* | Omit `username` for a relay that authenticates by IP. |
+| `encryption` | `starttls` | `starttls`, `tls` (implicit) or `none` (cleartext — warned about at boot). |
+
+A provider that can't work — unknown name, missing key, no `from` — fails the
+boot rather than the first send. See [Sending email](email.md).
+
+## `[cache]`
+
+An optional Redis, reachable only from functions. Off unless `url` is set, and
+nothing in the framework caches through it. See [Caching](caching.md).
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `true` | Off switch that keeps the rest of the section. |
+| `url` | *(empty)* | `redis://…`, `rediss://…`; may carry a password and a database index. Empty means no cache. |
+| `prefix` | *(empty)* | Prepended to every key, so apps can share one Redis. |
+| `default_ttl_secs` | `0` | Expiry for a write that doesn't ask for one. `0` = keys persist. |
+| `timeout_secs` | `5` | How long one operation may take. |
+
+A `url` that can't be reached fails the boot.
+
+## Environment variables
+
+**Any** string value in **any** of the app's TOML files — `main.toml`, every
+`models/*.toml`, every `functions/*.toml` — may reference the environment:
+
+```toml
+[database]
+url = "$DATABASE_URL"
+
+[auth]
+jwt_secret = "${JWT_SECRET}"
+
+[email]
+api_key = "$SENDGRID_API_KEY"
+```
+
+This is what lets a `main.toml` you commit hold no credentials: the file says
+*where* each secret comes from, and the deployment supplies it.
+
+| Written | Means |
+|---------|-------|
+| `$VAR`, `${VAR}` | the variable's value, or `""` (with a warning) when unset |
+| `${VAR:-default}` | the variable's value, or `default` when unset or empty |
+| `$$` | a literal `$` |
+| `$` followed by anything else | itself, unchanged |
+
+A name is a letter or `_` followed by letters, digits or `_`. Anything that
+isn't one is left exactly as written, so `$19.99`, `100 US$` and `a $ b` need no
+escaping; `$$` is only for a genuine ambiguity like `$$USD`.
+
+References can appear anywhere in a string, and a string can hold several:
+
+```toml
+[database]
+url = "postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:${DB_PORT:-5432}/$DB_NAME"
+
+[server]
+domain = "${APP_DOMAIN:-api.example.com}"
+```
+
+Defaults are what make one file work in development and in production: name the
+variable, give the local value as the default, and set it for real where it
+matters.
+
+Two deliberate limits:
+
+* **Values only, never keys.** A table or field named by the environment would
+  make a file's *shape* depend on the deployment; that isn't what this is for.
+* **Substitution happens after parsing**, into a string TOML has already
+  produced. A password containing `"` or a newline stays one string value — it
+  cannot become a syntax error, and it cannot inject extra TOML.
+
+An unset variable with no default expands to the empty string and logs a
+warning naming the variable and the file. Leaving `$DATABASE_URL` in place
+instead would hand the literal text to whatever consumes it, and fail much
+later and much less clearly.
+
 ## HTTPS
 
 TLS is **not** configured in `main.toml`. Instead, if the app directory contains
@@ -143,3 +254,6 @@ No `https/` directory ⇒ plain HTTP.
 * Absent section or key ⇒ that key's default (other keys still read).
 * `url` beats the individual `[database]` parts.
 * An empty `jwt_secret` is allowed but logs a warning.
+* `[email]` and `[cache]` are opt-in; a misconfigured one fails the boot rather
+  than failing quietly at the first use.
+* `$VAR` is expanded in every app TOML file, before any of the above is read.

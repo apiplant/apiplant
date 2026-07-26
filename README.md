@@ -38,6 +38,8 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Authentication](docs/authentication.md) | users, API keys, sessions, OAuth, extending `user` |
 | [Functions](docs/functions.md) | writing & loading compiled plugins over the stable ABI |
 | [Lifecycle hooks](docs/hooks.md) | running functions before/after every CRUD operation |
+| [Sending email](docs/email.md) | one `[email]` provider — SMTP, SES, SendGrid, Brevo, Mailjet… |
+| [Caching](docs/caching.md) | the optional `[cache]` Redis a function can reach |
 | [Admin dashboard](docs/admin.md) | the built-in operator UI, `[admin]` config, action forms |
 | [Security model](docs/security.md) | what the server enforces, and what you must configure before exposing it |
 | [API reference](docs/api-reference.md) | every endpoint, query parameter and status code |
@@ -333,6 +335,40 @@ fire there too — which is how
 [`examples/14-email-domains`](examples/14-email-domains) drops a new account
 straight into the organisation that owns its email domain.
 
+## Email and caching: two optional services
+
+A function can reach two things beyond the database, each switched on by a
+section of `main.toml` and each off by default:
+
+```toml
+[email]                                   # send mail through any of eight providers
+provider = "sendgrid"                     # smtp | ses | sendgrid | brevo | mailjet |
+from     = "no-reply@example.com"         # mailgun | postmark | resend
+api_key  = "$SENDGRID_API_KEY"            # $VAR is read from the environment
+
+[cache]                                   # an optional Redis
+url    = "redis://127.0.0.1:6379"
+prefix = "my-app:"
+```
+
+```rust
+ctx.send_email(Email::to(&user.email).subject("Welcome").text("Glad you're here."))?;
+
+let hits = ctx.cache_incr(&format!("quota:{}", ctx.principal_id()), 1, Some(60))?;
+```
+
+The function never names a provider, so swapping SendGrid for SES is a config
+change and not a rebuild. Misconfiguration fails the boot — naming the missing
+field — rather than the first password reset.
+
+Neither service is used by the framework itself: nothing sends a message you
+didn't write, and **nothing is cached for you**. A cache in front of generic
+CRUD would have to guess when a row goes stale; the work worth caching is the
+work a function does, because that is the code that knows how to invalidate it.
+See [Sending email](docs/email.md), [Caching](docs/caching.md),
+[`examples/15-email`](examples/15-email) and
+[`examples/16-caching`](examples/16-caching).
+
 ## Workspace layout
 
 | Crate                  | Responsibility                                                    |
@@ -342,6 +378,8 @@ straight into the organisation that owns its email domain.
 | `apiplant-core`        | config, errors, the resource-schema model, app-directory loader   |
 | `apiplant-db`          | dynamic DDL/DML over Postgres (sea-query + sea-orm), migrations    |
 | `apiplant-auth`        | passwords, JWT sessions, API keys, permission evaluation          |
+| `apiplant-email`       | outbound mail: SMTP, SES (SigV4), SendGrid, Brevo, Mailjet, Mailgun, Postmark, Resend |
+| `apiplant-cache`       | the optional Redis a function can reach                            |
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |
 | `apiplant-assets`      | the admin and studio builds, embedded in the binary                |
 | `apiplant`             | the executable                                                     |

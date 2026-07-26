@@ -216,6 +216,45 @@ pub trait HostApi: Send + Sync {
     /// Emit a structured log line through the host's `tracing` subscriber.
     fn log(&self, level: LogLevel, message: RStr<'_>);
 
+    /// Send an email through whichever provider the app configured.
+    ///
+    /// `request` is the message as a JSON object; the reply is a receipt:
+    ///
+    /// ```json
+    /// // request
+    /// { "to": "ann@example.com", "cc": [], "subject": "Hi", "text": "Hello",
+    ///   "html": "<p>Hello</p>", "from": null, "reply_to": null }
+    /// // reply
+    /// { "provider": "sendgrid", "id": "…", "recipients": 1 }
+    /// ```
+    ///
+    /// `to`/`cc`/`bcc` each accept a bare string, `"Ann <ann@example.com>"`, an
+    /// `{ "email": …, "name": … }` object, or a list of any of those. `from`
+    /// and `reply_to` default to the app's `[email]` configuration.
+    ///
+    /// Errors when the app configured no provider, when the message can't be
+    /// sent (no recipient, no sender), or when the provider refused it.
+    fn send_email(&self, request: RStr<'_>) -> RResult<RString, RString>;
+
+    /// Run one cache operation against the app's Redis, if it configured one.
+    ///
+    /// `request` names the operation; the reply's shape depends on it:
+    ///
+    /// ```json
+    /// { "op": "get",    "key": "k" }                        → { "hit": true, "value": … }
+    /// { "op": "set",    "key": "k", "value": …, "ttl": 60 } → { "ok": true }
+    /// { "op": "delete", "key": "k" }                        → { "deleted": true }
+    /// { "op": "exists", "key": "k" }                        → { "exists": true }
+    /// { "op": "incr",   "key": "k", "by": 1, "ttl": 60 }    → { "value": 3 }
+    /// { "op": "ttl",    "key": "k" }                        → { "ttl": 42 }
+    /// ```
+    ///
+    /// Errors when no cache is configured, when the request isn't one of the
+    /// operations above, or when Redis is unreachable. Cached data is by
+    /// definition reconstructible, so treating an error as a miss is a valid
+    /// and usually correct thing for a function to do.
+    fn cache(&self, request: RStr<'_>) -> RResult<RString, RString>;
+
     /// The function's resolved configuration as a JSON object (merged defaults +
     /// per-deployment overrides from the app's `functions/<name>.toml`).
     fn config(&self) -> RString;

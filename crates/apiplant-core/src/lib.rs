@@ -8,11 +8,13 @@
 pub mod app;
 pub mod config;
 pub mod defaults;
+pub mod env;
 pub mod error;
 pub mod schema;
 
 pub use app::{App, TlsPaths};
-pub use config::Config;
+pub use config::{CacheConfig, Config, EmailConfig, SmtpConfig};
+pub use env::{expand_document, parse_toml};
 pub use error::{Error, Result};
 pub use schema::{
     relation_name, Access, Field, FieldType, HookEvent, Hooks, OnDelete, Permissions, Reference,

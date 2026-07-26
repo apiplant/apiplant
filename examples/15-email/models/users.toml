@@ -1,0 +1,42 @@
+# The built-in `user`, unchanged except for the `[hooks]` section at the bottom.
+#
+# A model file replaces the built-in of the same name rather than merging into
+# it, so the email/password `[auth]` spec and its fields are repeated verbatim;
+# only the `[hooks]` section at the end is new.
+
+[resource]
+name = "user"
+scope = "global"           # users are shared across organisations
+timestamps = true
+
+[permissions]
+list   = "authenticated"
+read   = "owner"
+create = "public"          # registration
+update = "owner"
+delete = "private"
+
+[auth]
+identity_field  = "email"
+password_field  = "password_hash"
+oauth_providers = []
+
+[fields.email]
+type       = "string"
+required   = true
+unique     = true
+max_length = 320
+
+[fields.password_hash]
+type   = "string"
+hidden = true
+
+[fields.display_name]
+type = "string"
+
+# `POST /api/auth/register` is a create on this resource, so the create hooks
+# fire there as well as on `POST /api/user` — one function covers both doors
+# into the same table. The plaintext password is already hashed by the time the
+# hook sees the body.
+[hooks]
+after_create = "welcome_email"   # send the welcome message

@@ -178,6 +178,129 @@ impl<'a, 'h, C> Context<'a, 'h, C> {
         }
     }
 
+    /// Send an email through whichever provider the app configured in
+    /// `[email]`, and get the provider's receipt back.
+    ///
+    /// The function doesn't know or care which provider that is: the same call
+    /// goes out through SES, SendGrid, Brevo, Mailjet or a plain SMTP relay
+    /// depending on one line of `main.toml`.
+    ///
+    /// ```no_run
+    /// # use apiplant_function::prelude::*;
+    /// # fn example(ctx: &Context<()>) -> Result<(), String> {
+    /// ctx.send_email(
+    ///     Email::to("ann@example.com")
+    ///         .subject("Welcome")
+    ///         .text("Glad you're here.")
+    ///         .html("<p>Glad you're here.</p>"),
+    /// )?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// Errors when no provider is configured, when the message has no
+    /// recipient, or when the provider refuses it. Whether that should fail the
+    /// request is the caller's decision — a failed welcome email usually
+    /// shouldn't undo the signup that triggered it.
+    pub fn send_email(&self, email: Email) -> Result<Sent, String> {
+        let request = serde_json::to_string(&email).map_err(|e| e.to_string())?;
+        match self.host.send_email(RStr::from_str(&request)) {
+            RResult::ROk(receipt) => serde_json::from_str(receipt.as_str())
+                .map_err(|e| format!("unreadable email receipt: {e}")),
+            RResult::RErr(e) => Err(e.into_string()),
+        }
+    }
+
+    /// Read a value from the app's Redis cache. `None` for a miss.
+    ///
+    /// ```no_run
+    /// # use apiplant_function::prelude::*;
+    /// # fn fetch() -> serde_json::Value { serde_json::Value::Null }
+    /// # fn example(ctx: &Context<()>) -> Result<serde_json::Value, String> {
+    /// if let Some(hit) = ctx.cache_get("rates:eur")? {
+    ///     return Ok(hit);
+    /// }
+    /// let rates = fetch();
+    /// ctx.cache_set("rates:eur", &rates, Some(900))?;
+    /// # Ok(rates) }
+    /// ```
+    ///
+    /// Errors when the app configured no cache, or when Redis is unreachable.
+    /// Since a cache holds only what can be recomputed, treating an error like
+    /// a miss (`ctx.cache_get(k).ok().flatten()`) is a reasonable choice — and
+    /// the one that keeps the endpoint working while Redis restarts.
+    pub fn cache_get(&self, key: &str) -> Result<Option<serde_json::Value>, String> {
+        let reply = self.cache(serde_json::json!({ "op": "get", "key": key }))?;
+        match reply.get("value") {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => Ok(Some(value.clone())),
+        }
+    }
+
+    /// Read a value and deserialize it. A miss and a value of the wrong shape
+    /// both come back as `None`, because a cache entry written by an older
+    /// version of the function is a miss in every way that matters.
+    pub fn cache_get_as<T: serde::de::DeserializeOwned>(
+        &self,
+        key: &str,
+    ) -> Result<Option<T>, String> {
+        Ok(self
+            .cache_get(key)?
+            .and_then(|value| serde_json::from_value(value).ok()))
+    }
+
+    /// Write a value, expiring after `ttl_secs`. `None` uses the app's
+    /// `[cache] default_ttl_secs`; `Some(0)` means "keep it until deleted".
+    pub fn cache_set<T: serde::Serialize>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl_secs: Option<u64>,
+    ) -> Result<(), String> {
+        let value = serde_json::to_value(value).map_err(|e| e.to_string())?;
+        self.cache(serde_json::json!({
+            "op": "set", "key": key, "value": value, "ttl": ttl_secs
+        }))?;
+        Ok(())
+    }
+
+    /// Drop a key. `true` when it was there.
+    pub fn cache_delete(&self, key: &str) -> Result<bool, String> {
+        let reply = self.cache(serde_json::json!({ "op": "delete", "key": key }))?;
+        Ok(reply
+            .get("deleted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false))
+    }
+
+    /// Add `by` to a counter and return its new value, starting from zero.
+    ///
+    /// The increment happens on the server, so this counts correctly across
+    /// every worker and every host — which is what makes it usable for rate
+    /// limiting, and what a `get` + `set` pair could not do. `ttl_secs` is
+    /// applied only when the counter is created, so a window doesn't extend
+    /// itself on every hit.
+    pub fn cache_incr(&self, key: &str, by: i64, ttl_secs: Option<u64>) -> Result<i64, String> {
+        let reply = self.cache(serde_json::json!({
+            "op": "incr", "key": key, "by": by, "ttl": ttl_secs
+        }))?;
+        Ok(reply.get("value").and_then(|v| v.as_i64()).unwrap_or(0))
+    }
+
+    /// Seconds until `key` expires; `None` when it is absent or set to persist.
+    pub fn cache_ttl(&self, key: &str) -> Result<Option<i64>, String> {
+        let reply = self.cache(serde_json::json!({ "op": "ttl", "key": key }))?;
+        Ok(reply.get("ttl").and_then(|v| v.as_i64()))
+    }
+
+    /// Send one operation to the host's cache and parse its reply.
+    fn cache(&self, request: serde_json::Value) -> Result<serde_json::Value, String> {
+        match self.host.cache(RStr::from_str(&request.to_string())) {
+            RResult::ROk(reply) => serde_json::from_str(reply.as_str())
+                .map_err(|e| format!("unreadable cache reply: {e}")),
+            RResult::RErr(e) => Err(e.into_string()),
+        }
+    }
+
     /// Log through the host's `tracing` subscriber.
     pub fn log(&self, level: LogLevel, message: &str) {
         self.host.log(level, RStr::from_str(message));
@@ -202,6 +325,105 @@ impl<'a, 'h, C> Context<'a, 'h, C> {
     pub fn debug(&self, message: &str) {
         self.log(LogLevel::Debug, message);
     }
+}
+
+/// A message to send with [`Context::send_email`].
+///
+/// Addresses are written the way you'd write them in a mail client — either
+/// `"ann@example.com"` or `"Ann Lee <ann@example.com>"`. `from` and `reply_to`
+/// are left unset unless this particular message needs to differ from the app's
+/// `[email]` defaults.
+///
+/// Deliberately not the host's own message type: this crate is compiled into
+/// every function library, and a function has no business linking an HTTP
+/// client, an SMTP stack and a request signer to describe an email. What
+/// crosses the ABI is the JSON below.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct Email {
+    pub to: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub cc: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub bcc: Vec<String>,
+    pub subject: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub text: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub html: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reply_to: Option<String>,
+}
+
+impl Email {
+    /// Start a message to one recipient.
+    pub fn to(recipient: impl Into<String>) -> Email {
+        Email {
+            to: vec![recipient.into()],
+            ..Email::default()
+        }
+    }
+
+    /// Start a message to several recipients.
+    pub fn to_all<S: Into<String>>(recipients: impl IntoIterator<Item = S>) -> Email {
+        Email {
+            to: recipients.into_iter().map(Into::into).collect(),
+            ..Email::default()
+        }
+    }
+
+    pub fn cc(mut self, address: impl Into<String>) -> Email {
+        self.cc.push(address.into());
+        self
+    }
+
+    pub fn bcc(mut self, address: impl Into<String>) -> Email {
+        self.bcc.push(address.into());
+        self
+    }
+
+    pub fn subject(mut self, subject: impl Into<String>) -> Email {
+        self.subject = subject.into();
+        self
+    }
+
+    /// The plain-text body. Send at least one of this and [`html`](Self::html);
+    /// sending both produces a `multipart/alternative`, which is what a mail
+    /// client expects.
+    pub fn text(mut self, body: impl Into<String>) -> Email {
+        self.text = body.into();
+        self
+    }
+
+    pub fn html(mut self, body: impl Into<String>) -> Email {
+        self.html = body.into();
+        self
+    }
+
+    /// Override the app's configured sender for this message.
+    pub fn from(mut self, address: impl Into<String>) -> Email {
+        self.from = Some(address.into());
+        self
+    }
+
+    pub fn reply_to(mut self, address: impl Into<String>) -> Email {
+        self.reply_to = Some(address.into());
+        self
+    }
+}
+
+/// The receipt [`Context::send_email`] returns: which provider took the
+/// message, and what it called it.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Sent {
+    /// The provider that accepted it, e.g. `"ses"`.
+    pub provider: String,
+    /// The provider's identifier for the message; empty when it returns none.
+    pub id: String,
+    /// How many addresses it went to, across `to`, `cc` and `bcc`.
+    pub recipients: usize,
 }
 
 /// Everything the host knows about the operation a hook fired for.
@@ -586,7 +808,7 @@ impl AdminBuilder {
 
 /// A curated set of imports for function authors: `use apiplant_function::prelude::*;`.
 pub mod prelude {
-    pub use crate::{reply, Context, Hook};
+    pub use crate::{reply, Context, Email, Hook, Sent};
     pub use apiplant_abi::{HttpMethod, LogLevel, Visibility};
     /// `#[derive(JsonSchema)]` for typed OpenAPI (with the `schema` feature).
     #[cfg(feature = "schema")]
@@ -886,7 +1108,11 @@ mod tests {
         principal_id: String,
         hook_json: String,
         query_result: Result<String, String>,
+        /// Reply to `send_email`/`cache`, or an error to hand back instead.
+        service_result: Result<String, String>,
         requests: Mutex<Vec<String>>,
+        /// Every `send_email` and `cache` request, as sent.
+        service_requests: Mutex<Vec<String>>,
         logs: Mutex<Vec<(LogLevel, String)>>,
     }
 
@@ -897,7 +1123,9 @@ mod tests {
                 principal_id: principal_id.into(),
                 hook_json: String::new(),
                 query_result: Ok(response.to_string()),
+                service_result: Ok("{}".to_string()),
                 requests: Mutex::new(Vec::new()),
+                service_requests: Mutex::new(Vec::new()),
                 logs: Mutex::new(Vec::new()),
             }
         }
@@ -905,6 +1133,36 @@ mod tests {
         fn with_hook(mut self, hook: serde_json::Value) -> Self {
             self.hook_json = hook.to_string();
             self
+        }
+
+        /// What `send_email`/`cache` should answer.
+        fn replying(mut self, reply: serde_json::Value) -> Self {
+            self.service_result = Ok(reply.to_string());
+            self
+        }
+
+        fn failing(mut self, error: &str) -> Self {
+            self.service_result = Err(error.to_string());
+            self
+        }
+
+        /// The last request made through `send_email`/`cache`.
+        fn last_service_request(&self) -> serde_json::Value {
+            let requests = self.service_requests.lock().unwrap();
+            serde_json::from_str(requests.last().expect("no service request was made")).unwrap()
+        }
+
+        /// `send_email` and `cache` are the same shape — record the request,
+        /// hand back the canned answer.
+        fn service(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.service_requests
+                .lock()
+                .unwrap()
+                .push(request.as_str().to_string());
+            match &self.service_result {
+                Ok(reply) => RResult::ROk(RString::from(reply.as_str())),
+                Err(error) => RResult::RErr(RString::from(error.as_str())),
+            }
         }
     }
 
@@ -927,6 +1185,14 @@ mod tests {
                 .push((level, message.as_str().to_string()));
         }
 
+        fn send_email(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.service(request)
+        }
+
+        fn cache(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.service(request)
+        }
+
         fn config(&self) -> RString {
             self.config_json.clone().into()
         }
@@ -938,6 +1204,47 @@ mod tests {
         fn hook(&self) -> RString {
             self.hook_json.clone().into()
         }
+    }
+
+    /// A mock the test still holds a handle to after the ABI has taken it —
+    /// the only way to assert on what a `Context` method actually sent.
+    struct Shared(std::sync::Arc<MockHost>);
+
+    impl HostApi for Shared {
+        fn query(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.0.query(request)
+        }
+
+        fn log(&self, level: LogLevel, message: RStr<'_>) {
+            self.0.log(level, message)
+        }
+
+        fn send_email(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.0.send_email(request)
+        }
+
+        fn cache(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.0.cache(request)
+        }
+
+        fn config(&self) -> RString {
+            self.0.config()
+        }
+
+        fn principal_id(&self) -> RString {
+            self.0.principal_id()
+        }
+
+        fn hook(&self) -> RString {
+            self.0.hook()
+        }
+    }
+
+    /// A mock kept alive alongside the trait object built from it.
+    fn shared(mock: MockHost) -> (std::sync::Arc<MockHost>, HostApi_TO<'static, RBox<()>>) {
+        let mock = std::sync::Arc::new(mock);
+        let host = HostApi_TO::from_value(Shared(mock.clone()), TD_Opaque);
+        (mock, host)
     }
 
     #[derive(Deserialize)]
@@ -987,6 +1294,130 @@ mod tests {
 
         assert_eq!(ctx.execute("DELETE FROM apiplant_post", &[]).unwrap(), 3);
         ctx.warn("careful");
+    }
+
+    #[test]
+    fn send_email_hands_the_host_the_message_and_reads_the_receipt() {
+        let host = MockHost::success("{}", "u1", serde_json::json!([]))
+            .replying(serde_json::json!({ "provider": "ses", "id": "abc", "recipients": 2 }));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        let sent = ctx
+            .send_email(
+                Email::to("Ann <ann@example.com>")
+                    .cc("bo@example.com")
+                    .subject("Welcome")
+                    .text("Hello")
+                    .reply_to("help@example.com"),
+            )
+            .unwrap();
+
+        assert_eq!(sent.provider, "ses");
+        assert_eq!(sent.id, "abc");
+        assert_eq!(sent.recipients, 2);
+    }
+
+    /// Empty parts must not appear on the wire at all: a provider that sees
+    /// `"html": ""` may send a blank body instead of the text one.
+    #[test]
+    fn an_email_only_carries_the_fields_it_was_given() {
+        let (mock, host) = shared(
+            MockHost::success("{}", "u1", serde_json::json!([]))
+                .replying(serde_json::json!({ "provider": "smtp", "id": "", "recipients": 1 })),
+        );
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        ctx.send_email(Email::to("ann@example.com").subject("Hi").text("Hello"))
+            .unwrap();
+
+        let request = mock.last_service_request();
+        assert_eq!(request["to"][0], "ann@example.com");
+        assert_eq!(request["subject"], "Hi");
+        assert_eq!(request["text"], "Hello");
+        assert!(request.get("html").is_none());
+        assert!(request.get("cc").is_none());
+        assert!(request.get("from").is_none());
+    }
+
+    #[test]
+    fn a_provider_failure_surfaces_as_an_error() {
+        let host = MockHost::success("{}", "u1", serde_json::json!([]))
+            .failing("sendgrid rejected the message (401): unauthorized");
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        let err = ctx
+            .send_email(Email::to("ann@example.com").subject("Hi").text("Hello"))
+            .unwrap_err();
+        assert!(err.contains("401"), "{err}");
+    }
+
+    #[test]
+    fn cache_get_distinguishes_a_hit_from_a_miss() {
+        let hit = MockHost::success("{}", "u1", serde_json::json!([]))
+            .replying(serde_json::json!({ "hit": true, "value": { "eur": 1.1 } }));
+        let hit = HostApi_TO::from_value(hit, TD_Opaque);
+        let ctx = Context::__new(&hit, (), "u1".into(), None);
+        assert_eq!(
+            ctx.cache_get("rates").unwrap(),
+            Some(serde_json::json!({ "eur": 1.1 }))
+        );
+
+        let miss = MockHost::success("{}", "u1", serde_json::json!([]))
+            .replying(serde_json::json!({ "hit": false, "value": null }));
+        let miss = HostApi_TO::from_value(miss, TD_Opaque);
+        let ctx = Context::__new(&miss, (), "u1".into(), None);
+        assert_eq!(ctx.cache_get("rates").unwrap(), None);
+    }
+
+    /// A cached value written by an older version of a function is a miss, not
+    /// an error — otherwise every deployment breaks its own endpoint.
+    #[test]
+    fn cache_get_as_treats_an_unreadable_value_as_a_miss() {
+        #[derive(serde::Deserialize)]
+        struct Rates {
+            #[allow(dead_code)]
+            eur: f64,
+        }
+
+        let host = MockHost::success("{}", "u1", serde_json::json!([]))
+            .replying(serde_json::json!({ "hit": true, "value": { "old_shape": true } }));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        assert!(ctx.cache_get_as::<Rates>("rates").unwrap().is_none());
+    }
+
+    #[test]
+    fn cache_writes_name_their_operation_key_and_ttl() {
+        let (mock, host) = shared(
+            MockHost::success("{}", "u1", serde_json::json!([])).replying(
+                serde_json::json!({ "ok": true, "deleted": true, "value": 3, "ttl": 42 }),
+            ),
+        );
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        ctx.cache_set("rates", &serde_json::json!({ "eur": 1.1 }), Some(900))
+            .unwrap();
+        let request = mock.last_service_request();
+        assert_eq!(request["op"], "set");
+        assert_eq!(request["key"], "rates");
+        assert_eq!(request["value"]["eur"], 1.1);
+        assert_eq!(request["ttl"], 900);
+
+        // No TTL is `null`, meaning "use the app's default" — not zero, which
+        // would mean "never expire".
+        ctx.cache_set("rates", &1, None).unwrap();
+        assert!(mock.last_service_request()["ttl"].is_null());
+
+        assert_eq!(ctx.cache_incr("hits", 1, Some(60)).unwrap(), 3);
+        assert_eq!(mock.last_service_request()["op"], "incr");
+
+        assert!(ctx.cache_delete("rates").unwrap());
+        assert_eq!(mock.last_service_request()["op"], "delete");
+
+        assert_eq!(ctx.cache_ttl("rates").unwrap(), Some(42));
     }
 
     #[test]

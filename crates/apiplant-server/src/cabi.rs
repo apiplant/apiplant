@@ -75,6 +75,8 @@ impl Function for CFunction {
             principal_id: Some(host_principal_id),
             hook: Some(host_hook),
             free_string: Some(host_free_string),
+            send_email: Some(host_send_email),
+            cache: Some(host_cache),
         };
 
         let mut out: *mut c_char = std::ptr::null_mut();
@@ -171,6 +173,38 @@ extern "C" fn host_query(ctx: *mut c_void, request: *const c_char) -> *mut c_cha
             }
         }
     })
+}
+
+extern "C" fn host_send_email(ctx: *mut c_void, request: *const c_char) -> *mut c_char {
+    guard_string(|| {
+        // SAFETY: as in `host_query`.
+        let (Some(bridge), Some(request)) = (unsafe { bridge(ctx) }, unsafe { cstr(request) })
+        else {
+            return to_c(r#"{"error":"invalid email request"}"#);
+        };
+        in_band(bridge.host.send_email(RStr::from_str(&request)))
+    })
+}
+
+extern "C" fn host_cache(ctx: *mut c_void, request: *const c_char) -> *mut c_char {
+    guard_string(|| {
+        // SAFETY: as in `host_query`.
+        let (Some(bridge), Some(request)) = (unsafe { bridge(ctx) }, unsafe { cstr(request) })
+        else {
+            return to_c(r#"{"error":"invalid cache request"}"#);
+        };
+        in_band(bridge.host.cache(RStr::from_str(&request)))
+    })
+}
+
+/// Flatten a host result into the one string C gets back, reporting a failure
+/// as `{"error": …}` — the same convention `host_query` uses, and the reason
+/// these callbacks need no out-parameter.
+fn in_band(result: RResult<RString, RString>) -> *mut c_char {
+    match result {
+        RResult::ROk(reply) => to_c(reply.as_str()),
+        RResult::RErr(e) => to_c(&serde_json::json!({ "error": e.as_str() }).to_string()),
+    }
 }
 
 extern "C" fn host_log(ctx: *mut c_void, level: i32, message: *const c_char) {

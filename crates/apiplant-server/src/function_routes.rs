@@ -87,12 +87,15 @@ pub async fn invoke(
     // Move owned handles into the blocking worker.
     let functions = state.functions.clone();
     let db = state.db.clone();
+    let mailer = state.mailer.clone();
+    let cache = state.cache.clone();
     let handle = tokio::runtime::Handle::current();
     let name2 = name.clone();
 
     let result = tokio::task::spawn_blocking(move || {
         let f = functions.get(&name2).expect("checked above");
-        let bridge = HostBridge::new(db, handle, f.config_json.clone(), principal_id);
+        let bridge = HostBridge::new(db, handle, f.config_json.clone(), principal_id)
+            .with_services(mailer, cache);
         f.invoke(bridge, &input)
     })
     .await;

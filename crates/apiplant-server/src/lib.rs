@@ -389,6 +389,29 @@ pub async fn run(app: App) -> anyhow::Result<()> {
     };
     let authr = Authenticator::new(secret, app.config.auth.session_ttl_secs);
 
+    // 2b. Optional services a function can reach: the email provider and the
+    //     cache. Both are built here, once, and shared by every worker — and
+    //     both fail the boot when the app asked for one it can't have, rather
+    //     than at the first send or the first lookup.
+    let mailer = apiplant_email::Mailer::from_config(&app.config.email)?;
+    match &mailer {
+        Some(mailer) => tracing::info!(
+            "  email -> {} (from {})",
+            mailer.provider().as_str(),
+            app.config.email.from
+        ),
+        None => tracing::debug!("no email provider configured"),
+    }
+
+    let cache = apiplant_cache::Cache::connect(&app.config.cache).await?;
+    match &cache {
+        Some(_) => tracing::info!(
+            "  cache -> redis (prefix {:?})",
+            app.config.cache.prefix.as_str()
+        ),
+        None => tracing::debug!("no cache configured"),
+    }
+
     // 3. Load dynamic functions.
     let registry = FunctionRegistry::load_dir(&app.functions_dir);
     for f in registry.iter() {
@@ -483,6 +506,8 @@ pub async fn run(app: App) -> anyhow::Result<()> {
         db,
         auth: authr,
         functions: Arc::new(registry),
+        mailer,
+        cache,
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),
         openapi_json: Arc::new(openapi_json),

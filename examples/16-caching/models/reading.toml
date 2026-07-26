@@ -1,0 +1,27 @@
+# Ordinary data, deliberately uncached.
+#
+# The `report` function below aggregates this table and memoises the result.
+# The CRUD endpoints on the table itself go to Postgres every single time — a
+# framework-level cache in front of them would have to guess when a row became
+# stale, and every wrong guess serves data the API never warned might be old.
+
+[resource]
+name = "reading"
+scope = "global"           # not per-organisation; example 04 covers that
+
+# Public writes so the README's curls need no token — unusual for a real app,
+# and what keeps this example to one idea at a time.
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "private"
+delete = "private"
+
+[fields.sensor]
+type     = "string"
+required = true
+
+[fields.value]
+type     = "float"
+required = true

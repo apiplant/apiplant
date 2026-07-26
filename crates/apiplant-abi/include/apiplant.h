@@ -8,8 +8,8 @@
  *
  * Memory: each side frees what it allocated. The string you write to *out is
  * released by the host calling your apiplant_free; strings the host hands you
- * (config, query, principal_id, hook) are released by you calling
- * host->free_string.
+ * (config, query, principal_id, hook, send_email, cache) are released by you
+ * calling host->free_string.
  */
 #ifndef APIPLANT_H
 #define APIPLANT_H
@@ -53,7 +53,26 @@ typedef struct ApiplantHost {
     char *(*hook)(void *ctx);
 
     void (*free_string)(void *ctx, char *string);
+
+    /* Send an email through the provider the app configured in [email].
+     * Request:  {"to": "ann@example.com", "subject": "Hi", "text": "Hello"}
+     *           ("to"/"cc"/"bcc" also take a list; "html", "from" and
+     *            "reply_to" are optional)
+     * Returns:  {"provider": "ses", "id": "...", "recipients": 1}
+     *           or {"error": "..."}. Free with free_string. */
+    char *(*send_email)(void *ctx, const char *request_json);
+
+    /* One operation against the app's [cache] Redis, if it configured one:
+     *   {"op":"get","key":"k"}                     -> {"hit":true,"value":...}
+     *   {"op":"set","key":"k","value":...,"ttl":60} -> {"ok":true}
+     *   {"op":"delete"|"exists"|"incr"|"ttl", ...}
+     * or {"error": "..."}. Free with free_string. */
+    char *(*cache)(void *ctx, const char *request_json);
 } ApiplantHost;
+
+/* Callbacks are only ever appended to ApiplantHost, and the host is what
+ * allocates it — so a library built against an older header keeps working
+ * unchanged, and APIPLANT_ABI_VERSION does not move when one is added. */
 
 /* ---- what your library must export ---------------------------------------- */
 

@@ -5,8 +5,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use apiplant_auth::{Authenticator, OrgMembership, Principal};
+use apiplant_cache::Cache;
 use apiplant_core::App;
 use apiplant_db::Db;
+use apiplant_email::Mailer;
 use ntex::web::HttpRequest;
 use uuid::Uuid;
 
@@ -19,6 +21,12 @@ pub struct AppState {
     pub db: Db,
     pub auth: Authenticator,
     pub functions: Arc<FunctionRegistry>,
+    /// The app's email provider, when `[email]` names one. Functions reach it
+    /// through `send_email`; nothing else in the server sends mail.
+    pub mailer: Option<Mailer>,
+    /// The app's Redis cache, when `[cache]` names one. Functions reach it
+    /// through `cache`; no framework path caches through it.
+    pub cache: Option<Cache>,
     /// Everything served alongside the API: the dashboard and the public site.
     pub statics: Arc<Statics>,
     /// The admin manifest for this app, built on boot.

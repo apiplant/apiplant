@@ -41,6 +41,26 @@ session_ttl_secs = 604800   # a week; shorten it if sessions are sensitive
 Rotating the secret invalidates every outstanding session, which is also the way
 to force everyone to sign in again.
 
+Write it as `"$JWT_SECRET"` and it is read from the environment at boot, so the
+`main.toml` you commit holds no secret. Every string in every app TOML file
+works the same way — see [Configuration → Environment
+variables](configuration.md#environment-variables).
+
+### Email and cache credentials
+
+`[email]` and `[cache]` are off unless configured, so an app that uses neither
+has nothing here to get wrong. If you do configure them:
+
+* keep the provider key and the Redis URL in the environment, as above
+  (`api_key = "$SENDGRID_API_KEY"`);
+* `[email.smtp] encryption = "none"` sends credentials and messages in
+  cleartext, and is logged as a warning at boot — it exists for a relay on
+  localhost and nowhere else;
+* the cache holds whatever a function puts there, under a shared prefix. Don't
+  put session tokens, password hashes or anything you wouldn't accept losing in
+  it: Redis is usually unauthenticated on a private network, and cached data is
+  by definition disposable.
+
 ### TLS
 
 Drop a certificate and key in `https/` and the server serves HTTPS instead of

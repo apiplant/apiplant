@@ -45,10 +45,19 @@
 //! * The string `apiplant_invoke` writes to `*out` is released by the host
 //!   calling the library's own [`apiplant_free`](FreeFn).
 //! * Strings the host returns from [`Host::config`], [`Host::query`],
-//!   [`Host::principal_id`] and [`Host::hook`] are released by the library
-//!   calling [`Host::free_string`].
+//!   [`Host::principal_id`], [`Host::hook`], [`Host::send_email`] and
+//!   [`Host::cache`] are released by the library calling [`Host::free_string`].
 //!
 //! The pointer from `apiplant_manifest` is never freed, so it must be static.
+//!
+//! ## Growing the host
+//!
+//! [`Host`] gains callbacks at its **end**, never in the middle: the host is
+//! what allocates the struct, so a library compiled against an older, shorter
+//! definition still finds every field it knows at the offset it expects, and
+//! simply never reads the ones added since. That is why [`ABI_VERSION`] does
+//! not change when a callback is appended — and why it must change if one is
+//! ever removed or reordered.
 //!
 //! ## Faults
 //!
@@ -118,6 +127,19 @@ pub struct Host {
 
     /// Release a string one of the callbacks above returned.
     pub free_string: Option<extern "C" fn(ctx: *mut c_void, string: *mut c_char)>,
+
+    /// Send an email. `request_json` is the message
+    /// (`{"to":…,"subject":…,"text":…}`); returns the receipt
+    /// `{"provider":…,"id":…,"recipients":n}` or `{"error":"…"}`. As with
+    /// [`query`](Self::query) the shape distinguishes them.
+    /// See [`HostApi::send_email`](crate::HostApi::send_email).
+    pub send_email:
+        Option<extern "C" fn(ctx: *mut c_void, request_json: *const c_char) -> *mut c_char>,
+
+    /// Run one cache operation. `request_json` is `{"op":"get","key":"…"}` and
+    /// friends; returns the operation's reply or `{"error":"…"}`.
+    /// See [`HostApi::cache`](crate::HostApi::cache).
+    pub cache: Option<extern "C" fn(ctx: *mut c_void, request_json: *const c_char) -> *mut c_char>,
 }
 
 /// Reports the contract the library was built against; must return

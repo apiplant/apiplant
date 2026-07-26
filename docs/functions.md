@@ -261,6 +261,13 @@ During a call your handler gets a `&Context<Config>`:
 | `query(sql, params)` | `Result<Vec<Value>, String>` | Run a `SELECT`/`WITH`; rows as JSON objects. |
 | `query_one(sql, params)` | `Result<Option<Value>, String>` | First row, if any. |
 | `execute(sql, params)` | `Result<u64, String>` | Run a write; rows affected. |
+| `send_email(email)` | `Result<Sent, String>` | Send mail through the configured [`[email]` provider](email.md). |
+| `cache_get(key)` | `Result<Option<Value>, String>` | Read from the [`[cache]` Redis](caching.md); `None` is a miss. |
+| `cache_get_as::<T>(key)` | `Result<Option<T>, String>` | The same, deserialized; a value of the wrong shape is a miss. |
+| `cache_set(key, &value, ttl)` | `Result<(), String>` | Write. `None` ttl uses `default_ttl_secs`; `Some(0)` persists. |
+| `cache_delete(key)` | `Result<bool, String>` | Remove; `true` when it was there. |
+| `cache_incr(key, by, ttl)` | `Result<i64, String>` | Atomic counter — correct across workers and hosts. |
+| `cache_ttl(key)` | `Result<Option<i64>, String>` | Seconds left, or `None`. |
 | `info` / `warn` / `error` / `debug(msg)` | `()` | Log through the host's `tracing`. |
 | `log(level, msg)` | `()` | Log at an explicit level. |
 
@@ -274,6 +281,11 @@ let rows = ctx.query(
     &[serde_json::json!(ctx.principal_id())],
 )?;
 ```
+
+`send_email` and the `cache_*` methods error when the app configured no
+provider or no cache, so a function that uses them only works in an app whose
+`main.toml` says so. Both are covered in full in [Sending email](email.md) and
+[Caching](caching.md).
 
 ## Permissions
 
@@ -580,12 +592,27 @@ or a string, and only feed the generated docs.
 Each side frees what it allocated, since the two do not share an allocator:
 
 * the string you write to `*out` comes back to your `apiplant_free`;
-* strings the host hands you — `config`, `query`, `principal_id`, `hook` — go
-  back to `host->free_string`.
+* strings the host hands you — `config`, `query`, `principal_id`, `hook`,
+  `send_email`, `cache` — go back to `host->free_string`.
 
 `host->query` takes the same `{"sql": …, "params": […]}` request as the Rust
 side and answers with a JSON array of rows, `{"rows_affected": n}`, or
 `{"error": …}` when the query failed.
+
+`host->send_email` and `host->cache` follow the same convention — JSON in, JSON
+out, `{"error": …}` on failure:
+
+```c
+char *receipt = host->send_email(host->ctx,
+    "{\"to\":\"ann@example.com\",\"subject\":\"Hi\",\"text\":\"Hello\"}");
+char *hits = host->cache(host->ctx, "{\"op\":\"incr\",\"key\":\"hits\"}");
+host->free_string(host->ctx, receipt);
+host->free_string(host->ctx, hits);
+```
+
+Callbacks are only ever *appended* to `ApiplantHost`, and the host is what
+allocates it — so a library built against an older `apiplant.h` keeps working
+and `APIPLANT_ABI_VERSION` does not move when one is added.
 
 See [`examples/09-c-functions`](../examples/09-c-functions) for a working app —
 two endpoints in one `.c` file, one of them querying Postgres.

@@ -1,0 +1,20 @@
+[package]
+name = "apiplant-email"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Outbound email for apiplant: one interface over SMTP, SES, SendGrid, Brevo, Mailjet, Mailgun, Postmark and Resend"
+
+[dependencies]
+apiplant-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+reqwest = { workspace = true }
+lettre = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

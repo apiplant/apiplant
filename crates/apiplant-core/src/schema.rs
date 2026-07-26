@@ -257,10 +257,14 @@ impl Resource {
             path: path.to_path_buf(),
             source: e,
         })?;
-        let resource: Resource = toml::from_str(&text).map_err(|e| crate::Error::Toml {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
+        // Model files get the same `$VAR` expansion `main.toml` does — a
+        // resource can name an environment variable anywhere it takes a string.
+        let source = path.file_name().unwrap_or_default().to_string_lossy();
+        let resource: Resource =
+            crate::env::parse_toml(&text, &source).map_err(|e| crate::Error::Toml {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
         resource.validate()?;
         Ok(resource)
     }
