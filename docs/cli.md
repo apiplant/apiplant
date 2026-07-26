@@ -131,6 +131,7 @@ they would only teach you the console is broken.
 | `space` | toggle a switch in a form |
 | `D` | clear a field |
 | `esc` | back |
+| `g` `d` | give / take away a role (on the Team screen) |
 | `O` | switch organization |
 | `N` | create an organization (on the Session screen) |
 | `?` | the full list |
@@ -146,10 +147,37 @@ schema — one box per property, with its description, defaults and `enum` value
 Org-scoped resources need an active organization, sent as `X-Organization`;
 `O` switches it, and the choice is remembered with the key.
 
+## Roles
+
+`membership` and `membership_role` are ordinary resources, and they are both in
+the sidebar — but a table of membership ids is not a way to answer "who here is
+an admin". The **Team** screen is that answer: everyone in the active
+organization, one row each, with every role they hold. It appears whenever
+memberships can be listed at all.
+
+Roles are a set, and they come from two places — the membership's own `role`
+column and its `membership_role` rows — so the screen stitches them back
+together exactly as the server does when it checks a permission. `g` gives the
+highlighted person a role, `d` takes one away. See [permissions](permissions.md)
+for what a role means.
+
+The pickers only offer what will work. A role someone already holds is not
+offered again, because the server refuses a second copy and a second copy would
+make revoking the first look like it did nothing. `admin` is shown as holding
+every other role, because that is what it does. And your own `admin` is never on
+offer to remove: an organization can only lose its last administrator if that
+administrator removes themselves, so the console will not start it — another
+admin still can, from their own Team screen. An app whose `membership_role` you
+may not create says so instead of offering a picker you would only be refused.
+
+The role a *membership* carries — the primary one, the one the server reports as
+`role` — has no row to delete, so taking it away clears the column instead. It
+is otherwise the same as any other.
+
 The Session screen shows who you are signed in as and what with — the console
 resolves your account from the session token's subject, or from the owner of the
 API key it is using — along with the server, the API and dashboard addresses, and
-the active organization. It issues a fresh API key for pasting into a script
+the active organization and the roles you hold in it. It issues a fresh API key for pasting into a script
 (`g`), starts an organization (`N`), and signs out (`x`).
 
 ## When something goes wrong

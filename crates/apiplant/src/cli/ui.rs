@@ -14,7 +14,9 @@ use ratatui::Frame;
 use serde_json::Value;
 
 use super::api::scalar;
-use super::state::{Cli, Focus, Form, Main, NavKind, Onboarding, SignIn, PAGE, SIGN_IN_OPTIONS};
+use super::state::{
+    Cli, Focus, Form, Main, NavKind, Onboarding, SignIn, Team, PAGE, SIGN_IN_OPTIONS,
+};
 
 const ACCENT: Color = Color::Cyan;
 const FAINT: Color = Color::DarkGray;
@@ -308,6 +310,7 @@ fn draw_main(frame: &mut Frame, cli: &Cli, area: Rect) {
                 area,
             );
         }
+        Main::Team(team) => draw_team(frame, cli, team, area, focused),
         Main::Session => draw_session(frame, cli, area, focused),
     }
 }
@@ -536,6 +539,92 @@ fn placeholder(field: &super::state::FormField) -> &'static str {
     }
 }
 
+/// Who is in the organisation and what each of them may do.
+fn draw_team(frame: &mut Frame, cli: &Cli, team: &Team, area: Rect, focused: bool) {
+    let block = pane(&format!("Team  ·  {}", cli.organization_label()), focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if team.members.is_empty() {
+        frame.render_widget(
+            Paragraph::new("Nobody to show here.").style(Style::default().fg(FAINT)),
+            inner,
+        );
+        return;
+    }
+
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(2)])
+        .split(inner);
+
+    let header = Row::new(vec![Cell::from("Member"), Cell::from("Roles")])
+        .style(Style::default().fg(FAINT).add_modifier(Modifier::BOLD));
+
+    let rows: Vec<Row> = team
+        .members
+        .iter()
+        .map(|member| {
+            let mut name = member.name.clone();
+            if name.is_empty() {
+                name = "unnamed".into();
+            }
+            if member.is_me {
+                name.push_str("  (you)");
+            }
+            // An admin holds every role the app defines, so listing their
+            // stored roles alone would understate what they can do.
+            let roles = if member.roles().is_empty() {
+                Line::from(Span::styled("no role", Style::default().fg(FAINT)))
+            } else {
+                let mut spans: Vec<Span> = Vec::new();
+                for role in member.roles() {
+                    if !spans.is_empty() {
+                        spans.push(Span::raw("  "));
+                    }
+                    let style = if role == "admin" {
+                        Style::default().fg(GOOD).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(ACCENT)
+                    };
+                    spans.push(Span::styled(role, style));
+                }
+                if member.roles().iter().any(|role| role == "admin") {
+                    spans.push(Span::styled(
+                        "  (and every other role)",
+                        Style::default().fg(FAINT),
+                    ));
+                }
+                Line::from(spans)
+            };
+            Row::new(vec![Cell::from(name), Cell::from(roles)])
+        })
+        .collect();
+
+    let mut state = TableState::default().with_selected(Some(team.index));
+    frame.render_stateful_widget(
+        Table::new(rows, [Constraint::Ratio(2, 5), Constraint::Ratio(3, 5)])
+            .header(header)
+            .row_highlight_style(Style::default().fg(Color::Black).bg(ACCENT))
+            .highlight_symbol("› "),
+        split[0],
+        &mut state,
+    );
+
+    let hint = if team.manage {
+        "  g  give a role      d  take one away      r  reload"
+    } else {
+        "  You may not change roles in this organization."
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(hint, Style::default().fg(FAINT))),
+        ]),
+        split[1],
+    );
+}
+
 fn draw_session(frame: &mut Frame, cli: &Cli, area: Rect, focused: bool) {
     let key = match &cli.client.credentials.api_key {
         Some(key) => format!("{}… (saved for this server)", &key[..key.len().min(8)]),
@@ -569,6 +658,16 @@ fn draw_session(frame: &mut Frame, cli: &Cli, area: Rect, focused: bool) {
         row("Dashboard", &cli.client.admin_url()),
         row("Credential", &key),
         row("Organization", &cli.organization_label()),
+        row(
+            "Your roles",
+            &if cli.roles.is_empty() {
+                "none here".to_string()
+            } else if cli.roles.iter().any(|role| role == "admin") {
+                format!("{} — an admin holds every role", cli.roles.join(", "))
+            } else {
+                cli.roles.join(", ")
+            },
+        ),
         row(
             "Resources",
             &format!(
@@ -797,6 +896,12 @@ fn help_text() -> Text<'static> {
         key("space", "toggle a switch"),
         key("D", "clear a field"),
         key("esc", "leave the form"),
+        Line::from(""),
+        section("Team screen"),
+        key("↑ ↓ / k j", "move between members"),
+        key("g", "give the highlighted member a role"),
+        key("d", "take one of their roles away"),
+        key("r", "reload"),
         Line::from(""),
         section("Session screen"),
         key("g", "issue an API key"),

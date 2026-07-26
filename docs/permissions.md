@@ -154,6 +154,13 @@ Granting a role somebody already holds answers `409`. Two grants of one role are
 not twice the permission; they are one role and a trap, because revoking the copy
 you can see appears to do nothing.
 
+### Handing them out
+
+The [dashboard](admin.md)'s Team screen and the [console](cli.md#roles)'s both
+show everyone in the organisation with the roles they hold, and give and take
+them there. Neither offers anything the rules above would refuse: no duplicate,
+and never your own `admin`.
+
 ## Worked examples
 
 ```toml

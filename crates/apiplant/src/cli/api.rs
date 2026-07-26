@@ -37,6 +37,10 @@ pub struct AuthManifest {
     pub identity_field: String,
     pub identity_label: String,
     pub allow_registration: bool,
+    /// Every role this app names anywhere — in a permission, a function or a
+    /// field's options. It is what the Team screen offers, because a role the
+    /// app never mentions grants nothing to whoever is given it.
+    pub known_roles: Vec<String>,
 }
 
 impl Default for AuthManifest {
@@ -45,6 +49,7 @@ impl Default for AuthManifest {
             identity_field: "email".into(),
             identity_label: "Email".into(),
             allow_registration: false,
+            known_roles: Vec::new(),
         }
     }
 }

@@ -31,6 +31,7 @@ pub enum Focus {
 pub enum NavKind {
     Resource(usize),
     Function(usize),
+    Team,
     Session,
 }
 
@@ -77,6 +78,22 @@ fn navigation(manifest: &Manifest) -> Vec<NavItem> {
             label: function.label.clone(),
             group: function.group.clone().unwrap_or_else(|| "Actions".into()),
             kind: NavKind::Function(index),
+        });
+    }
+
+    // Roles live on `membership` and `membership_role`, and both are already in
+    // the sidebar as ordinary tables — but a table of membership ids is not a
+    // way to answer "who here is an admin". The Team screen is that answer, so
+    // it appears whenever memberships can be listed at all.
+    if manifest
+        .resources
+        .iter()
+        .any(|resource| resource.name == "membership" && resource.permissions.list.possible())
+    {
+        items.push(NavItem {
+            label: "Team".into(),
+            group: "Console".into(),
+            kind: NavKind::Team,
         });
     }
 
@@ -439,6 +456,59 @@ pub struct Detail {
     pub scroll: u16,
 }
 
+/// One person in the active organisation, with every role they hold.
+///
+/// Roles arrive from two tables — the membership's own `role` column and its
+/// `membership_role` rows — and this is where they are stitched back together,
+/// the same way the server does it when it checks a permission.
+#[derive(Debug, Clone)]
+pub struct Member {
+    pub membership_id: String,
+    pub name: String,
+    /// The primary role, the one the membership itself carries.
+    pub primary: Option<String>,
+    /// The granted roles, as `(grant id, role)` — the id is what revoking one
+    /// deletes.
+    pub grants: Vec<(String, String)>,
+    pub is_me: bool,
+}
+
+impl Member {
+    /// Every role, primary first, without repeats.
+    pub fn roles(&self) -> Vec<String> {
+        let mut roles: Vec<String> = self.primary.iter().cloned().collect();
+        for (_, role) in &self.grants {
+            if !roles.contains(role) {
+                roles.push(role.clone());
+            }
+        }
+        roles
+    }
+
+    /// Whether this role may be taken away from this person *here*.
+    ///
+    /// Nobody may remove their own `admin`. An organisation can only lose its
+    /// last administrator if that administrator removes themselves, so refusing
+    /// it is what keeps every organisation administrable. Another admin still
+    /// can. The server refuses it too; this is so the console does not offer
+    /// something it knows will come back 403.
+    pub fn may_revoke(&self, role: &str) -> bool {
+        !(self.is_me && role == ADMIN_ROLE)
+    }
+}
+
+/// The role an app gives whoever creates an organisation, and the one that
+/// implies every other.
+pub const ADMIN_ROLE: &str = "admin";
+
+#[derive(Debug, Clone)]
+pub struct Team {
+    pub members: Vec<Member>,
+    pub index: usize,
+    /// Whether this caller may hand roles out at all.
+    pub manage: bool,
+}
+
 #[derive(Debug, Clone)]
 pub enum Main {
     /// Nothing chosen yet, or nothing to show.
@@ -451,6 +521,7 @@ pub enum Main {
         body: String,
         scroll: u16,
     },
+    Team(Team),
     Session,
 }
 
@@ -462,6 +533,14 @@ pub enum PickerKind {
     /// Choosing a value for a reference field on the form underneath.
     Reference {
         field: usize,
+    },
+    /// Giving the highlighted member another role.
+    GrantRole {
+        member: usize,
+    },
+    /// Taking one of the highlighted member's roles away.
+    RevokeRole {
+        member: usize,
     },
 }
 
@@ -556,6 +635,8 @@ pub struct Cli {
     pub identity_id: Option<String>,
     /// Why the account could not be named, when it could not be.
     pub identity_note: Option<String>,
+    /// Every role the caller holds in the active organisation, primary first.
+    pub roles: Vec<String>,
     pub status: String,
     pub error: Option<String>,
     pub quit: bool,
@@ -585,6 +666,7 @@ impl Cli {
             identity: None,
             identity_id: None,
             identity_note: None,
+            roles: Vec::new(),
             status: String::new(),
             error: None,
             quit: false,
@@ -606,6 +688,7 @@ impl Cli {
         self.sign_in = None;
         self.load_identity().await;
         self.load_organizations().await;
+        self.load_roles().await;
         self.status = format!("Connected to {}", self.client.origin);
 
         // Decide about the organisation *before* opening anything. Loading a
@@ -822,6 +905,330 @@ impl Cli {
         }
     }
 
+    // --- roles ------------------------------------------------------------
+
+    /// Whether a resource is in the manifest and listable at all.
+    fn listable(&self, name: &str) -> bool {
+        self.manifest
+            .resources
+            .iter()
+            .any(|resource| resource.name == name && resource.permissions.list.possible())
+    }
+
+    /// The caller's own roles in the active organisation.
+    ///
+    /// Deliberately narrow: this asks for one membership rather than the whole
+    /// team, because it runs on every sign-in and every organisation switch,
+    /// and an app may well let you see your own membership and nobody else's.
+    async fn load_roles(&mut self) {
+        self.roles = Vec::new();
+        let Some(me) = self.identity_id.clone() else {
+            return;
+        };
+        if self.client.organization.is_none() || !self.listable("membership") {
+            return;
+        }
+        let query = [("user_id", me), ("limit", "1".into())];
+        let Ok(rows) = self.client.list("membership", &query).await else {
+            return;
+        };
+        let Some(row) = rows.first() else { return };
+        let Some(id) = row.get("id").map(api::scalar).filter(|id| !id.is_empty()) else {
+            return;
+        };
+        let member = Member {
+            membership_id: id.clone(),
+            name: String::new(),
+            primary: role_of(row),
+            grants: self.grants_for(&id).await,
+            is_me: true,
+        };
+        self.roles = member.roles();
+    }
+
+    /// The `membership_role` rows belonging to one membership.
+    ///
+    /// An app is free to drop that resource, and an operator may not be allowed
+    /// to list it; either way the primary role is still worth showing, so a
+    /// failure here is emptiness rather than an error.
+    async fn grants_for(&self, membership_id: &str) -> Vec<(String, String)> {
+        if !self.listable("membership_role") {
+            return Vec::new();
+        }
+        let query = [
+            ("membership_id", membership_id.to_string()),
+            ("limit", "100".into()),
+        ];
+        let rows = self
+            .client
+            .list("membership_role", &query)
+            .await
+            .unwrap_or_default();
+        rows.iter().filter_map(grant_of).collect()
+    }
+
+    /// Everyone in the active organisation, with their roles.
+    async fn fetch_members(&mut self) -> Result<Vec<Member>, String> {
+        let full = [("limit", "200".into()), ("expand", "user".into())];
+        let rows = match self.client.list("membership", &full).await {
+            Ok(rows) => rows,
+            // `user` is readable by the people you share an organisation with,
+            // and an app may narrow even that. A refused expansion is a reason
+            // to show ids instead of names, not to show no team at all.
+            Err(_) => self
+                .client
+                .list("membership", &[("limit", "200".into())])
+                .await
+                .map_err(|error| error.to_string())?,
+        };
+
+        // One request for every grant in the organisation, not one per member:
+        // a team of forty should not be forty round trips.
+        let grants = if self.listable("membership_role") {
+            self.client
+                .list("membership_role", &[("limit", "500".into())])
+                .await
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let membership_id = row.get("id").map(api::scalar).filter(|id| !id.is_empty())?;
+                let user_id = row.get("user_id").map(api::scalar).unwrap_or_default();
+                Some(Member {
+                    is_me: self
+                        .identity_id
+                        .as_ref()
+                        .is_some_and(|me| *me == user_id && !user_id.is_empty()),
+                    name: self.member_name(row, &user_id),
+                    grants: grants
+                        .iter()
+                        .filter(|grant| {
+                            grant.get("membership_id").map(api::scalar).as_deref()
+                                == Some(membership_id.as_str())
+                        })
+                        .filter_map(grant_of)
+                        .collect(),
+                    primary: role_of(row),
+                    membership_id,
+                })
+            })
+            .collect())
+    }
+
+    /// How to name a member: their identity field, then whatever the `user`
+    /// resource calls its records, then the bare id.
+    fn member_name(&self, row: &Value, user_id: &str) -> String {
+        if let Some(user) = row.get("user").filter(|value| value.is_object()) {
+            let field = self.manifest.auth.identity_field.clone();
+            for key in [field.as_str(), "email", "display_name", "name"] {
+                if let Some(text) = user.get(key).map(api::scalar).filter(|t| !t.is_empty()) {
+                    return text;
+                }
+            }
+            if let Some(resource) = self.manifest.resources.iter().find(|r| r.name == "user") {
+                let title = resource.title_of(user);
+                if !title.is_empty() {
+                    return title;
+                }
+            }
+        }
+        user_id.to_string()
+    }
+
+    /// Load the Team screen, keeping the cursor where it was.
+    async fn load_team(&mut self) {
+        if self.client.organization.is_none() {
+            self.main = Main::Empty(
+                "Roles belong to an organization, and this session has none. Press O to pick one."
+                    .into(),
+            );
+            return;
+        }
+        let index = match &self.main {
+            Main::Team(team) => team.index,
+            _ => 0,
+        };
+        self.status = "Loading the team…".into();
+        match self.fetch_members().await {
+            Ok(members) => {
+                // Whatever the team says about *us* is fresher than what we
+                // knew, and it is the same fact.
+                if let Some(me) = members.iter().find(|member| member.is_me) {
+                    self.roles = me.roles();
+                }
+                let count = members.len();
+                self.main = Main::Team(Team {
+                    index: index.min(count.saturating_sub(1)),
+                    manage: self
+                        .manifest
+                        .resources
+                        .iter()
+                        .find(|resource| resource.name == "membership_role")
+                        .is_some_and(|resource| resource.permissions.create.possible()),
+                    members,
+                });
+                self.say(format!("{count} in {}", self.organization_label()));
+            }
+            Err(error) => {
+                self.main = Main::Team(Team {
+                    members: Vec::new(),
+                    index: 0,
+                    manage: false,
+                });
+                self.fail(error);
+            }
+        }
+    }
+
+    /// The roles this app names, for the pickers.
+    ///
+    /// The manifest collects every role mentioned in a permission, a function
+    /// or a field's options. An app that names none still has the two the
+    /// framework itself creates memberships with.
+    fn known_roles(&self) -> Vec<String> {
+        let known = &self.manifest.auth.known_roles;
+        if known.is_empty() {
+            vec!["member".into(), ADMIN_ROLE.into()]
+        } else {
+            known.clone()
+        }
+    }
+
+    fn open_grant_picker(&mut self) {
+        let Main::Team(team) = &self.main else { return };
+        if !team.manage {
+            return self.say("You may not hand out roles in this organization.");
+        }
+        let index = team.index;
+        let Some(member) = team.members.get(index) else {
+            return;
+        };
+        let held = member.roles();
+        let name = member.name.clone();
+        let items: Vec<(String, String)> = self
+            .known_roles()
+            .into_iter()
+            // Never offer a role someone already holds: the server refuses a
+            // second copy, and a second copy would make revoking the first look
+            // like it did nothing.
+            .filter(|role| !held.contains(role))
+            .map(|role| (role.clone(), role))
+            .collect();
+        if items.is_empty() {
+            return self.say(format!("{name} already holds every role this app names."));
+        }
+        self.picker = Some(Picker {
+            title: format!("Give {name} a role"),
+            items,
+            index: 0,
+            kind: PickerKind::GrantRole { member: index },
+        });
+    }
+
+    fn open_revoke_picker(&mut self) {
+        let Main::Team(team) = &self.main else { return };
+        let index = team.index;
+        let Some(member) = team.members.get(index) else {
+            return;
+        };
+        let name = member.name.clone();
+        let mine = member.is_me;
+        // The value is the grant row to delete; the primary role has none, so
+        // it is revoked by clearing the column instead and carries no id.
+        let items: Vec<(String, String)> = member
+            .roles()
+            .into_iter()
+            .filter(|role| member.may_revoke(role))
+            .map(|role| {
+                let id = member
+                    .grants
+                    .iter()
+                    .find(|(_, held)| *held == role)
+                    .map(|(id, _)| id.clone())
+                    .unwrap_or_default();
+                (format!("{id}\u{1f}{role}"), role)
+            })
+            .collect();
+        if items.is_empty() {
+            return self.say(if mine {
+                "You cannot remove your own admin role — another admin can do it for you."
+                    .to_string()
+            } else {
+                format!("{name} holds no role you can take away.")
+            });
+        }
+        self.picker = Some(Picker {
+            title: format!("Take a role from {name}"),
+            items,
+            index: 0,
+            kind: PickerKind::RevokeRole { member: index },
+        });
+    }
+
+    async fn grant_role(&mut self, member: usize, role: String) {
+        let Main::Team(team) = &self.main else { return };
+        let Some(member) = team.members.get(member) else {
+            return;
+        };
+        let (id, name, mine) = (
+            member.membership_id.clone(),
+            member.name.clone(),
+            member.is_me,
+        );
+        let body = serde_json::json!({ "membership_id": id, "role": role });
+        match self.client.create("membership_role", body).await {
+            Ok(_) => {
+                self.say(format!("{name} is also {role}."));
+                self.after_role_change(mine).await;
+            }
+            Err(error) => self.fail(error),
+        }
+    }
+
+    async fn revoke_role(&mut self, member: usize, grant_id: String, role: String) {
+        let Main::Team(team) = &self.main else { return };
+        let Some(member) = team.members.get(member) else {
+            return;
+        };
+        let (id, name, mine) = (
+            member.membership_id.clone(),
+            member.name.clone(),
+            member.is_me,
+        );
+        let done = if grant_id.is_empty() {
+            // The primary role has no row to delete; clearing the column is how
+            // it goes away.
+            self.client
+                .update("membership", &id, serde_json::json!({ "role": null }))
+                .await
+                .map(|_| ())
+        } else {
+            self.client.delete("membership_role", &grant_id).await
+        };
+        match done {
+            Ok(()) => {
+                self.say(format!("{name} is no longer {role}."));
+                self.after_role_change(mine).await;
+            }
+            Err(error) => self.fail(error),
+        }
+    }
+
+    /// Re-read the screen after a role moved — and our own permissions too,
+    /// when the role that moved was ours.
+    async fn after_role_change(&mut self, was_me: bool) {
+        let said = self.status.clone();
+        self.load_team().await;
+        if was_me {
+            self.load_roles().await;
+        }
+        self.status = said;
+    }
+
     // --- opening things ---------------------------------------------------
 
     /// Show whatever the sidebar selection points at.
@@ -847,6 +1254,14 @@ impl Cli {
                     return;
                 };
                 self.main = Main::Form(Form::run(index, function));
+            }
+            NavKind::Team => {
+                self.main = Main::Team(Team {
+                    members: Vec::new(),
+                    index: 0,
+                    manage: false,
+                });
+                self.load_team().await;
             }
             NavKind::Session => self.main = Main::Session,
         }
@@ -1139,6 +1554,7 @@ impl Cli {
                     self.client.organization = Some(id.to_string());
                 }
                 self.save_credentials();
+                self.load_roles().await;
                 self.onboarding = None;
                 self.say(format!("{label} is ready. You are its admin."));
                 self.open_selected().await;
@@ -1275,6 +1691,7 @@ impl Cli {
         self.identity = None;
         self.identity_id = None;
         self.identity_note = None;
+        self.roles.clear();
         self.onboarding = None;
         self.main = Main::Empty(String::new());
         self.sign_in = Some(SignIn::Menu { index: 0 });
@@ -1382,10 +1799,15 @@ impl Cli {
             PickerKind::Organization => {
                 self.client.organization = Some(value);
                 self.save_credentials();
+                // Roles are per organisation, so the ones we hold here are not
+                // the ones we held there.
+                self.load_roles().await;
                 self.say(format!("Now working in {label}."));
                 // Every org-scoped list on screen is now the wrong list.
-                if matches!(self.main, Main::List(_)) {
-                    self.reload().await;
+                match self.main {
+                    Main::List(_) => self.reload().await,
+                    Main::Team(_) => self.load_team().await,
+                    _ => {}
                 }
             }
             PickerKind::Reference { field } => {
@@ -1394,6 +1816,12 @@ impl Cli {
                         field.set(value);
                     }
                 }
+            }
+            PickerKind::GrantRole { member } => self.grant_role(member, value).await,
+            PickerKind::RevokeRole { member } => {
+                let (grant_id, role) = value.split_once('\u{1f}').unwrap_or(("", value.as_str()));
+                let (grant_id, role) = (grant_id.to_string(), role.to_string());
+                self.revoke_role(member, grant_id, role).await;
             }
         }
     }
@@ -1661,6 +2089,7 @@ impl Cli {
             Main::Detail(_) => self.detail_key(key).await,
             Main::Form(_) => self.form_key(key).await,
             Main::Output { .. } => self.output_key(key),
+            Main::Team(_) => self.team_key(key).await,
             Main::Session => self.session_key(key).await,
             Main::Empty(_) => self.focus = Focus::Nav,
         }
@@ -1875,6 +2304,41 @@ impl Cli {
         }
     }
 
+    async fn team_key(&mut self, key: KeyEvent) {
+        let last = match &self.main {
+            Main::Team(team) => team.members.len().saturating_sub(1),
+            _ => 0,
+        };
+        let move_to = |cli: &mut Cli, index: usize| {
+            if let Main::Team(team) = &mut cli.main {
+                team.index = index.min(last);
+            }
+        };
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                let next = match &self.main {
+                    Main::Team(team) => team.index + 1,
+                    _ => 0,
+                };
+                move_to(self, next);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let previous = match &self.main {
+                    Main::Team(team) => team.index.saturating_sub(1),
+                    _ => 0,
+                };
+                move_to(self, previous);
+            }
+            KeyCode::Home => move_to(self, 0),
+            KeyCode::End | KeyCode::Char('G') => move_to(self, last),
+            KeyCode::Char('g') => self.open_grant_picker(),
+            KeyCode::Char('d') | KeyCode::Char('x') => self.open_revoke_picker(),
+            KeyCode::Char('r') => self.load_team().await,
+            KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => self.focus = Focus::Nav,
+            _ => {}
+        }
+    }
+
     async fn session_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('g') => self.issue_key().await,
@@ -1898,6 +2362,18 @@ impl Cli {
             _ => {}
         }
     }
+}
+
+/// A membership's primary role, if it has one. An empty column is no role.
+fn role_of(row: &Value) -> Option<String> {
+    row.get("role").map(api::scalar).filter(|r| !r.is_empty())
+}
+
+/// A `membership_role` row as `(id, role)`.
+fn grant_of(row: &Value) -> Option<(String, String)> {
+    let id = row.get("id").map(api::scalar).filter(|id| !id.is_empty())?;
+    let role = row.get("role").map(api::scalar).filter(|r| !r.is_empty())?;
+    Some((id, role))
 }
 
 /// What is visibly wrong with an API key, if anything.
@@ -2164,6 +2640,177 @@ mod tests {
         let mut cli = Cli::new(client, manifest, Store::default(), PathBuf::from("."));
         cli.organizations_known = true;
         cli
+    }
+
+    /// A `membership` resource anyone in the organisation may list, plus the
+    /// `membership_role` join table whose rows are the grants.
+    fn membership_resources(create: &str) -> Vec<ResourceManifest> {
+        let listable = ActionPermission {
+            value: "member".into(),
+            ..Default::default()
+        };
+        vec![
+            ResourceManifest {
+                name: "membership".into(),
+                label: "Membership".into(),
+                plural: "Memberships".into(),
+                permissions: ActionPermissions {
+                    list: listable.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ResourceManifest {
+                name: "membership_role".into(),
+                label: "Role".into(),
+                plural: "Roles".into(),
+                permissions: ActionPermissions {
+                    list: listable,
+                    create: ActionPermission {
+                        value: create.into(),
+                        role: create.strip_prefix("role:").map(str::to_string),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ]
+    }
+
+    fn member(name: &str, primary: Option<&str>, grants: &[&str], is_me: bool) -> Member {
+        Member {
+            membership_id: format!("m-{name}"),
+            name: name.into(),
+            primary: primary.map(str::to_string),
+            grants: grants
+                .iter()
+                .map(|role| (format!("g-{name}-{role}"), role.to_string()))
+                .collect(),
+            is_me,
+        }
+    }
+
+    #[test]
+    fn a_members_roles_are_the_primary_one_and_their_grants_without_repeats() {
+        let sam = member("sam", Some("member"), &["editor", "member"], false);
+        // The primary role comes first — it is the one the server reports as
+        // *the* role — and a grant that repeats it is not a second role.
+        assert_eq!(sam.roles(), vec!["member", "editor"]);
+
+        // Someone with no role at all is a real state: a membership row whose
+        // column was cleared.
+        assert!(member("kim", None, &[], false).roles().is_empty());
+    }
+
+    #[test]
+    fn the_team_screen_appears_only_where_memberships_can_be_listed() {
+        let with = console(membership_resources("role:admin"));
+        assert!(with.nav.iter().any(|item| item.kind == NavKind::Team));
+
+        // An app whose memberships nobody may list has no team to show, and a
+        // screen that can only ever say "forbidden" is worse than no screen.
+        let private = console(vec![ResourceManifest {
+            name: "membership".into(),
+            permissions: ActionPermissions {
+                list: ActionPermission {
+                    value: "none".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }]);
+        assert!(!private.nav.iter().any(|item| item.kind == NavKind::Team));
+    }
+
+    #[tokio::test]
+    async fn an_admin_may_take_roles_from_others_but_never_their_own_admin() {
+        let mut cli = console(membership_resources("role:admin"));
+        cli.main = Main::Team(Team {
+            members: vec![
+                member("me", Some("admin"), &["editor"], true),
+                member("sam", Some("member"), &["editor"], false),
+            ],
+            index: 0,
+            manage: true,
+        });
+
+        // Our own admin is not on offer. An organisation can only lose its last
+        // administrator if that administrator removes themselves, so this is
+        // what keeps every organisation administrable.
+        cli.open_revoke_picker();
+        let picker = cli.picker.take().expect("a picker for our other role");
+        let offered: Vec<&str> = picker.items.iter().map(|(_, role)| role.as_str()).collect();
+        assert_eq!(offered, vec!["editor"]);
+
+        // Someone else's roles are all fair game, admin included.
+        if let Main::Team(team) = &mut cli.main {
+            team.index = 1;
+        }
+        cli.open_revoke_picker();
+        let picker = cli.picker.take().expect("a picker");
+        let offered: Vec<&str> = picker.items.iter().map(|(_, role)| role.as_str()).collect();
+        assert_eq!(offered, vec!["member", "editor"]);
+        // The primary role carries no grant row: it is revoked by clearing the
+        // column, and the picker says so by having nothing to delete.
+        assert_eq!(picker.items[0].0, "\u{1f}member");
+        assert_eq!(picker.items[1].0, "g-sam-editor\u{1f}editor");
+    }
+
+    #[tokio::test]
+    async fn only_the_last_admin_of_an_organization_is_told_why_they_cannot_resign() {
+        let mut cli = console(membership_resources("role:admin"));
+        cli.main = Main::Team(Team {
+            members: vec![member("me", Some("admin"), &[], true)],
+            index: 0,
+            manage: true,
+        });
+        cli.open_revoke_picker();
+        assert!(cli.picker.is_none());
+        assert!(
+            cli.status.contains("another admin can do it for you"),
+            "got {:?}",
+            cli.status
+        );
+    }
+
+    #[tokio::test]
+    async fn a_role_someone_already_holds_is_never_offered_again() {
+        let mut cli = console(membership_resources("role:admin"));
+        cli.manifest.auth.known_roles = vec!["member".into(), "editor".into(), "admin".into()];
+        cli.main = Main::Team(Team {
+            members: vec![member("sam", Some("member"), &["editor"], false)],
+            index: 0,
+            manage: true,
+        });
+
+        // The server refuses a duplicate, and a second copy would make revoking
+        // the first look like it did nothing.
+        cli.open_grant_picker();
+        let picker = cli.picker.take().expect("a picker");
+        let offered: Vec<&str> = picker.items.iter().map(|(_, role)| role.as_str()).collect();
+        assert_eq!(offered, vec!["admin"]);
+    }
+
+    #[tokio::test]
+    async fn a_console_that_may_not_grant_roles_says_so_instead_of_offering_a_picker() {
+        let mut cli = console(membership_resources("private"));
+        cli.main = Main::Team(Team {
+            members: vec![member("sam", Some("member"), &[], false)],
+            index: 0,
+            // What the manifest said about `membership_role.create`.
+            manage: false,
+        });
+        cli.open_grant_picker();
+        assert!(cli.picker.is_none());
+        assert!(cli.status.contains("may not hand out roles"));
+    }
+
+    #[test]
+    fn an_app_that_names_no_roles_still_offers_the_two_the_framework_uses() {
+        let cli = console(membership_resources("role:admin"));
+        assert_eq!(cli.known_roles(), vec!["member", "admin"]);
     }
 
     #[test]
