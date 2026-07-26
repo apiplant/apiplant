@@ -9,17 +9,22 @@ automatically — you don't write a single line of tenancy code.
 * **`organization`** — the tenant. A built-in, `global` resource.
 * **`membership`** — the N:N join between users and organisations. A user can
   belong to any number of organisations, and each membership carries the user's
-  **role in that organisation** (`admin`, `member`, or anything you like).
+  **primary role in that organisation** (`admin`, `member`, or anything you
+  like).
+* **`membership_role`** — the additional roles a membership holds. Roles are a
+  set: `membership.role` plus these rows is what a `role:` permission is checked
+  against.
 * Every other resource is **organisation-scoped** by default: it carries an
   `organization_id` (injected automatically if you don't declare one), and all
   access is confined to the caller's *active organisation*.
 
 ```
 user ─┐            ┌─ organization
-      ├─ membership ┤   (role: "admin" | "member" | …)
+      ├─ membership ┤   (role: the primary one)
       └─────────────┘
-                     ▲
-   post, comment, … ─┘  (organization_id, auto-added & enforced)
+             │       ▲
+             │       └─ post, comment, …  (organization_id, auto-added & enforced)
+             └─ membership_role  (one row per further role held)
 ```
 
 ## What "automatic" means
@@ -64,9 +69,15 @@ Single-org users never need the header; multi-org users pass it per request.
 
 ## Roles are per-organisation
 
-There is no global "admin". A user's role lives on their **membership**, so
+There is no global "admin". A user's roles live on their **membership**, so
 `role:admin` means *admin of the active organisation*. The same user can be an
 admin of one org and a plain member of another.
+
+A membership holds as many roles as you give it — the primary `role` plus a
+`membership_role` row each — and an `admin` holds every role the app defines
+without being granted them. Nobody may remove their own `admin`, which is what
+guarantees an organisation always has someone who can administer it. The rules
+are in [Permissions](permissions.md#roles).
 
 ```toml
 [permissions]
@@ -81,7 +92,7 @@ delete = "role:admin"   # an admin *of this organisation*
 | Level | Meaning on an org-scoped resource |
 |-------|------------------------------------|
 | `member` | any member of the active organisation (the default) |
-| `role:<name>` | a member whose membership role is `<name>` |
+| `role:<name>` | a member holding `<name>` among their roles — or holding `admin` |
 | `owner` | the row's owner (`owner_id`), within the organisation |
 | `public` / `authenticated` | treated like `member` (org context is always required) |
 | `private` | never exposed |
@@ -116,6 +127,16 @@ curl -XPOST $API/membership -H "authorization: Bearer $ADMIN_TOKEN" \
 
 curl -XPOST $API/membership -H "authorization: Bearer $ADMIN_TOKEN" \
      -d '{"user_id":"<uuid>","role":"member"}'
+```
+
+**Giving somebody another role** adds a `membership_role` row; their existing
+roles are untouched.
+
+```bash
+curl -XPOST $API/membership_role -H "authorization: Bearer $ADMIN_TOKEN" \
+     -d '{"membership_id":"<uuid>","role":"billing"}'   # organization_id stamped automatically
+
+curl -XDELETE $API/membership_role/<uuid> -H "authorization: Bearer $ADMIN_TOKEN"
 ```
 
 The email form matters because it is the only one that works for someone you

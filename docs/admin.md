@@ -66,7 +66,7 @@ back; a directory left in the app is just files.
 | A resource | A searchable, paginated table. Click a row to open it. |
 | A record | One form with every field, its relationships, and the records attached to it. |
 | An action | A form generated from a [function](functions.md)'s input type, and its result. |
-| Team | Who is in the organisation and what role each holds. |
+| Team | Who is in the organisation and which roles each holds — added and revoked one at a time. |
 | Organization | The workspace's details, and switching between workspaces. |
 | Your account | Their own profile. |
 | API keys | Issuing and revoking keys. |

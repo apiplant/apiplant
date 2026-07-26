@@ -321,7 +321,7 @@ impl ResourceAdmin {
 pub fn is_auth_resource(name: &str) -> bool {
     matches!(
         name,
-        "user" | "organization" | "membership" | "api_key" | "oauth_connection"
+        "user" | "organization" | "membership" | "membership_role" | "api_key" | "oauth_connection"
     )
 }
 

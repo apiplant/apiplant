@@ -246,8 +246,8 @@ function TopBar(props: { onToggleNav: () => void }) {
       >
         <div class="border-b border-line px-3 pb-2 pt-1">
           <p class="truncate text-[0.8125rem] font-medium text-ink">{currentUserLabel()}</p>
-          <Show when={session.role}>
-            <p class="mt-0.5 text-[0.6875rem] text-faint">{session.role}</p>
+          <Show when={session.roles.length}>
+            <p class="mt-0.5 text-[0.6875rem] text-faint">{session.roles.join(", ")}</p>
           </Show>
         </div>
         <MenuItem onClick={() => navigate({ kind: "account" })}>Your account</MenuItem>

@@ -75,9 +75,14 @@ stamps the caller's active organisation over it.
 
 ## Members and roles
 
-`organization`, `membership` and `user` are built-in resources. A membership row
-carries a `role`, which is what `role:admin` in `task.toml` checks — try deleting
-a task as a non-admin member and you'll get `403`.
+`organization`, `membership`, `membership_role` and `user` are built-in
+resources. A membership row carries the member's **primary** `role`, and each
+`membership_role` row adds another — roles are a set, and `role:admin` in
+`task.toml` passes if any of them is `admin`. Try deleting a task as a non-admin
+member and you'll get `403`.
+
+An `admin` holds every role the app defines, and nobody may remove their own
+`admin` — so an organisation always has somebody who can administer it.
 
 Details in [Multitenancy](../../docs/multitenancy.md).
 

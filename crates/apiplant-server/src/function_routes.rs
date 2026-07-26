@@ -59,13 +59,16 @@ pub async fn invoke(
             if principal.is_none() {
                 return error(401, "authentication required");
             }
-            let membership_role = state
-                .active_org(&req, &principal)
-                .zip(principal.as_ref())
-                .and_then(|(org, principal)| principal.role_in(org));
-            let ok = match (&access, membership_role) {
-                (FunctionAccess::Member, role) => role.is_some(),
-                (FunctionAccess::Role(required), Some(held)) => held == required,
+            // `active_org` already refuses an organisation the caller does not
+            // belong to, so membership is settled by having one at all — a
+            // member with no role is still a member.
+            let org = state.active_org(&req, &principal);
+            let ok = match (&access, org, principal.as_ref()) {
+                (FunctionAccess::Member, Some(org), Some(caller)) => caller.is_member(org),
+                (FunctionAccess::Role(required), Some(org), Some(caller)) => {
+                    // Any of the caller's roles will do, and an admin holds all.
+                    caller.has_role_in(org, required)
+                }
                 _ => false,
             };
             if !ok {

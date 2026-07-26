@@ -109,14 +109,50 @@ delete = "role:admin"
 Roles live on the built-in `membership` resource, not on the user globally. A
 `role:admin` policy therefore means **admin of the active organisation**.
 
+A member holds a **set** of roles, not one: `membership.role` is their primary
+role, and each `membership_role` row adds another. Somebody can be `billing`
+*and* `support` without either displacing the other, and a `role:` policy passes
+if **any** of their roles matches.
+
 When a request is authorised against an org-scoped resource, apiplant:
 
 1. resolves the active organisation,
 2. checks that the caller is a member of it,
-3. compares the membership's `role` to the requested `role:<name>`.
+3. checks the requested `role:<name>` against every role that membership holds.
 
 That means the same user can be an admin in one organisation and a plain member
 in another. See [Multitenancy](multitenancy.md#roles-are-per-organisation).
+
+### `admin` holds every role
+
+An admin of an organisation satisfies **every** `role:` check in it. Granting
+someone `admin` grants them `role:billing`, `role:support` and anything else the
+app defines, without a row per role — so adding a new role to a model never
+locks the people running the place out of it.
+
+This is a rule about *checks*, never about stored data: `admin` is not expanded
+into anyone's roles. Their roles remain the ones they were actually given, so
+removing one is a change that means something, and demoting an admin removes
+everything the admin role implied along with it.
+
+### Nobody may remove their own `admin`
+
+An admin can demote or remove **another** admin; they cannot demote or remove
+themselves. That reads like a courtesy and is really a structural guarantee:
+since the only way for an organisation to lose its last admin is for that admin
+to remove themselves, forbidding it means **every organisation always has at
+least one administrator**.
+
+The rule covers every route to the same end — clearing your own `role`, deleting
+your own `admin` grant, and deleting your own membership — and answers `403`:
+
+```
+you cannot remove your own admin role — another admin can do it for you
+```
+
+Granting a role somebody already holds answers `409`. Two grants of one role are
+not twice the permission; they are one role and a trap, because revoking the copy
+you can see appears to do nothing.
 
 ## Worked examples
 

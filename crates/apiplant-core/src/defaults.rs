@@ -67,7 +67,49 @@ references = "organization"
 required = true
 
 [fields.role]
-type = "string"            # the member's role in this organisation, e.g. "admin"
+type = "string"            # the member's *primary* role here, e.g. "admin".
+                           # Further roles are `membership_role` rows; a
+                           # `role:` permission is checked against all of them.
+"#;
+
+/// A single role held by a membership.
+///
+/// Roles are a set, not a slot: someone can be a `billing` *and* a `support`
+/// person without either displacing the other, which one column cannot express.
+/// [`MEMBERSHIP_TOML`]'s `role` stays as the member's **primary** role — it is
+/// what existing apps and hook contexts read — and these rows are the rest.
+/// Together they are the roles a `role:` permission is checked against.
+///
+/// `admin` is special: it satisfies every role check in its organisation
+/// without needing a row per role, so granting someone `admin` grants them
+/// everything the app defines.
+pub const MEMBERSHIP_ROLE_TOML: &str = r#"
+[resource]
+name = "membership_role"
+scope = "organization"
+timestamps = true
+
+[permissions]
+list   = "member"          # members can see who holds what
+read   = "member"
+create = "role:admin"      # admins grant roles
+update = "role:admin"
+delete = "role:admin"
+
+[fields.membership_id]
+type = "reference"
+references = "membership"
+required = true
+on_delete = "cascade"      # a removed member takes their roles with them
+
+[fields.organization_id]
+type = "reference"
+references = "organization"
+required = true
+
+[fields.role]
+type = "string"
+required = true
 "#;
 
 /// The default `user`: global (users are shared across organisations) with
@@ -168,6 +210,7 @@ pub fn builtins() -> Vec<(&'static str, &'static str)> {
         ("organization", ORGANIZATION_TOML),
         ("user", USER_TOML),
         ("membership", MEMBERSHIP_TOML),
+        ("membership_role", MEMBERSHIP_ROLE_TOML),
         ("api_key", API_KEY_TOML),
         ("oauth_connection", OAUTH_TOML),
     ]

@@ -1,6 +1,9 @@
 # Organisation-scoped (the default), so membership is required on top of the
 # policy below. `role:editor` means "an editor **in the caller's active
-# organisation**" — roles come from the membership row, not from the user.
+# organisation**" — roles come from the membership, not from the user, and a
+# membership holds a set of them: its primary `role` plus a `membership_role`
+# row each. An `admin` satisfies every one of these checks without being
+# granted the role.
 
 [resource]
 name = "announcement"

@@ -16,13 +16,13 @@
 
 use std::collections::HashMap;
 
-use apiplant_auth::Principal;
+use apiplant_auth::{Principal, ADMIN_ROLE};
 use apiplant_core::schema::Access;
 use apiplant_core::{HookEvent, Resource};
 use apiplant_db::{value, Filter};
 use ntex::web::types::{Json, Path, State};
 use ntex::web::{HttpRequest, HttpResponse};
-use serde_json::json;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::hooks::{self, HookRequest};
@@ -133,7 +133,8 @@ fn authorize_org_scoped(
         Access::Public | Access::Authenticated | Access::Member => {}
         Access::Owner => filters.push(Filter::eq(owner_column(r).to_string(), principal.user_id)),
         Access::Role(role) => {
-            if membership.role.as_deref() != Some(role.as_str()) {
+            // Any of the caller's roles will do, and an admin holds them all.
+            if !membership.has_role(role) {
                 return Err(error(
                     403,
                     format!("requires the `{role}` role in this organisation"),
@@ -601,6 +602,14 @@ pub async fn create(
         }
     }
 
+    // Granting a role somebody already holds is a no-op that looks like a
+    // grant, and leaves a second copy to be revoked later.
+    if r.meta.name == "membership_role" {
+        if let Some(resp) = duplicate_role(&state, &data).await {
+            return resp;
+        }
+    }
+
     let created = match state.db.create(r, &data).await {
         Ok(row) => row,
         Err(e) => return db_error(e),
@@ -663,6 +672,119 @@ async fn bootstrap_org_admin(
     }
 }
 
+// --- keeping an organisation administrable ----------------------------------
+
+/// Whether a change to `resource`'s row `id` would take the caller's own
+/// `admin` role away.
+///
+/// An admin may demote *another* admin — that is ordinary administration — but
+/// not themselves. The rule reads like courtesy and is actually structural: an
+/// organisation can only lose its last admin if that admin removes themselves,
+/// so forbidding self-removal is what guarantees there is always somebody left
+/// who can administer it.
+///
+/// `change` is the incoming body for an update, or `None` for a delete.
+async fn removes_own_admin(
+    state: &AppState,
+    r: &Resource,
+    id: Uuid,
+    caller: &Caller,
+    change: Option<&serde_json::Map<String, Value>>,
+) -> bool {
+    let Some(principal) = caller.principal.as_ref() else {
+        return false;
+    };
+    let Some(org) = caller.active_org else {
+        return false;
+    };
+    // Nothing to protect if they are not an admin here in the first place.
+    if !principal.is_admin_of(org) {
+        return false;
+    }
+
+    // A delete always removes whatever the row granted. An update only does so
+    // if it actually moves the `role` off `admin`; leaving the field out means
+    // leaving the role alone.
+    let still_admin_after = match change {
+        None => false,
+        Some(data) => match data.get("role") {
+            Some(Value::String(role)) => role == ADMIN_ROLE,
+            // Not mentioned, or nulled: nulling a role removes it too.
+            Some(Value::Null) => false,
+            Some(_) => false,
+            None => return false,
+        },
+    };
+    if still_admin_after {
+        return false;
+    }
+
+    let sql = match r.meta.name.as_str() {
+        // Deleting or demoting your own membership takes every role with it.
+        "membership" => match state.table("membership") {
+            Some(table) => {
+                format!("SELECT 1 AS hit FROM {table} WHERE id = $1::uuid AND user_id = $2::uuid")
+            }
+            None => return false,
+        },
+        // A `membership_role` row only matters when it is the admin grant.
+        "membership_role" => match (state.table("membership_role"), state.table("membership")) {
+            (Some(roles), Some(memberships)) => format!(
+                "SELECT 1 AS hit FROM {roles} r JOIN {memberships} m ON m.id = r.membership_id \
+                 WHERE r.id = $1::uuid AND m.user_id = $2::uuid AND r.role = 'admin'"
+            ),
+            _ => return false,
+        },
+        _ => return false,
+    };
+
+    let rows = state
+        .db
+        .raw_json(
+            &sql,
+            &[
+                Value::String(id.to_string()),
+                Value::String(principal.user_id.to_string()),
+            ],
+        )
+        .await;
+    matches!(rows, Ok(value) if value.as_array().is_some_and(|rows| !rows.is_empty()))
+}
+
+/// Refuse a second copy of a role somebody already holds.
+///
+/// Two grants of one role is not twice the permission, it is one role and a
+/// trap: revoking the visible copy appears to do nothing. The primary `role`
+/// column counts as a grant, so it cannot be shadowed either.
+async fn duplicate_role(
+    state: &AppState,
+    data: &serde_json::Map<String, Value>,
+) -> Option<HttpResponse> {
+    let role = data.get("role").and_then(Value::as_str)?.trim();
+    let membership_id = data.get("membership_id").and_then(Value::as_str)?;
+    let (roles, memberships) = (state.table("membership_role")?, state.table("membership")?);
+
+    let sql = format!(
+        "SELECT 1 AS hit FROM {memberships} m \
+         WHERE m.id = $1::uuid AND (m.role = $2 OR EXISTS ( \
+             SELECT 1 FROM {roles} r WHERE r.membership_id = m.id AND r.role = $2))"
+    );
+    let rows = state
+        .db
+        .raw_json(
+            &sql,
+            &[
+                Value::String(membership_id.to_string()),
+                Value::String(role.to_string()),
+            ],
+        )
+        .await
+        .ok()?;
+    rows.as_array()
+        .is_some_and(|rows| !rows.is_empty())
+        .then(|| error(409, format!("they already hold the `{role}` role here")))
+}
+
 pub async fn update(
     req: HttpRequest,
     state: State<AppState>,
@@ -688,6 +810,12 @@ pub async fn update(
     let hook_req = caller.hook_request(&req, &params).with_record(id);
 
     let mut data = body.into_inner();
+    if removes_own_admin(&state, r, id, &caller, Some(&data)).await {
+        return error(
+            403,
+            "you cannot remove your own admin role — another admin can do it for you",
+        );
+    }
     match hooks::run(
         &state,
         r,
@@ -754,6 +882,13 @@ pub async fn delete(
     let params = parse_query(req.query_string());
     let hook_req = caller.hook_request(&req, &params).with_record(id);
 
+    if removes_own_admin(&state, r, id, &caller, None).await {
+        return error(
+            403,
+            "you cannot remove your own admin role — another admin can do it for you",
+        );
+    }
+
     // A delete hook needs the row it is about to lose, so fetch it first — but
     // only when one is actually declared.
     let has_delete_hook =
@@ -808,10 +943,7 @@ mod tests {
         Caller {
             principal: Some(Principal {
                 user_id: Uuid::new_v4(),
-                organizations: vec![OrgMembership {
-                    org_id: access_org,
-                    role: role.map(str::to_string),
-                }],
+                organizations: vec![OrgMembership::new(access_org, role.map(str::to_string), [])],
             }),
             active_org: Some(access_org),
         }
@@ -854,14 +986,8 @@ references = "user"
             principal: Some(Principal {
                 user_id: Uuid::new_v4(),
                 organizations: vec![
-                    OrgMembership {
-                        org_id: org_a,
-                        role: Some("admin".into()),
-                    },
-                    OrgMembership {
-                        org_id: org_b,
-                        role: Some("member".into()),
-                    },
+                    OrgMembership::new(org_a, Some("admin".into()), []),
+                    OrgMembership::new(org_b, Some("member".into()), []),
                 ],
             }),
             active_org: None,

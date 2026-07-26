@@ -52,7 +52,11 @@ pub struct HookRequest {
     authenticated: bool,
     principal_id: Option<String>,
     organization_id: Option<String>,
+    /// The caller's primary role in the active organisation.
     role: Option<String>,
+    /// Every role they hold there — what a `role:` permission is checked
+    /// against, since one member can hold several and an admin holds all.
+    roles: Vec<String>,
     record_id: Option<String>,
 }
 
@@ -75,6 +79,13 @@ impl HookRequest {
                 .zip(active_org)
                 .and_then(|(p, org)| p.role_in(org))
                 .map(str::to_string),
+            // `role` is the caller's primary one and stays exactly what it was;
+            // `roles` is every role they hold, which is what a permission is
+            // actually checked against.
+            roles: principal
+                .zip(active_org)
+                .map(|(p, org)| p.roles_in(org).to_vec())
+                .unwrap_or_default(),
             record_id: None,
         }
     }
@@ -114,6 +125,7 @@ fn context_json(
         "principal_id": request.principal_id,
         "organization_id": request.organization_id,
         "role": request.role,
+        "roles": request.roles,
         "record_id": request.record_id,
         "data": Value::Null,
         "row": Value::Null,
@@ -269,7 +281,8 @@ mod tests {
             authenticated: true,
             principal_id: Some("11111111-1111-1111-1111-111111111111".into()),
             organization_id: Some("22222222-2222-2222-2222-222222222222".into()),
-            role: Some("admin".into()),
+            role: Some("support".into()),
+            roles: vec!["support".into(), "billing".into()],
             record_id: None,
         }
     }
@@ -293,7 +306,11 @@ mod tests {
         assert_eq!(context["method"], "POST");
         assert_eq!(context["query"]["draft"], "true");
         assert_eq!(context["authenticated"], true);
-        assert_eq!(context["role"], "admin");
+        // `role` is the caller's primary one, unchanged; `roles` is every role
+        // they hold, which is what a `role:` permission is checked against.
+        assert_eq!(context["role"], "support");
+        assert_eq!(context["roles"][0], "support");
+        assert_eq!(context["roles"][1], "billing");
         assert!(context["record_id"].is_null());
     }
 

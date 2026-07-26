@@ -174,7 +174,8 @@ becomes the row's columns); replacements for `after_*` hooks can be any JSON.
 | `authenticated` | `bool` | Whether the caller is authenticated. |
 | `principal_id` | `Option<String>` | The caller's user id. |
 | `organization_id` | `Option<String>` | The caller's active organisation. |
-| `role` | `Option<String>` | The caller's role in that organisation. |
+| `role` | `Option<String>` | The caller's *primary* role in that organisation. |
+| `roles` | `Vec<String>` | Every role they hold there — what a `role:` permission is checked against. |
 | `record_id` | `Option<String>` | The id in the URL, for read/update/delete. |
 | `data` | `Option<Value>` | The submitted body, on `before_create`/`before_update`. |
 | `row` | `Option<Value>` | The row created, fetched, updated or deleted. |

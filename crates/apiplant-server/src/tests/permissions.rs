@@ -556,3 +556,309 @@ hidden = true
     fs::remove_dir_all(root).unwrap();
     db.cleanup().await;
 }
+
+/// Roles are a set, `admin` satisfies all of them, and nobody can demote
+/// themselves out of administering an organisation.
+#[ntex::test]
+async fn roles_are_a_set_that_admins_hold_all_of_and_cannot_resign_from() {
+    let db = TempDatabase::create("roles").await;
+    let root = temp_dir("roles");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    "[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n",
+                    db.url
+                ),
+            ),
+            (
+                // A resource only a `buyer` may create: the role check under test.
+                "models/order.toml",
+                r#"
+[resource]
+name = "order"
+scope = "organization"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:buyer"
+update = "role:buyer"
+delete = "role:admin"
+
+[fields.reference]
+type = "string"
+"#,
+            ),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let register = |email: &'static str| {
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({ "email": email, "password": "pw" }),
+        )
+    };
+    let founder = read_json(test::call_service(&app, register("founder@example.com")).await).await;
+    let founder_token = founder["token"].as_str().unwrap().to_string();
+    let staff = read_json(test::call_service(&app, register("staff@example.com")).await).await;
+    let staff_token = staff["token"].as_str().unwrap().to_string();
+
+    let org = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::post()
+                    .uri("/api/organization")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({ "name": "Acme" }).to_string()),
+                &founder_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    let org_id = org["id"].as_str().unwrap().to_string();
+
+    let as_founder = |req: test::TestRequest| {
+        bearer(req.header("x-organization", org_id.clone()), &founder_token).to_request()
+    };
+    let as_staff = |req: test::TestRequest| {
+        bearer(req.header("x-organization", org_id.clone()), &staff_token).to_request()
+    };
+
+    // The founder is the admin, and holds `buyer` without anyone granting it.
+    let created = test::call_service(
+        &app,
+        as_founder(
+            test::TestRequest::post()
+                .uri("/api/order")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "reference": "PO-1" }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(created.status().as_u16(), 201);
+
+    // Add the staff member with a primary role that is not `buyer`.
+    let membership = read_json(
+        test::call_service(
+            &app,
+            as_founder(
+                test::TestRequest::post()
+                    .uri("/api/membership")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(
+                        json!({ "email": "staff@example.com", "role": "support" }).to_string(),
+                    ),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let staff_membership = membership["id"].as_str().unwrap().to_string();
+
+    // `support` is not `buyer`, and a plain member does not inherit anything.
+    let refused = test::call_service(
+        &app,
+        as_staff(
+            test::TestRequest::post()
+                .uri("/api/order")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "reference": "PO-2" }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(refused.status().as_u16(), 403);
+
+    // A second role, alongside the first rather than instead of it.
+    let granted = test::call_service(
+        &app,
+        as_founder(
+            test::TestRequest::post()
+                .uri("/api/membership_role")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(
+                    json!({ "membership_id": staff_membership, "role": "buyer" }).to_string(),
+                ),
+        ),
+    )
+    .await;
+    assert_eq!(granted.status().as_u16(), 201);
+    let grant_id = read_json(granted).await["id"].as_str().unwrap().to_string();
+
+    let allowed = test::call_service(
+        &app,
+        as_staff(
+            test::TestRequest::post()
+                .uri("/api/order")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "reference": "PO-3" }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(allowed.status().as_u16(), 201);
+
+    // …and the role they already had is still theirs.
+    let held = read_json(
+        test::call_service(
+            &app,
+            as_founder(test::TestRequest::get().uri("/api/membership_role")),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(held.as_array().unwrap().len(), 1);
+    assert_eq!(
+        read_json(
+            test::call_service(
+                &app,
+                as_founder(
+                    test::TestRequest::get().uri(&format!("/api/membership/{staff_membership}"))
+                ),
+            )
+            .await
+        )
+        .await["role"],
+        "support"
+    );
+
+    // Granting the same role twice is a trap, not a grant: revoking the visible
+    // copy would appear to do nothing.
+    let again = test::call_service(
+        &app,
+        as_founder(
+            test::TestRequest::post()
+                .uri("/api/membership_role")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(
+                    json!({ "membership_id": staff_membership, "role": "buyer" }).to_string(),
+                ),
+        ),
+    )
+    .await;
+    assert_eq!(again.status().as_u16(), 409);
+
+    // Nor may the primary role be shadowed by a duplicate grant.
+    let shadow = test::call_service(
+        &app,
+        as_founder(
+            test::TestRequest::post()
+                .uri("/api/membership_role")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(
+                    json!({ "membership_id": staff_membership, "role": "support" }).to_string(),
+                ),
+        ),
+    )
+    .await;
+    assert_eq!(shadow.status().as_u16(), 409);
+
+    // The admin may take a role off somebody else.
+    let revoked = test::call_service(
+        &app,
+        as_founder(test::TestRequest::delete().uri(&format!("/api/membership_role/{grant_id}"))),
+    )
+    .await;
+    assert_eq!(revoked.status().as_u16(), 204);
+    let refused_again = test::call_service(
+        &app,
+        as_staff(
+            test::TestRequest::post()
+                .uri("/api/order")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "reference": "PO-4" }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(refused_again.status().as_u16(), 403);
+
+    // But not off themselves — by demotion…
+    let own_membership = read_json(
+        test::call_service(
+            &app,
+            as_founder(test::TestRequest::get().uri("/api/membership")),
+        )
+        .await,
+    )
+    .await;
+    let founder_membership = own_membership
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["role"] == "admin")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let self_demote = test::call_service(
+        &app,
+        as_founder(
+            test::TestRequest::patch()
+                .uri(&format!("/api/membership/{founder_membership}"))
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "role": "support" }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(self_demote.status().as_u16(), 403);
+
+    // …or by walking out, which would leave the organisation unadministrable.
+    let self_remove = test::call_service(
+        &app,
+        as_founder(
+            test::TestRequest::delete().uri(&format!("/api/membership/{founder_membership}")),
+        ),
+    )
+    .await;
+    assert_eq!(self_remove.status().as_u16(), 403);
+
+    // Editing their own membership is fine as long as `admin` survives it.
+    let harmless = test::call_service(
+        &app,
+        as_founder(
+            test::TestRequest::patch()
+                .uri(&format!("/api/membership/{founder_membership}"))
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "role": "admin" }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(harmless.status().as_u16(), 200);
+
+    // A second admin may remove the first: only *self*-removal is refused, so
+    // an organisation always keeps at least one administrator.
+    let promote = test::call_service(
+        &app,
+        as_founder(
+            test::TestRequest::patch()
+                .uri(&format!("/api/membership/{staff_membership}"))
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "role": "admin" }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(promote.status().as_u16(), 200);
+
+    let demote_other = test::call_service(
+        &app,
+        as_staff(
+            test::TestRequest::patch()
+                .uri(&format!("/api/membership/{founder_membership}"))
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "role": "support" }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(demote_other.status().as_u16(), 200);
+
+    db.cleanup().await;
+}

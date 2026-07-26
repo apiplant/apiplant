@@ -55,7 +55,10 @@ stock, procurement, orders, fulfilment, payments and support — and it is all
 
 Three roles appear in the policies — `admin`, `manager`, `agent` — and they live
 on the **membership**, so the same person can be an admin here and nothing at
-all next door.
+all next door. Roles are a set: a membership's `role` is the primary one and
+each `membership_role` row adds another, so Max can be a `manager` *and* an
+`agent` without giving either up. An `admin` holds all three without being
+granted any, which is why Ana below never needs a second role.
 
 ## Run it
 

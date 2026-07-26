@@ -1,6 +1,7 @@
 //! Shared server state, caller-identity resolution, and active-organisation
 //! resolution.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -143,15 +144,33 @@ impl AppState {
         Uuid::parse_str(row.get("uid")?.as_str()?).ok()
     }
 
-    /// Load the caller's organisation memberships (with their per-org role).
+    /// Load the caller's organisation memberships, with every role they hold
+    /// in each.
+    ///
+    /// Roles come from two places — the membership's own primary `role` column
+    /// and its `membership_role` rows — and both are read here, once per
+    /// request, so a role granted or revoked takes effect on the next call
+    /// rather than whenever a token happens to expire.
     async fn load_memberships(&self, user_id: Uuid) -> Vec<OrgMembership> {
         let Some(membership_tbl) = self.table("membership") else {
             return Vec::new();
         };
-        let sql = format!(
-            "SELECT organization_id::text AS org, role FROM {membership_tbl} \
-             WHERE user_id = $1::uuid"
-        );
+
+        // An app is free to drop the built-in `membership_role` resource, in
+        // which case the primary role is all there is.
+        let sql = match self.table("membership_role") {
+            Some(role_tbl) => format!(
+                "SELECT m.organization_id::text AS org, m.role AS role, r.role AS extra \
+                 FROM {membership_tbl} m \
+                 LEFT JOIN {role_tbl} r ON r.membership_id = m.id \
+                 WHERE m.user_id = $1::uuid"
+            ),
+            None => format!(
+                "SELECT organization_id::text AS org, role, NULL AS extra \
+                 FROM {membership_tbl} WHERE user_id = $1::uuid"
+            ),
+        };
+
         let rows = match self
             .db
             .raw_json(&sql, &[serde_json::Value::String(user_id.to_string())])
@@ -160,17 +179,50 @@ impl AppState {
             Ok(v) => v,
             Err(_) => return Vec::new(),
         };
-        rows.as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|row| {
-                        let org_id = Uuid::parse_str(row.get("org")?.as_str()?).ok()?;
-                        let role = row.get("role").and_then(|v| v.as_str()).map(str::to_owned);
-                        Some(OrgMembership { org_id, role })
-                    })
-                    .collect()
+
+        // The join returns one row per role, so the organisations have to be
+        // folded back together — in first-seen order, so the result does not
+        // reshuffle between requests.
+        let mut order: Vec<Uuid> = Vec::new();
+        let mut primary: HashMap<Uuid, Option<String>> = HashMap::new();
+        let mut extras: HashMap<Uuid, Vec<String>> = HashMap::new();
+
+        for row in rows.as_array().map(Vec::as_slice).unwrap_or_default() {
+            let Some(org) = row
+                .get("org")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+            else {
+                continue;
+            };
+            // The primary role repeats on every joined row; the first one is
+            // the one, and it also fixes the organisation's place in the order.
+            if let std::collections::hash_map::Entry::Vacant(slot) = primary.entry(org) {
+                order.push(org);
+                slot.insert(
+                    row.get("role")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                        .filter(|role| !role.is_empty()),
+                );
+            }
+            if let Some(extra) = row.get("extra").and_then(|v| v.as_str()) {
+                if !extra.is_empty() {
+                    extras.entry(org).or_default().push(extra.to_string());
+                }
+            }
+        }
+
+        order
+            .into_iter()
+            .map(|org| {
+                OrgMembership::new(
+                    org,
+                    primary.get(&org).cloned().flatten(),
+                    extras.remove(&org).unwrap_or_default(),
+                )
             })
-            .unwrap_or_default()
+            .collect()
     }
 
     /// Every user who shares at least one organisation with `principal`
@@ -231,7 +283,7 @@ impl AppState {
     }
 
     /// Quoted-safe physical table name for a resource by logical name.
-    fn table(&self, resource: &str) -> Option<String> {
+    pub(crate) fn table(&self, resource: &str) -> Option<String> {
         self.app
             .resources
             .get(resource)
@@ -265,10 +317,7 @@ mod tests {
             user_id: Uuid::new_v4(),
             organizations: orgs
                 .iter()
-                .map(|(org_id, role)| OrgMembership {
-                    org_id: *org_id,
-                    role: role.map(str::to_string),
-                })
+                .map(|(org_id, role)| OrgMembership::new(*org_id, role.map(str::to_string), []))
                 .collect(),
         }
     }

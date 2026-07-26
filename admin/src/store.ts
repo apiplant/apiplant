@@ -29,7 +29,12 @@ export interface Session {
   profile: ApiRecord | null;
   organizations: ApiRecord[];
   organizationId: string;
-  role: string | null;
+  /**
+   * Every role held in the active organisation — the membership's primary role
+   * plus its `membership_role` rows. One person can hold several, so this is a
+   * set, not a slot.
+   */
+  roles: string[];
   loading: boolean;
 }
 
@@ -40,7 +45,7 @@ export const session = createMutable<Session>({
   profile: null,
   organizations: [],
   organizationId: "",
-  role: null,
+  roles: [],
   loading: false,
 });
 
@@ -176,7 +181,7 @@ export function signOut() {
   session.profile = null;
   session.organizations = [];
   session.organizationId = "";
-  session.role = null;
+  session.roles = [];
   persistSession();
   navigate({ kind: "dashboard" });
 }
@@ -288,21 +293,45 @@ export async function refreshSession() {
   }
 }
 
-/** Find the caller's role in the active organisation, for permission checks. */
+/**
+ * Whether the caller may act as `role` in the active organisation.
+ *
+ * An `admin` holds every role the app defines, so a `role:billing` screen opens
+ * for them without anyone having granted `billing`. The server applies the same
+ * rule; this only decides what to *offer*.
+ */
+export function hasRole(role: string): boolean {
+  return session.roles.includes(role) || session.roles.includes("admin");
+}
+
+/** The caller's primary role — the one worth printing next to their name. */
+export function primaryRole(): string | null {
+  return session.roles[0] ?? null;
+}
+
+/** Load every role the caller holds in the active organisation. */
 export async function refreshRole() {
-  session.role = null;
+  session.roles = [];
   if (!session.organizationId || !session.userId) return;
   try {
     const members = asRecords(
       await api(`/membership?user_id=${encodeURIComponent(session.userId)}&limit=1`, { org: true }),
     );
     const mine = members[0];
-    session.role = typeof mine?.role === "string" ? mine.role : null;
+    if (!mine) return;
+    // The primary role first, then the additional grants, deduplicated — the
+    // same order the server builds them in.
+    const extra = asRecords(
+      await api(`/membership_role?membership_id=${encodeURIComponent(String(mine.id ?? ""))}&limit=100`, {
+        org: true,
+      }),
+    ).map((row) => String(row.role ?? ""));
+    session.roles = [...new Set([String(mine.role ?? ""), ...extra])].filter(Boolean);
   } catch {
     // A member who cannot list memberships still gets to use the dashboard;
     // they simply see the actions their role allows, which is none of the
     // role-gated ones.
-    session.role = null;
+    session.roles = [];
   }
 }
 
@@ -359,21 +388,21 @@ export function can(resource: ResourceManifest, action: Action): boolean {
       // Org-scoped work needs somewhere to do it.
       return isSignedIn() && (resource.scope === "global" || Boolean(session.organizationId));
     default:
-      return policy.role ? session.role === policy.role : false;
+      return policy.role ? hasRole(policy.role) : false;
   }
 }
 
 /** Whether a resource belongs in this operator's navigation. */
 export function isResourceVisible(resource: ResourceManifest): boolean {
   if (!resource.visible) return false;
-  if (resource.roles.length && !resource.roles.includes(session.role ?? "")) return false;
+  if (resource.roles.length && !resource.roles.some(hasRole)) return false;
   return can(resource, "list");
 }
 
 /** Whether an action belongs in this operator's action list. */
 export function isFunctionVisible(fn: FunctionManifest): boolean {
   if (!fn.visible) return false;
-  if (fn.roles.length && !fn.roles.includes(session.role ?? "")) return false;
+  if (fn.roles.length && !fn.roles.some(hasRole)) return false;
   switch (fn.permission) {
     case "public":
       return true;
@@ -384,7 +413,7 @@ export function isFunctionVisible(fn: FunctionManifest): boolean {
     case "private":
       return false;
     default:
-      return fn.role ? session.role === fn.role : false;
+      return fn.role ? hasRole(fn.role) : false;
   }
 }
 

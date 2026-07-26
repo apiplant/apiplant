@@ -31,11 +31,13 @@ import {
   asRecords,
   currentOrganization,
   currentUserLabel,
+  hasRole,
   manifest,
   notify,
   organizationLabel,
   refreshSession,
   reportError,
+  refreshRole,
   resourceByName,
   session,
   setActiveOrganization,
@@ -124,7 +126,9 @@ export function AccountPage() {
             <div class="min-w-0">
               <p class="truncate text-sm font-medium text-ink">{currentUserLabel()}</p>
               <p class="mt-0.5 text-xs text-muted">
-                {session.role ? `${session.role} in ${organizationLabel(currentOrganization())}` : "No role assigned"}
+                {session.roles.length
+                  ? `${session.roles.join(", ")} in ${organizationLabel(currentOrganization())}`
+                  : "No role assigned"}
               </p>
             </div>
           </div>
@@ -145,7 +149,21 @@ export function TeamPage() {
     () => session.organizationId,
     async (organizationId) => {
       if (!organizationId) return [];
-      return asRecords(await api("/membership?limit=200&expand=user", { org: true }));
+      const rows = asRecords(await api("/membership?limit=200&expand=user", { org: true }));
+      // Roles live in two places — the membership's primary one and its
+      // `membership_role` rows — so the screen stitches them back together the
+      // same way the server does when it checks a permission.
+      const grants = asRecords(
+        await api("/membership_role?limit=500", { org: true }).catch(() => []),
+      );
+      return rows.map(
+        (member): ApiRecord => ({
+          ...member,
+          grants: grants.filter(
+            (grant) => String(grant.membership_id ?? "") === String(member.id ?? ""),
+          ),
+        }),
+      );
     },
   );
 
@@ -154,7 +172,7 @@ export function TeamPage() {
   const mayManage = createMemo(() => {
     const policy = membership()?.permissions.create;
     if (!policy) return false;
-    return policy.role ? session.role === policy.role : policy.value !== "private";
+    return policy.role ? hasRole(policy.role) : policy.value !== "private";
   });
 
   const memberName = (member: ApiRecord) => {
@@ -165,6 +183,34 @@ export function TeamPage() {
     return String(member.user_id ?? "Member");
   };
 
+  const isMe = (member: ApiRecord) => String(member.user_id ?? "") === session.userId;
+
+  /** Every role a member holds: the primary one first, then their grants. */
+  const rolesOf = (member: ApiRecord): string[] => {
+    const grants = Array.isArray(member.grants) ? (member.grants as ApiRecord[]) : [];
+    return [...new Set([String(member.role ?? ""), ...grants.map((g) => String(g.role ?? ""))])].filter(
+      Boolean,
+    );
+  };
+
+  /** Roles left to give someone, so the picker never offers a duplicate. */
+  const grantable = (member: ApiRecord) => roles().filter((role) => !rolesOf(member).includes(role));
+
+  /**
+   * Whether this role may be taken away here.
+   *
+   * Nobody may remove their own `admin`: an organisation can only lose its last
+   * administrator if that administrator removes themselves, so refusing it is
+   * what keeps every organisation administrable. Another admin still can.
+   */
+  const mayRevoke = (member: ApiRecord, role: string) => !(isMe(member) && role === "admin");
+
+  /** Re-read our own permissions when we changed our own roles. */
+  const afterChange = async (member: ApiRecord) => {
+    void refetch();
+    if (isMe(member)) await refreshRole();
+  };
+
   const changeRole = async (member: ApiRecord, role: string) => {
     try {
       await api(`/membership/${encodeURIComponent(String(member.id ?? ""))}`, {
@@ -173,9 +219,48 @@ export function TeamPage() {
         org: true,
       });
       notify("success", `${memberName(member)} is now ${role}.`);
-      void refetch();
-      // Changing your own role changes what you may do next.
-      if (String(member.user_id ?? "") === session.userId) session.role = role;
+      await afterChange(member);
+    } catch (error) {
+      reportError(error);
+    }
+  };
+
+  const grantRole = async (member: ApiRecord, role: string) => {
+    if (!role) return;
+    try {
+      await api("/membership_role", {
+        method: "POST",
+        body: { membership_id: String(member.id ?? ""), role },
+        org: true,
+      });
+      notify("success", `${memberName(member)} is also ${role}.`);
+      await afterChange(member);
+    } catch (error) {
+      reportError(error);
+    }
+  };
+
+  const revokeRole = async (member: ApiRecord, role: string) => {
+    const grant = (Array.isArray(member.grants) ? (member.grants as ApiRecord[]) : []).find(
+      (candidate) => String(candidate.role ?? "") === role,
+    );
+    try {
+      if (grant) {
+        await api(`/membership_role/${encodeURIComponent(String(grant.id ?? ""))}`, {
+          method: "DELETE",
+          org: true,
+        });
+      } else {
+        // The primary role has no grant row to delete; clearing the column is
+        // how it goes away.
+        await api(`/membership/${encodeURIComponent(String(member.id ?? ""))}`, {
+          method: "PATCH",
+          body: { role: null },
+          org: true,
+        });
+      }
+      notify("success", `${memberName(member)} is no longer ${role}.`);
+      await afterChange(member);
     } catch (error) {
       reportError(error);
     }
@@ -252,18 +337,76 @@ export function TeamPage() {
                       </div>
                       <Show
                         when={mayManage()}
-                        fallback={<Badge>{String(member.role ?? "member")}</Badge>}
+                        fallback={
+                          <div class="flex flex-wrap gap-1">
+                            <Show
+                              when={rolesOf(member).length}
+                              fallback={<Badge>no role</Badge>}
+                            >
+                              <For each={rolesOf(member)}>
+                                {(role) => <Badge tone={role === "admin" ? "accent" : undefined}>{role}</Badge>}
+                              </For>
+                            </Show>
+                          </div>
+                        }
                       >
-                        <select
-                          class="input w-36"
-                          value={String(member.role ?? "member")}
-                          onChange={(event) => void changeRole(member, event.currentTarget.value)}
-                        >
-                          <For each={roles()}>{(role) => <option value={role}>{role}</option>}</For>
-                        </select>
-                        <Button variant="ghost" size="sm" onClick={() => setRemoving(member)}>
-                          Remove
-                        </Button>
+                        <div class="flex flex-wrap items-center gap-1.5">
+                          <For each={rolesOf(member)}>
+                            {(role) => (
+                              <span class="inline-flex items-center gap-1 rounded-full border border-line bg-surface-2/60 py-0.5 pl-2.5 pr-1 text-[0.6875rem] text-ink">
+                                {role}
+                                <Show
+                                  when={mayRevoke(member, role)}
+                                  fallback={
+                                    <span
+                                      class="px-1 text-faint"
+                                      title="You cannot remove your own admin role. Another admin can."
+                                      aria-label="Your own admin role cannot be removed"
+                                    >
+                                      ·
+                                    </span>
+                                  }
+                                >
+                                  <button
+                                    type="button"
+                                    class="rounded-full px-1 text-faint transition-colors hover:text-danger"
+                                    title={`Remove ${role}`}
+                                    aria-label={`Remove ${role} from ${memberName(member)}`}
+                                    onClick={() => void revokeRole(member, role)}
+                                  >
+                                    ×
+                                  </button>
+                                </Show>
+                              </span>
+                            )}
+                          </For>
+                          <Show when={grantable(member).length}>
+                            <select
+                              class="input w-28 py-1 text-[0.6875rem]"
+                              value=""
+                              onChange={(event) => {
+                                const role = event.currentTarget.value;
+                                event.currentTarget.value = "";
+                                void (rolesOf(member).length
+                                  ? grantRole(member, role)
+                                  : changeRole(member, role));
+                              }}
+                            >
+                              <option value="">Add role…</option>
+                              <For each={grantable(member)}>
+                                {(role) => <option value={role}>{role}</option>}
+                              </For>
+                            </select>
+                          </Show>
+                          <Show
+                            when={!isMe(member) || !rolesOf(member).includes("admin")}
+                            fallback={<span class="w-[4.5rem]" />}
+                          >
+                            <Button variant="ghost" size="sm" onClick={() => setRemoving(member)}>
+                              Remove
+                            </Button>
+                          </Show>
+                        </div>
                       </Show>
                     </li>
                   )}
@@ -400,7 +543,7 @@ export function OrganizationPage() {
   const mayEdit = createMemo(() => {
     const policy = resourceByName("organization")?.permissions.update;
     if (!policy) return false;
-    return policy.role ? session.role === policy.role : policy.value !== "private";
+    return policy.role ? hasRole(policy.role) : policy.value !== "private";
   });
 
   const save = async () => {

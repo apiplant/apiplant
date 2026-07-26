@@ -454,8 +454,15 @@ pub struct Hook {
     pub principal_id: Option<String>,
     /// The caller's active organisation, when one is resolved.
     pub organization_id: Option<String>,
-    /// The caller's role in that organisation, when they have one.
+    /// The caller's *primary* role in that organisation, when they have one.
     pub role: Option<String>,
+    /// Every role they hold there. A member can hold several, and this is what
+    /// a `role:` permission is checked against — so prefer it to [`role`] when
+    /// deciding what somebody may do.
+    ///
+    /// [`role`]: Hook::role
+    #[serde(default)]
+    pub roles: Vec<String>,
     /// The id in the URL for single-record operations (read/update/delete).
     pub record_id: Option<String>,
     /// The submitted body on `before_create` / `before_update`.
@@ -1648,6 +1655,9 @@ mod tests {
         assert_eq!(hook.query.get("draft").map(String::as_str), Some("true"));
         assert!(hook.authenticated);
         assert_eq!(hook.role.as_deref(), Some("admin"));
+        // A context from an older server carries no `roles`; that is a hook
+        // with nothing to say about them, not a parse failure.
+        assert!(hook.roles.is_empty());
         assert!(hook.organization_id.is_some());
         assert_eq!(hook.record_id, None);
         assert_eq!(hook.row()["title"], "Hi");

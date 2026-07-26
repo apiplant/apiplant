@@ -18,7 +18,7 @@ whole access model.
 | `public` | no authentication |
 | `authenticated` | any signed-in caller |
 | `member` | a member of the caller's active organisation |
-| `role:<name>` | a member holding that role **in that organisation** |
+| `role:<name>` | a member holding that role **in that organisation** — or holding `admin`, which holds them all |
 | `owner` | the caller owns the row (`owner_field`, default `owner_id`) |
 | `private` | never exposed — answers `404` |
 
@@ -70,16 +70,50 @@ This resource is org-scoped (no `scope` line), so the caller must be a member
 ORG=$(curl -s -XPOST localhost:8099/api/organization -H "authorization: Bearer $T1" \
        -H 'content-type: application/json' -d '{"name":"Acme","slug":"acme"}' | jq -r .id)
 
-# The creator is an `admin`, so this is 403 — admin is not editor:
+# The creator is the organisation's `admin`, and an admin holds every role the
+# app defines — so `role:editor` passes without anyone granting `editor`:
 curl -s -XPOST localhost:8099/api/announcement -H "authorization: Bearer $T1" \
-  -H 'content-type: application/json' -d '{"headline":"Hello"}' -i
-
-# Grant yourself the editor role by updating your membership, then retry.
-MEM=$(curl -s "localhost:8099/api/membership?organization_id=$ORG" \
-       -H "authorization: Bearer $T1" | jq -r '.[0].id')
-curl -s -XPATCH localhost:8099/api/membership/$MEM -H "authorization: Bearer $T1" \
-  -H 'content-type: application/json' -d '{"role":"editor"}'
+  -H 'content-type: application/json' -d '{"headline":"Hello"}' -i   # → 201
 ```
+
+Somebody who is *not* an admin has to be given the role. Add a second account,
+then grant it:
+
+```bash
+T2=$(curl -s -XPOST localhost:8099/api/auth/register -H 'content-type: application/json' \
+      -d '{"email":"ed@example.com","password":"pw"}' | jq -r .token)
+
+# Added as a plain `member`: `role:editor` refuses them.
+MEM2=$(curl -s -XPOST localhost:8099/api/membership -H "authorization: Bearer $T1" \
+        -H "x-organization: $ORG" -H 'content-type: application/json' \
+        -d '{"email":"ed@example.com","role":"member"}' | jq -r .id)
+curl -s -XPOST localhost:8099/api/announcement -H "authorization: Bearer $T2" \
+  -H "x-organization: $ORG" -H 'content-type: application/json' \
+  -d '{"headline":"Mine"}' -i                                        # → 403
+
+# Roles are a set: this *adds* `editor` and leaves `member` alone.
+curl -s -XPOST localhost:8099/api/membership_role -H "authorization: Bearer $T1" \
+  -H "x-organization: $ORG" -H 'content-type: application/json' \
+  -d "{\"membership_id\":\"$MEM2\",\"role\":\"editor\"}"
+curl -s -XPOST localhost:8099/api/announcement -H "authorization: Bearer $T2" \
+  -H "x-organization: $ORG" -H 'content-type: application/json' \
+  -d '{"headline":"Mine"}' -i                                        # → 201
+```
+
+Two rules go with that. Granting a role somebody already holds answers `409` —
+one role granted twice is not twice the permission, just a copy that makes
+revoking the other one look broken. And nobody may take `admin` off themselves:
+
+```bash
+MEM1=$(curl -s "localhost:8099/api/membership?organization_id=$ORG" \
+        -H "authorization: Bearer $T1" | jq -r '.[] | select(.role=="admin") | .id')
+curl -s -XPATCH localhost:8099/api/membership/$MEM1 -H "authorization: Bearer $T1" \
+  -H "x-organization: $ORG" -H 'content-type: application/json' \
+  -d '{"role":"member"}' -i                                          # → 403
+```
+
+Another admin could demote them; they cannot demote themselves. That is what
+keeps every organisation with at least one administrator.
 
 Roles live on the **membership**, so the same person can be an admin in one
 organisation and a reader in another.

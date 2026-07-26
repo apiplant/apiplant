@@ -94,7 +94,7 @@ each. `stats` is `Authenticated`, so use the Authorize button first.
 |-------|-----------------|-------------|
 | `Public` | anyone | — |
 | `Authenticated` | any signed-in caller | `401` |
-| `RoleGated` | a caller holding `role` in their active org | `403` |
+| `RoleGated` | a caller holding `role` in their active org — or holding `admin`, which holds every role | `403` |
 | `Private` | nobody over HTTP — hidden from routing and docs | `404` |
 
 `Private` is not a dead end: those functions are exactly what the next example

@@ -115,7 +115,10 @@ fn post_after_create(ctx: &Context<()>, input: Value) -> Result<Value, String> {
 /// their own drafts; an organisation `admin` sees everything.
 fn post_after_list(ctx: &Context<()>, input: Vec<Value>) -> Result<Value, String> {
     let hook = ctx.hook().ok_or("post_after_list is a lifecycle hook")?;
-    if hook.role.as_deref() == Some("admin") {
+    // `roles`, not `role`: a member holds a set of roles, and `role` is only
+    // the primary one — so an admin who was given that role alongside another
+    // would slip past a check written against it.
+    if hook.roles.iter().any(|role| role == "admin") {
         return Ok(reply::proceed());
     }
 

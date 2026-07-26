@@ -25,12 +25,57 @@ pub enum Error {
     Token,
 }
 
-/// A user's membership in one organisation, with their role there.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The role that satisfies every other.
+///
+/// An `admin` of an organisation holds, by definition, every role the app
+/// defines there — so a `role:billing` permission passes for them without
+/// anyone having to grant `billing` explicitly. This is a rule about *checks*,
+/// not about data: it is never written into anyone's roles, so removing a role
+/// from an admin cannot silently do nothing.
+pub const ADMIN_ROLE: &str = "admin";
+
+/// A user's membership in one organisation, and the roles they hold there.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OrgMembership {
     pub org_id: Uuid,
-    /// Role within this organisation (e.g. `"admin"`), if any.
+    /// The member's *primary* role, from `membership.role`. Kept as its own
+    /// field because that is the column apps and hook contexts already read.
     pub role: Option<String>,
+    /// Every role held here, primary included — one entry per role, in the
+    /// order the database returned them.
+    pub roles: Vec<String>,
+}
+
+impl OrgMembership {
+    /// Build a membership from its primary role and any additional ones,
+    /// keeping `roles` a set with the primary first.
+    pub fn new(
+        org_id: Uuid,
+        role: Option<String>,
+        extra: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let mut roles: Vec<String> = Vec::new();
+        for candidate in role.clone().into_iter().chain(extra) {
+            if !candidate.is_empty() && !roles.contains(&candidate) {
+                roles.push(candidate);
+            }
+        }
+        OrgMembership {
+            org_id,
+            role,
+            roles,
+        }
+    }
+
+    /// Whether this membership carries `role` — directly, or by being `admin`.
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.iter().any(|held| held == role) || self.is_admin()
+    }
+
+    /// Whether this membership holds `admin` itself.
+    pub fn is_admin(&self) -> bool {
+        self.roles.iter().any(|held| held == ADMIN_ROLE)
+    }
 }
 
 /// The authenticated caller behind a request.
@@ -53,9 +98,31 @@ impl Principal {
         self.membership(org).is_some()
     }
 
-    /// The caller's role within `org`, if any.
+    /// The caller's *primary* role within `org`, if any.
+    ///
+    /// This is what a hook context's `role` reports. Authorization asks
+    /// [`has_role_in`](Self::has_role_in) instead, because holding a role is
+    /// not the same as it being your headline one.
     pub fn role_in(&self, org: Uuid) -> Option<&str> {
         self.membership(org).and_then(|m| m.role.as_deref())
+    }
+
+    /// Every role the caller holds in `org`.
+    pub fn roles_in(&self, org: Uuid) -> &[String] {
+        self.membership(org)
+            .map(|m| m.roles.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Whether the caller may act as `role` in `org`. The question every
+    /// `role:` permission asks.
+    pub fn has_role_in(&self, org: Uuid, role: &str) -> bool {
+        self.membership(org).is_some_and(|m| m.has_role(role))
+    }
+
+    /// Whether the caller administers `org`.
+    pub fn is_admin_of(&self, org: Uuid) -> bool {
+        self.membership(org).is_some_and(OrgMembership::is_admin)
     }
 
     /// Every organisation id the caller belongs to.
@@ -63,11 +130,12 @@ impl Principal {
         self.organizations.iter().map(|m| m.org_id).collect()
     }
 
-    /// Organisations where the caller holds a specific role.
+    /// Organisations where the caller may act as `role` — including the ones
+    /// they merely administer.
     pub fn org_ids_with_role(&self, role: &str) -> Vec<Uuid> {
         self.organizations
             .iter()
-            .filter(|m| m.role.as_deref() == Some(role))
+            .filter(|m| m.has_role(role))
             .map(|m| m.org_id)
             .collect()
     }
@@ -208,15 +276,84 @@ mod tests {
         let org = Uuid::new_v4();
         let p = Principal {
             user_id: Uuid::new_v4(),
-            organizations: vec![OrgMembership {
-                org_id: org,
-                role: Some("admin".into()),
-            }],
+            organizations: vec![OrgMembership::new(org, Some("support".into()), [])],
         };
         assert!(p.is_member(org));
-        assert_eq!(p.role_in(org), Some("admin"));
+        assert_eq!(p.role_in(org), Some("support"));
         assert!(!p.is_member(Uuid::new_v4()));
-        assert_eq!(p.org_ids_with_role("admin"), vec![org]);
-        assert!(p.org_ids_with_role("member").is_empty());
+        assert_eq!(p.org_ids_with_role("support"), vec![org]);
+        assert!(p.org_ids_with_role("billing").is_empty());
+    }
+
+    #[test]
+    fn a_member_holds_every_role_granted_to_them() {
+        let org = Uuid::new_v4();
+        let p = Principal {
+            user_id: Uuid::new_v4(),
+            organizations: vec![OrgMembership::new(
+                org,
+                Some("support".into()),
+                ["billing".to_string()],
+            )],
+        };
+
+        // The primary role is one of the set, not a separate kind of thing.
+        assert_eq!(p.roles_in(org), ["support", "billing"]);
+        assert!(p.has_role_in(org, "support"));
+        assert!(p.has_role_in(org, "billing"));
+        assert!(!p.has_role_in(org, "admin"));
+
+        // Holding a role is not the same as it being your headline one, which
+        // is what a hook context reports.
+        assert_eq!(p.role_in(org), Some("support"));
+    }
+
+    #[test]
+    fn an_admin_holds_every_role_without_being_granted_them() {
+        let org = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let p = Principal {
+            user_id: Uuid::new_v4(),
+            organizations: vec![
+                OrgMembership::new(org, Some("admin".into()), []),
+                OrgMembership::new(other, Some("support".into()), []),
+            ],
+        };
+
+        assert!(p.is_admin_of(org));
+        assert!(p.has_role_in(org, "billing"));
+        assert!(p.has_role_in(org, "anything-at-all"));
+        assert_eq!(p.org_ids_with_role("billing"), vec![org]);
+
+        // …and only in the organisation where they are the admin.
+        assert!(!p.has_role_in(other, "billing"));
+        assert!(!p.is_admin_of(other));
+
+        // The rule is about checks, never about stored data: an admin's roles
+        // are still just the ones they were given, so taking one away is a
+        // change that means something.
+        assert_eq!(p.roles_in(org), ["admin"]);
+    }
+
+    #[test]
+    fn a_role_held_twice_is_still_one_role() {
+        let org = Uuid::new_v4();
+        // The primary role appearing again among the extras is a duplicate, not
+        // a second grant — otherwise removing one would appear to do nothing.
+        let membership = OrgMembership::new(
+            org,
+            Some("admin".into()),
+            ["admin".to_string(), "billing".to_string(), String::new()],
+        );
+        assert_eq!(membership.roles, ["admin", "billing"]);
+    }
+
+    #[test]
+    fn a_member_with_no_role_holds_none() {
+        let org = Uuid::new_v4();
+        let membership = OrgMembership::new(org, None, []);
+        assert!(membership.roles.is_empty());
+        assert!(!membership.is_admin());
+        assert!(!membership.has_role("member"));
     }
 }
