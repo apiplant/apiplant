@@ -6,10 +6,10 @@
 //! manifest) for **hosting it somewhere other than the API** — a CDN, a bucket,
 //! a different origin entirely. That copy is never read back by the server:
 //! the running dashboard always describes the running app. Everything it needs
-//! to know
-//! about the app — which resources exist, what to call them, which fields to
-//! show, who may see what — is resolved *here*, at build time, and written into
-//! `apiplant-admin.json`. The shipped JavaScript is the same for every app.
+//! to know about the app — which resources exist, what to call them, which
+//! fields to show, who may see what — is resolved *here*, at build time, and
+//! written into `apiplant-admin.json`. The shipped JavaScript is the same for
+//! every app.
 //!
 //! Two things are kept firmly apart, and it matters:
 //!

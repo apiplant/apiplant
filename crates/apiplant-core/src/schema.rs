@@ -273,7 +273,7 @@ impl Resource {
 /// make its API endpoints any less reachable; that is what
 /// [`Permissions`] is for. The two are deliberately separate: `[permissions]`
 /// decides what the API allows, `[admin]` decides what an operator is shown.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ResourceAdmin {
     /// Show this resource in the dashboard. Unset means "decide from the
@@ -297,22 +297,6 @@ pub struct ResourceAdmin {
     pub search_field: Option<String>,
     /// Sort key within the sidebar group; lower comes first.
     pub order: i64,
-}
-
-impl Default for ResourceAdmin {
-    fn default() -> Self {
-        ResourceAdmin {
-            visible: None,
-            roles: Vec::new(),
-            label: None,
-            plural: None,
-            group: None,
-            display_field: None,
-            columns: Vec::new(),
-            search_field: None,
-            order: 0,
-        }
-    }
 }
 
 impl ResourceAdmin {

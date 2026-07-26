@@ -39,6 +39,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Functions](docs/functions.md) | writing & loading compiled plugins over the stable ABI |
 | [Lifecycle hooks](docs/hooks.md) | running functions before/after every CRUD operation |
 | [Admin dashboard](docs/admin.md) | the built-in operator UI, `[admin]` config, action forms |
+| [Security model](docs/security.md) | what the server enforces, and what you must configure before exposing it |
 | [API reference](docs/api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](docs/openapi.md) | the generated spec and interactive docs |
 
@@ -158,6 +159,7 @@ role, and every other resource is organisation-scoped unless you set
 | Active organisation | `X-Organization: <org-id>`, or implicit when the caller belongs to exactly one org |
 | Query isolation | every list/read/update/delete filters to `organization_id = <active org>` |
 | Create stamping | `organization_id` is filled in by the server; clients cannot spoof it |
+| Update refusal | `organization_id` in a body is dropped, so a row cannot be moved between organisations |
 | Role checks | `role:admin` means admin of the active organisation |
 
 Single-org users never need the header; multi-org users send it per request.
@@ -224,7 +226,8 @@ GET /api/comment?post_id=<uuid>     # filter by any field, incl. foreign keys
 * **`has_many`** — the automatic `GET /parent/{id}/child` endpoint (add `?via=`
   when a child references the same parent more than once).
 * **Expansion** — `?expand=owner` inlines the referenced record under `owner`
-  (the field name minus `_id`); hidden fields stay hidden.
+  (the field name minus `_id`); hidden fields stay hidden, and the target's own
+  `read` permission decides whether the record inlines at all or as `null`.
 * **`on_delete`** — enforced by Postgres (`restrict` blocks orphaning by
   default; `cascade` / `set_null` as configured).
 

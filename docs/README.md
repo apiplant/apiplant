@@ -20,6 +20,7 @@ with lifecycle hooks, one idea at a time.
 | [Functions](functions.md) | writing & loading compiled plugins over the stable ABI |
 | [Lifecycle hooks](hooks.md) | running functions before/after every CRUD operation |
 | [Admin dashboard](admin.md) | the built-in operator UI, `[admin]` config, action forms |
+| [Security model](security.md) | what the server enforces, and what you must configure before exposing it |
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](openapi.md) | the generated spec and interactive docs |
 

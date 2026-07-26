@@ -162,6 +162,9 @@ pub async fn login(
         Err(e) => return db_error(e),
     };
     let Some(row) = rows.as_array().and_then(|a| a.first()) else {
+        // Spend the argon2 time anyway: answering an unknown identity faster
+        // than a wrong password is enough to enumerate accounts.
+        let _ = state.auth.hash_password(&password);
         return error(401, "invalid credentials");
     };
     let stored = row

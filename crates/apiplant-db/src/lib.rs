@@ -283,28 +283,26 @@ impl Db {
     }
 
     /// Fetch multiple rows of a resource by id (used for relation expansion).
-    /// Returns a JSON array with hidden fields stripped; order is unspecified.
+    /// `filters` carry the caller's authorization scope, so an expansion can
+    /// never reach a row a direct read would have refused. Returns a JSON array
+    /// with hidden fields stripped; order is unspecified.
     pub async fn fetch_by_ids(
         &self,
         r: &Resource,
         ids: &[Uuid],
+        filters: &[Filter],
     ) -> Result<serde_json::Value, Error> {
         if ids.is_empty() {
             return Ok(serde_json::Value::Array(Vec::new()));
         }
         let table = quote_ident(&r.table_name())?;
-        let mut params: Vec<SqlValue> = Vec::with_capacity(ids.len());
-        let mut placeholders = Vec::with_capacity(ids.len());
-        for (i, id) in ids.iter().enumerate() {
-            placeholders.push(format!("${}", i + 1));
-            params.push(SqlValue::from(*id));
-        }
+        let mut all = vec![Filter::in_uuids("id", ids.to_vec())];
+        all.extend_from_slice(filters);
+        let (where_sql, params, _) = self.build_where(&all)?;
         let hidden = self.hidden_subtraction(r)?;
         let sql = format!(
             "SELECT coalesce(jsonb_agg(to_jsonb(t){hidden}), '[]'::jsonb) AS result \
-             FROM (SELECT * FROM {table} WHERE {} IN ({})) t",
-            quote_ident("id")?,
-            placeholders.join(", "),
+             FROM (SELECT * FROM {table} {where_sql}) t"
         );
         let row = self
             .conn

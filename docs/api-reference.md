@@ -28,7 +28,7 @@ supplied fields). Each is gated by the resource's [permissions](permissions.md).
 | `limit` | `?limit=100` | Page size, clamped to `1..=500` (default `50`). |
 | `offset` | `?offset=50` | Rows to skip (default `0`). |
 | `expand` | `?expand=owner,post` | Inline `belongs_to` [relations](relationships.md). |
-| `<field>` | `?published=true` | Exact-match filter on any column. |
+| `<field>` | `?published=true` | Exact-match filter on any visible column. |
 | `via` | `?via=sender_id` | (nested only) pick the reference field when ambiguous. |
 
 Results are ordered newest-first by `created_at` when the resource has
@@ -40,8 +40,29 @@ timestamps. `expand` also works on the single read endpoint.
 * `hidden` fields never appear.
 * Timestamps are RFC 3339 strings; ids and references are UUID strings.
 * On create, server-managed columns (`id`, timestamps, owner column, and on
-  org-scoped resources `organization_id`) are set for you; supplying them is
-  unnecessary (owner and organisation are always overwritten).
+  org-scoped resources `organization_id`) are set for you.
+* Server-managed columns are **not writable**, on create or on update. A body
+  that carries `organization_id`, the owner column or the password column has
+  those keys dropped before the statement is built — the rest of the body is
+  applied as normal. See [Server-owned columns](#server-owned-columns).
+* `hidden` fields are not filterable either: `?password_hash=…` is ignored
+  rather than answered, so a list endpoint cannot be used to probe a value it
+  refuses to return.
+
+## Server-owned columns
+
+Three groups of columns are decided by the server and ignored when a client
+sends them:
+
+| Column | Why |
+|--------|-----|
+| `organization_id` (org-scoped resources) | The tenant is stamped from the active organisation. Accepting it on update would let a caller *move* a row into an organisation they are not in — the `WHERE` clause proves only that they may touch the row where it is now. |
+| The resource's `owner_field` | Stamped from the caller, so ownership cannot be assigned or given away. |
+| The `user` model's `password_field` | Holds an argon2 hash. The only endpoint that writes it is `POST <base>/auth/register`, which hashes a plaintext first. |
+
+This applies to hook replacements too: a `before_create`/`before_update` hook
+that returns one of these keys has it dropped the same way, so a hook cannot
+spoof the tenant or the owner either.
 
 ## Authentication
 

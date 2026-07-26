@@ -65,6 +65,28 @@ fn owner_column(r: &Resource) -> &str {
     }
 }
 
+/// Drop the columns the server owns from a client-supplied body.
+///
+/// The tenant column and the owner column are *stamped*, never accepted: an
+/// update that carried `organization_id` would move the row into another
+/// organisation, because the `WHERE` clause checks where the row is now, not
+/// where it is going. The password column goes the same way — it holds a hash,
+/// and the only door that writes it is `POST <base>/auth/register`.
+fn strip_server_owned(r: &Resource, data: &mut serde_json::Map<String, serde_json::Value>) {
+    if r.is_org_scoped() {
+        data.remove("organization_id");
+    }
+    let owner = owner_column(r);
+    if owner != "id" {
+        data.remove(owner);
+    }
+    // `user` always has an auth spec, declared or defaulted, exactly as the
+    // auth routes resolve it.
+    if r.meta.name == "user" || r.auth.is_some() {
+        data.remove(&r.auth.clone().unwrap_or_default().password_field);
+    }
+}
+
 fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpResponse> {
     state
         .app
@@ -196,6 +218,11 @@ fn field_filters(
         let Some(field) = r.fields.get(key) else {
             continue;
         };
+        // A hidden field is stripped from responses; filtering on one would
+        // turn the list endpoint into an oracle for it (`?password_hash=…`).
+        if field.hidden {
+            continue;
+        }
         match value::string_to_sql(field.ty, raw) {
             Ok(v) => filters.push(Filter::Eq {
                 column: key.clone(),
@@ -207,9 +234,15 @@ fn field_filters(
     Ok(filters)
 }
 
+/// Inline the rows a `belongs_to` field points at, under the relation's name.
+///
+/// Expansion is a read of the *target* resource, so it goes through the target's
+/// own `read` policy: a relation into something the caller may not read comes
+/// back as `null` rather than as a row the direct endpoint would have refused.
 async fn expand_relations(
     state: &AppState,
     r: &Resource,
+    caller: &Caller,
     rows: &mut [serde_json::Value],
     relations: &[String],
 ) -> Result<(), HttpResponse> {
@@ -222,6 +255,17 @@ async fn expand_relations(
         };
         let Some(target) = state.app.resources.get(&reference.target) else {
             continue;
+        };
+        let scope = match authorize(&target.permissions.read, caller, target) {
+            Ok(filters) => filters,
+            Err(_) => {
+                for row in rows.iter_mut() {
+                    if let Some(obj) = row.as_object_mut() {
+                        obj.insert(relation.clone(), serde_json::Value::Null);
+                    }
+                }
+                continue;
+            }
         };
 
         let mut ids: Vec<Uuid> = Vec::new();
@@ -237,7 +281,7 @@ async fn expand_relations(
 
         let fetched = state
             .db
-            .fetch_by_ids(target, &ids)
+            .fetch_by_ids(target, &ids, &scope)
             .await
             .map_err(db_error)?;
         let mut by_id: HashMap<String, serde_json::Value> = HashMap::new();
@@ -306,7 +350,7 @@ pub async fn list(req: HttpRequest, state: State<AppState>, path: Path<String>) 
         result
     } else {
         let mut rows = result.as_array().cloned().unwrap_or_default();
-        if let Err(resp) = expand_relations(&state, r, &mut rows, &relations).await {
+        if let Err(resp) = expand_relations(&state, r, &caller, &mut rows, &relations).await {
             return resp;
         }
         serde_json::Value::Array(rows)
@@ -356,7 +400,7 @@ pub async fn get(
         row
     } else {
         let mut rows = vec![row];
-        if let Err(resp) = expand_relations(&state, r, &mut rows, &relations).await {
+        if let Err(resp) = expand_relations(&state, r, &caller, &mut rows, &relations).await {
             return resp;
         }
         rows.into_iter().next().unwrap_or(serde_json::Value::Null)
@@ -473,6 +517,15 @@ pub async fn create(
     if let Err(resp) = authorize(&r.permissions.create, &caller, r) {
         return resp;
     }
+    // `user` ships with `create = "public"` so registration works; that door has
+    // to close with registration itself, or `allow_registration = false` would
+    // only move signup from `/auth/register` to `POST <base>/user`.
+    if r.meta.name == "user"
+        && caller.principal.is_none()
+        && !state.app.config.auth.allow_registration
+    {
+        return error(403, "registration is disabled");
+    }
 
     let params = parse_query(req.query_string());
     let hook_req = caller.hook_request(&req, &params);
@@ -499,6 +552,8 @@ pub async fn create(
         Ok(None) => {}
         Err(resp) => return resp,
     }
+
+    strip_server_owned(r, &mut data);
 
     // Auto-stamp the organisation on org-scoped resources (never client-set).
     if r.is_org_scoped() {
@@ -626,6 +681,8 @@ pub async fn update(
         Ok(None) => {}
         Err(resp) => return resp,
     }
+
+    strip_server_owned(r, &mut data);
 
     let updated = match state.db.update(r, id, &data, &filters).await {
         Ok(Some(row)) => row,
@@ -840,6 +897,44 @@ type = "integer"
             Err(err) => err,
         };
         assert_eq!(err.status().as_u16(), 400);
+    }
+
+    #[test]
+    fn hidden_fields_are_not_filterable() {
+        let resource = parse_resource(apiplant_core::defaults::USER_TOML);
+        let filters =
+            field_filters(&resource, &parse_query("password_hash=abc&email=a@b.c")).unwrap();
+        assert_eq!(filters.len(), 1);
+        assert!(matches!(&filters[0], Filter::Eq { column, .. } if column == "email"));
+    }
+
+    #[test]
+    fn server_owned_columns_are_dropped_from_client_bodies() {
+        let membership = parse_resource(apiplant_core::defaults::MEMBERSHIP_TOML);
+        let mut body: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            r#"{"organization_id":"11111111-1111-1111-1111-111111111111","role":"admin"}"#,
+        )
+        .unwrap();
+        strip_server_owned(&membership, &mut body);
+        assert!(!body.contains_key("organization_id"));
+        assert!(body.contains_key("role"));
+
+        let user = parse_resource(apiplant_core::defaults::USER_TOML);
+        let mut body: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"password_hash":"$argon2id$forged","email":"a@b.c"}"#)
+                .unwrap();
+        strip_server_owned(&user, &mut body);
+        assert!(!body.contains_key("password_hash"));
+        assert!(body.contains_key("email"));
+
+        let api_key = parse_resource(apiplant_core::defaults::API_KEY_TOML);
+        let mut body: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            r#"{"owner_id":"11111111-1111-1111-1111-111111111111","name":"ci"}"#,
+        )
+        .unwrap();
+        strip_server_owned(&api_key, &mut body);
+        assert!(!body.contains_key("owner_id"));
+        assert!(body.contains_key("name"));
     }
 
     #[test]

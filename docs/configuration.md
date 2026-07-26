@@ -72,7 +72,7 @@ apiplant targets **PostgreSQL** (it uses `to_jsonb`, `gen_random_uuid()`,
 |-----|---------|-------|
 | `jwt_secret` | *(empty)* | HMAC secret for session JWTs. **Set this in production** — an empty value generates a random secret at boot, so tokens don't survive a restart. |
 | `session_ttl_secs` | `604800` (7d) | Lifetime of issued session tokens. |
-| `allow_registration` | `true` | Whether `POST /auth/register` is open. |
+| `allow_registration` | `true` | Whether self-service signup is open. `false` closes `POST /auth/register` *and* anonymous `POST <base>/user`. |
 
 See [Authentication](authentication.md) for the full auth model.
 

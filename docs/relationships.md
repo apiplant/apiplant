@@ -106,6 +106,11 @@ Notes:
   of results is not an N+1.
 * Hidden fields on the referenced resource stay hidden (a user's
   `password_hash` never appears).
+* Expansion is a **read of the target resource** and is authorized as one: the
+  target's `read` [permission](permissions.md) and, for an org-scoped target,
+  its organisation filter both apply. A relation pointing at something the
+  caller may not read expands to `null` rather than to a row the direct
+  endpoint would have refused.
 * A dangling reference expands to `null`.
 * Expansion is one level deep.
 

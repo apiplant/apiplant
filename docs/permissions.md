@@ -132,6 +132,22 @@ update = "role:admin"
 delete = "role:admin"
 ```
 
+## What a policy does *not* cover
+
+A policy decides who may perform an action; three things are decided regardless
+of it, because no policy can express them safely:
+
+* **Server-owned columns.** `organization_id`, the owner column and the `user`
+  model's password column are stamped by the server and stripped from any body
+  that carries them, on create and on update alike. Details in the
+  [API reference](api-reference.md#server-owned-columns).
+* **Expansion.** `?expand=` is a read of the *target* resource and runs that
+  resource's `read` policy; a relation the caller may not read inlines as
+  `null`. Granting `list` on one resource never grants reads of another
+  through a foreign key.
+* **Hidden fields.** A `hidden` field is stripped from responses *and* refused
+  as a filter, so `?password_hash=…` cannot be used to confirm a value.
+
 ## How the caller is determined
 
 * `Authorization: Bearer <jwt>` — a session token from login/register.

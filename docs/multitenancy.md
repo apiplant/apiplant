@@ -30,7 +30,8 @@ For an organisation-scoped resource, on every request the framework:
    non-members get `403`;
 2. **filters every query** to `organization_id = <active org>` — you only ever
    see your organisation's rows;
-3. **stamps `organization_id`** on create (clients can't set or spoof it);
+3. **stamps `organization_id`** on create and refuses it on update, so clients
+   can neither spoof the tenant nor move a row between organisations;
 4. then applies the resource's [permission](permissions.md) for *who among the
    members* may act.
 

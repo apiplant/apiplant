@@ -51,7 +51,10 @@ Ordering guarantees:
 * `before_*` runs **after** the permission check and after multitenancy filters
   are resolved — an unauthorised request never reaches your hook.
 * `before_create`/`before_update` run **before** `organization_id` and the owner
-  column are stamped, so a hook can't spoof the tenant or the owner.
+  column are stamped, and a body they return goes through the same
+  [server-owned column](api-reference.md#server-owned-columns) stripping a
+  client's does — so a hook can't spoof the tenant, the owner or a password
+  hash either.
 * A `before_*` hook that aborts stops the operation, so its `after_*` twin never
   runs and nothing is written.
 * `after_*` runs only when the operation succeeded. A `404` skips it.

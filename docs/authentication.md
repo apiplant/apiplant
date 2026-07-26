@@ -66,7 +66,9 @@ POST /api/auth/register
 * Requires a `password`; all other properties map to `user` fields.
 * The password is argon2id-hashed into the `password_field`; the plaintext is
   never stored.
-* Honours `auth.allow_registration` (`403` when disabled).
+* Honours `auth.allow_registration` (`403` when disabled). The `user` model
+  ships with `create = "public"` so this endpoint works, so the same switch also
+  closes anonymous `POST <base>/user` — otherwise signup would just move.
 * Returns `{ "token": "...", "user": { ... } }` (with hidden fields stripped).
 * Registering is a `create` on the `user` resource, so the `user` model's
   `before_create` / `after_create` [hooks](hooks.md#registration-fires-the-user-create-hooks)
