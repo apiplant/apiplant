@@ -153,7 +153,7 @@ no second entry for the same rows.
 | `enter` | open a record, edit a field, pick a reference, or submit |
 | `n` `e` `d` | new, edit, delete |
 | `c` | the records belonging to this one (on a record) |
-| `/` | search (on the field the resource names for it) |
+| `/` | search — any part of the field the resource names for it, ignoring case |
 | `[` `]` | previous / next page of 50 |
 | `r` | reload |
 | `space` | toggle a switch in a form |

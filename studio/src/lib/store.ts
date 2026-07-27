@@ -11,6 +11,7 @@
 
 import { createStore, produce, unwrap } from "solid-js/store";
 import {
+  createSubdirectory,
   deleteDirectory,
   deleteFile,
   isTextPath,
@@ -104,7 +105,15 @@ export interface AppCandidate {
 
 /** Pick a directory, then work out whether it is an app or contains apps. */
 export async function chooseDirectory(): Promise<
-  { kind: "app"; handle: FileSystemDirectoryHandle } | { kind: "candidates"; parent: FileSystemDirectoryHandle; candidates: AppCandidate[] } | null
+  | { kind: "app"; handle: FileSystemDirectoryHandle }
+  | {
+      kind: "candidates";
+      parent: FileSystemDirectoryHandle;
+      /** Everything in the parent, so a new app can be named without collision. */
+      parentEntryNames: string[];
+      candidates: AppCandidate[];
+    }
+  | null
 > {
   const handle = await pickDirectory();
   if (!handle) return null;
@@ -119,7 +128,47 @@ export async function chooseDirectory(): Promise<
       candidates.push({ name: child, handle: childHandle });
     }
   }
-  return { kind: "candidates", parent: handle, candidates };
+  return { kind: "candidates", parent: handle, parentEntryNames: names, candidates };
+}
+
+/** Pick a directory to hold a new app, with the names already in it. */
+export async function chooseParentDirectory(): Promise<
+  { handle: FileSystemDirectoryHandle; entryNames: string[] } | null
+> {
+  const handle = await pickDirectory();
+  if (!handle) return null;
+  return { handle, entryNames: await listEntryNames(handle) };
+}
+
+/** Directory names the studio is willing to create. */
+export const APP_NAME_RULE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Start a new app in `parent/name`.
+ *
+ * The directory itself has to exist to hold a handle, so it is created now; its
+ * contents are staged like every other edit and land on disk on Save.
+ */
+export async function createProject(
+  parent: FileSystemDirectoryHandle,
+  name: string,
+  options: { withExampleResource?: boolean } = {},
+): Promise<boolean> {
+  if (!APP_NAME_RULE.test(name)) {
+    toast("An app directory name must start with a letter or digit and hold only letters, digits, . _ -", "error");
+    return false;
+  }
+  if ((await listEntryNames(parent)).includes(name)) {
+    toast(`${parent.name} already has an entry named ${name}`, "error");
+    return false;
+  }
+
+  const handle = await createSubdirectory(parent, name);
+  await openProject(handle, { quiet: true });
+  ensureMainToml();
+  if (options.withExampleResource) addResource("note");
+  toast(`New app ${name} — press Save to write it to disk`, "success");
+  return true;
 }
 
 function buildFileMap(scanned: ScannedFile[]): Record<string, FileState> {
@@ -196,11 +245,14 @@ async function buildProject(handle: FileSystemDirectoryHandle): Promise<Project>
   };
 }
 
-export async function openProject(handle: FileSystemDirectoryHandle): Promise<void> {
+export async function openProject(
+  handle: FileSystemDirectoryHandle,
+  options: { quiet?: boolean } = {},
+): Promise<void> {
   setState("loading", true);
   try {
     setState("project", await buildProject(handle));
-    toast(`Opened ${handle.name}`, "success");
+    if (!options.quiet) toast(`Opened ${handle.name}`, "success");
   } finally {
     setState("loading", false);
   }

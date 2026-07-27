@@ -1734,9 +1734,13 @@ impl Cli {
             ("limit", PAGE.to_string()),
             ("offset", (page * PAGE).to_string()),
         ];
-        // The API filters by exact field value; the manifest names the one field
-        // the dashboard's search box uses, so the console searches the same one.
-        let search_field = resource.search_field.clone();
+        // The manifest names the one field the dashboard's search box uses, so
+        // the console searches the same one — through the API's `field~`
+        // substring match, which is what typing half a name means here too.
+        let search_field = resource
+            .search_field
+            .as_deref()
+            .map(|field| format!("{field}~"));
         if let (Some(field), false) = (search_field.as_deref(), search.trim().is_empty()) {
             query.push((field, search.trim().to_string()));
         }

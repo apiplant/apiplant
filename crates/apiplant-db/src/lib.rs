@@ -49,6 +49,10 @@ pub enum Filter {
         column: String,
         values: Vec<SqlValue>,
     },
+    /// `column ILIKE '%value%'` — a case-insensitive substring match, which is
+    /// what a search box means by "search". The pattern's own wildcards are
+    /// escaped, so a term containing `%` looks for a per-cent sign.
+    Contains { column: String, value: String },
 }
 
 impl Filter {
@@ -74,9 +78,18 @@ impl Filter {
         }
     }
 
+    pub fn contains(column: impl Into<String>, value: impl Into<String>) -> Self {
+        Filter::Contains {
+            column: column.into(),
+            value: value.into(),
+        }
+    }
+
     fn column(&self) -> &str {
         match self {
-            Filter::Eq { column, .. } | Filter::In { column, .. } => column,
+            Filter::Eq { column, .. }
+            | Filter::In { column, .. }
+            | Filter::Contains { column, .. } => column,
         }
     }
 }
@@ -400,6 +413,18 @@ impl Db {
                     })
                     .collect();
                 format!("{col} IN ({})", placeholders.join(", "))
+            }
+            Filter::Contains { value, .. } => {
+                // The term is bound, so it cannot be SQL — but it is still a
+                // LIKE *pattern*, and an unescaped `%` would match everything.
+                let escaped = value
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
+                let part = format!("{col}::text ILIKE ${n}");
+                params.push(SqlValue::from(format!("%{escaped}%")));
+                *n += 1;
+                part
             }
         })
     }

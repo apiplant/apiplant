@@ -64,6 +64,8 @@ test("the app boots on an empty database and serves its dashboard", async () => 
   // The dashboard is described by the app itself, not by anything checked in
   // beside it: the manifest names the app, its resource and its two functions.
   const derived = await manifest(anonymous);
+  // `[app] name` in main.toml, not the directory it lives in.
+  expect(derived.app_name).toBe("07 · Functions");
   expect(derived.resources.map((entry: any) => entry.name)).toContain("note");
   expect(derived.functions.map((entry: any) => entry.name).sort()).toEqual(["greet", "stats"]);
 
@@ -180,16 +182,16 @@ test("the list shows records and its search filters them", async () => {
 
   await expect(page.locator("tbody tr")).toHaveCount(2);
 
-  // The box filters on `search_field` with the API's `?field=value`, which is
-  // an exact match — so the whole title finds the row…
-  await page.getByPlaceholder(/Search by/i).fill(SECOND_NOTE);
+  // The box filters on `search_field` through the API's `?field~=`, so part of
+  // a title finds it — in any case, and from the middle of a word.
+  await page.getByPlaceholder(/Search by/i).fill("depot");
   await page.getByPlaceholder(/Search by/i).press("Enter");
   await settle(page);
   await expect(row(page, SECOND_NOTE)).toBeVisible();
   await expect(row(page, NOTE_TITLE_EDITED)).toHaveCount(0);
 
-  // …and half of it finds nothing, rather than quietly matching.
-  await page.getByPlaceholder(/Search by/i).fill("Depot");
+  // A term in neither title still matches nothing, rather than everything.
+  await page.getByPlaceholder(/Search by/i).fill("warehouse");
   await page.getByPlaceholder(/Search by/i).press("Enter");
   await settle(page);
   await expect(page.getByText(/Nothing matched that search/i)).toBeVisible();

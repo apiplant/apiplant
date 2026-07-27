@@ -2,6 +2,9 @@
 # whole directory is invisible to the rest of the app — it gets mounted,
 # authenticated and documented exactly the same way.
 
+[app]
+name = "12 · Functions with dependencies"
+
 [server]
 host = "127.0.0.1"
 port = 8099

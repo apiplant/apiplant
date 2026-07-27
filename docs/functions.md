@@ -1,10 +1,13 @@
 # Functions (compiled plugins)
 
-A **function** is custom logic compiled into a shared library
-(`.so`/`.dylib`/`.dll`) in the app's `functions/` directory. The framework loads
-it at boot and mounts it as an HTTP endpoint. Functions talk to the host across a
-stable C ABI (via [`abi_stable`]), so they can be shipped independently and never
-require recompiling the server.
+A **function** is custom logic in the app's `functions/` directory that the
+framework loads at boot and mounts as an HTTP endpoint. Usually that means a
+shared library (`.so`/`.dylib`/`.dll`) talking to the host across a stable C ABI
+(via [`abi_stable`]), so it can be shipped independently and never requires
+recompiling the server. A [TypeScript function](#writing-a-function-in-typescript)
+is the exception: there is nothing to link, so it runs in a V8 isolate instead —
+and everything around it (manifest, config, permissions, docs, hooks) is
+identical.
 
 You write the **source**; `apiplant build` produces the library:
 
@@ -45,6 +48,9 @@ native way:
 | `.c` files              | C    | `cc` over every `.c` in the directory, with it on the include path |
 | `.zig` files            | Zig  | `zig build-lib` from a root `.zig` (named for the directory) that may `@import` the rest |
 
+TypeScript has no directory form: nothing bundles, so a `.ts` function is always
+one self-contained file.
+
 A directory named `greet/` compiles to `libgreet.so` beside it, so the host loads
 it exactly like a single-file function. For **Rust and Go the project is yours**:
 apiplant runs your `Cargo.toml` / `go.mod` unchanged and copies out the library it
@@ -80,6 +86,8 @@ built from, or from `APIPLANT_FUNCTION_CRATE` if you set it.
 
 C, Zig and Go sources need their own toolchain on `PATH` instead — see
 [writing a function in C, Zig or Go](#writing-a-function-in-c-zig-or-go).
+TypeScript needs nothing: `apiplant build` transpiles it in-process — see
+[writing a function in TypeScript](#writing-a-function-in-typescript).
 
 ### Library size
 
@@ -501,9 +509,10 @@ changes:
 | `.c` | `cc -shared -fPIC` | none — one translation unit |
 | `.zig` | `zig build-lib -dynamic -lc` | none |
 | `.go` | `go build -buildmode=c-shared` | a generated `go.mod` |
+| `.ts` | transpiled in-process, no toolchain | none — output is `greet.js`, not a library |
 
 ```bash
-apiplant build my-app            # every .rs, .c, .zig and .go in functions/
+apiplant build my-app            # every .rs, .c, .zig, .go and .ts in functions/
 apiplant build my-app --release
 ```
 
@@ -616,6 +625,150 @@ and `APIPLANT_ABI_VERSION` does not move when one is added.
 
 See [`examples/09-c-functions`](../examples/09-c-functions) for a working app —
 two endpoints in one `.c` file, one of them querying Postgres.
+
+## Writing a function in TypeScript
+
+A `.ts` file in `functions/` is a function like any other. It is the only
+language that does not produce a shared library, because there is nothing to
+link — so it works in two stages instead:
+
+| | |
+|---|---|
+| `apiplant build` | parses `greet.ts`, strips the type annotations, writes `greet.js` beside it |
+| `apiplant run` | loads `greet.js` into a pool of V8 isolates and calls into it per request |
+
+Nothing is installed: the transpiler is built into `apiplant build`, so there is
+no node, no deno, no bun, no `package.json` and no `node_modules`. Nothing is
+type-*checked* either — the same choice `deno run --no-check` and `bun` make.
+What `apiplant build` writes into `functions/` is what makes an editor (and
+`tsc --noEmit -p functions`, if you want it in CI) do the checking:
+
+| | |
+|---|---|
+| `apiplant.d.ts` | the types: the `apiplant` module, `ctx`, the manifest. Rewritten every build |
+| `tsconfig.json` | strict, and `lib: ["ES2022"]` — an isolate has no DOM and no Node. Created once, then yours |
+
+### The `apiplant` module
+
+A function imports one module, and it is the only one it can import:
+
+```ts
+import { defineFunctions, db, cache, email, config, log, s, sql } from "apiplant";
+```
+
+Nothing installs it. It is compiled into the server and handed to the isolate on
+demand, so it can never be a version out of step with the host running it; the
+`apiplant.d.ts` beside your source is what your editor reads. The source lives in
+[`typescript/`](../typescript) at the root of this repository.
+
+```ts
+const NewNote = s.object({
+  title: s.string({ minLength: 1, description: "What the note says." }),
+  tags: s.optional(s.array(s.string())),
+});
+
+export default defineFunctions({
+  createNote: {
+    permission: "authenticated",
+    description: "Files a note.",
+    input: NewNote,
+    output: s.object({ id: s.string() }),
+
+    handler(input) {
+      const owner = principalId();
+      const row = db.one(
+        sql`INSERT INTO apiplant_note (title, owner) VALUES (${input.title}, ${owner}) RETURNING id`,
+      );
+      cache.delete(`notes:${owner}`);
+      log.info(`note ${row.id} filed`);
+      return { id: row.id };
+    },
+  },
+});
+```
+
+`defineFunctions` is what removes the two-lists problem: each entry *is* its
+manifest entry, and the key is the endpoint's name, so a name is written once.
+The default export is what the host reads.
+
+**Schemas.** `s.object({...})` is declared once and used three times: it becomes
+the `input_schema` in the generated OpenAPI, the check that runs *before* the
+handler (a bad body is a `400` naming the field, and your handler never sees it),
+and the type of `input` — inferred, not annotated. Fields are required unless
+wrapped in `s.optional`. It covers objects, arrays, strings, numbers, booleans
+and enums; for anything richer, pass `input` a plain JSON Schema object, which
+reaches the docs untouched and leaves the checking to you.
+
+**Postgres.** `db.query` returns rows, `db.first` a row or `null`, `db.one`
+insists on exactly one, `db.value` unwraps a single column (the `count(*)` case),
+and `db.execute` returns `rows_affected` for statements that change things. Using
+`db.query` for one of those is an error rather than an empty array. The `` sql`…` ``
+template numbers `$1`, `$2`, … and passes the values separately, so nothing a
+caller sends can become SQL.
+
+**Cache and email.** `cache.get`/`set`/`has`/`increment`/`ttl`, plus
+`cache.remember(key, ttl, compute)` for read-through; and `email.send({ to,
+subject, text })`, which fills `from` and `reply_to` in from `[email]`. Both
+throw "no cache configured" / "no email provider configured" when the app has
+not configured one, rather than quietly doing nothing.
+
+**The request.** `config<T>()`, `principalId()`, `hook<T>()`, `log`. All
+synchronous: the isolate blocks while the host does the work on another thread.
+A handler writes `async` only when it wants to for its own reasons; it is awaited
+either way. `console.log` goes to the server's log, and the standard timers work.
+
+**Errors** follow the ABI's split. `throw new BadRequest("…")` is a `400` with
+that message — the JavaScript spelling of `APIPLANT_ERR_REQUEST` — and
+`new HttpError(status, message)` picks the status. Every other throw is a `500`
+whose message goes to the log rather than to the caller. A failed host call
+(`db.query` against a bad table) arrives as a thrown `Error`, so ignoring it
+cannot turn a failure into data.
+
+### The import-free form
+
+There is no bundler, so a function is one self-contained file: relative imports
+and npm packages are refused at build time, with the line number. A module that
+would rather import nothing at all can still declare itself the long way, which
+is the same JSON a C library returns from `apiplant_manifest` plus one export per
+entry:
+
+```ts
+export const manifest: FunctionManifest[] = [
+  { name: "greet", permission: "public", description: "Greets someone." },
+];
+
+export function greet(input: { name?: string }, ctx: Ctx) {
+  if (!input?.name) throw new BadRequest("`name` is required");
+
+  const { greeting = "Hello" } = ctx.config<{ greeting?: string }>();
+  ctx.log.info(`greeting ${input.name}`);
+  return { message: `${greeting}, ${input.name}!` };
+}
+```
+
+`ctx` is the same host API `apiplant.h` declares — `query`, `config`,
+`principalId`, `hook`, `sendEmail`, `cache`, `log` — and the types for it, and
+for `BadRequest`, are global, so this form needs no import and no schema.
+
+Worked example: [17-typescript-functions](../examples/17-typescript-functions),
+the same two endpoints as the C, Zig and Go ones.
+
+### Isolates, concurrency and runaway code
+
+A module is loaded into a small pool of isolates that share one queue, so calls
+run concurrently up to the pool size and queue beyond it. **Isolates share
+nothing**: module-level state exists once per worker, not once per app, and is
+lost on restart. Anything shared or durable belongs in the database or the
+[cache](caching.md).
+
+| Variable | Default | What it does |
+|---|---|---|
+| `APIPLANT_JS_WORKERS` | `2` | isolates per module — how many calls run at once |
+| `APIPLANT_JS_TIMEOUT_MS` | `30000` | how long one call may run before its isolate is terminated |
+
+That timeout is load-bearing. JavaScript is not preemptible, so `while (true) {}`
+would hold a worker until the process died; when the watchdog fires, that one
+request fails with a `500` and the worker carries on serving.
 
 ## Without the macro (the raw ABI)
 

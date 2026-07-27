@@ -1,6 +1,9 @@
 # Nothing here is C-specific. A function's language is invisible to the rest of
 # the app: it gets mounted, authenticated and documented the same either way.
 
+[app]
+name = "11 · Functions in Go"
+
 [server]
 host = "127.0.0.1"
 port = 8099

@@ -3,6 +3,9 @@
 # Every key below is optional. Delete this file entirely and the app still boots
 # with safe defaults — an empty directory is a valid app.
 
+[app]
+name = "01 · Hello world"
+
 [server]
 host = "127.0.0.1"
 port = 8099

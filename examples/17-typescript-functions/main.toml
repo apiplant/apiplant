@@ -1,0 +1,25 @@
+# Nothing here is TypeScript-specific. A function's language is invisible to the
+# rest of the app: it gets mounted, authenticated and documented the same either
+# way — the only difference is that this one runs in a V8 isolate rather than
+# being loaded as a shared library.
+
+[app]
+name = "17 · Functions in TypeScript"
+
+[server]
+host = "127.0.0.1"
+port = 8099
+base_path = "/api"
+
+[database]
+url = "postgres://postgres@127.0.0.1:55432/apiplant_typescript_functions"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "17 · Functions in TypeScript"

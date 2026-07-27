@@ -1,3 +1,6 @@
+[app]
+name = "13 · Real-world app"
+
 [server]
 host = "127.0.0.1"
 port = 8099

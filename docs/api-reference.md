@@ -29,6 +29,7 @@ supplied fields). Each is gated by the resource's [permissions](permissions.md).
 | `offset` | `?offset=50` | Rows to skip (default `0`). |
 | `expand` | `?expand=owner,post` | Inline `belongs_to` [relations](relationships.md). |
 | `<field>` | `?published=true` | Exact-match filter on any visible column. |
+| `<field>~` | `?title~=depot` | Case-insensitive **substring** match on a `string` or `text` column — what a search box means. |
 | `via` | `?via=sender_id` | (nested only) pick the reference field when ambiguous. |
 
 Results are ordered newest-first by `created_at` when the resource has
@@ -47,7 +48,13 @@ timestamps. `expand` also works on the single read endpoint.
   applied as normal. See [Server-owned columns](#server-owned-columns).
 * `hidden` fields are not filterable either: `?password_hash=…` is ignored
   rather than answered, so a list endpoint cannot be used to probe a value it
-  refuses to return.
+  refuses to return. `~` is no way around that — `?password_hash~=$argon` is
+  ignored the same way.
+* `~` is a separate spelling rather than a change to `?field=`, because a
+  filter that quietly matched substrings would surprise everything that relies
+  on it. `%` and `_` in the term are matched literally, not as wildcards, and
+  `~` on a non-text column is a `400` rather than a search of its text
+  rendering.
 
 ## Server-owned columns
 

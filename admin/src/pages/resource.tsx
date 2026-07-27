@@ -91,7 +91,9 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
       params.set("offset", String(key.page * PAGE_SIZE));
       const expand = expandParam(resource);
       if (expand) params.set("expand", expand);
-      if (key.search && resource.search_field) params.set(resource.search_field, key.search);
+      // `field~` is the API's substring match. A search box that matched only
+      // whole values would be a filter wearing a magnifying glass.
+      if (key.search && resource.search_field) params.set(`${resource.search_field}~`, key.search);
 
       return asRecords(
         await api(`/${resource.name}?${params.toString()}`, {

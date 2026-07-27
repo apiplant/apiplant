@@ -290,6 +290,32 @@ from the same `functions/` directory — see the same two endpoints written in
 a single file when it needs dependencies —
 [`examples/12-function-dependencies`](examples/12-function-dependencies).
 
+A `.ts` file works there too, and is the one that compiles to no library at all:
+`apiplant build` strips the types itself (no node, no deno, no bun, nothing to
+install) and the server runs the result in a pool of V8 isolates. Manifest,
+config, permissions, generated docs and lifecycle hooks are identical — see
+[TypeScript](examples/17-typescript-functions).
+
+TypeScript functions import one module, [`apiplant`](typescript), which is
+compiled into the server rather than installed. It declares the endpoint and its
+handler together, and gives typed access to everything the host offers:
+
+```ts
+import { defineFunctions, db, s, sql } from "apiplant";
+
+export default defineFunctions({
+  createNote: {
+    permission: "authenticated",
+    input: s.object({ title: s.string({ minLength: 1 }) }),
+    handler(input) {                       // `input` is typed from the schema,
+      return db.one(                       // checked before this runs, and
+        sql`INSERT INTO apiplant_note (title) VALUES (${input.title}) RETURNING id`,
+      );                                   // published in the OpenAPI document
+    },
+  },
+});
+```
+
 ## Lifecycle hooks: custom logic on CRUD
 
 Functions can also run *inside* a resource's request lifecycle. Point each event

@@ -1,6 +1,6 @@
 # Examples
 
-Sixteen self-contained apps, each adding one idea to the last. Every directory
+Seventeen self-contained apps, each adding one idea to the last. Every directory
 is a complete app: point the binary at it and it runs.
 
 | # | Example | Adds |
@@ -21,6 +21,7 @@ is a complete app: point the binary at it and it runs.
 | 14 | [email-domains](14-email-domains) | a hook on registration: joining the org that owns your email domain |
 | 15 | [email](15-email) | sending mail: one `[email]` provider, named in config |
 | 16 | [caching](16-caching) | the optional `[cache]` Redis, reached from a function |
+| 17 | [typescript-functions](17-typescript-functions) | and in TypeScript: the `apiplant` module, transpiled at build time and run in a V8 isolate |
 
 ## Running one
 
@@ -31,9 +32,10 @@ createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_resources
 cargo run -p apiplant -- run examples/02-resources
 ```
 
-Examples 07–12 and 14–16 have functions, so build them first. Rust functions need
-`cargo` on PATH; the others need their own toolchain (`cc`, `zig`, `go`), and
-example 12 needs all four:
+Examples 07–12 and 14–17 have functions, so build them first. Rust functions need
+`cargo` on PATH; C, Zig and Go need their own toolchain (`cc`, `zig`, `go`), and
+example 12 needs all four. TypeScript needs nothing — `apiplant build` transpiles
+it itself:
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hooks

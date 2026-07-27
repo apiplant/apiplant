@@ -11,8 +11,10 @@
 //! └── libhello.so       # ← also produced by `apiplant build`
 //! ```
 //!
-//! Four languages, and the difference between them is only how much scaffolding
-//! the toolchain insists on:
+//! Four of the five compile to a shared library, and the difference between them
+//! is only how much scaffolding the toolchain insists on. The fifth, TypeScript,
+//! has nothing to link: it is transpiled here and run in a V8 isolate by the
+//! server (see `apiplant_js`), so what lands beside the source is `greet.js`.
 //!
 //! | Source | Built with | Scaffolding |
 //! |--------|------------|-------------|
@@ -20,6 +22,7 @@
 //! | `.c`   | `cc -shared -fPIC` | none |
 //! | `.zig` | `zig build-lib -dynamic -lc` | none |
 //! | `.go`  | `go build -buildmode=c-shared` | a generated `go.mod` |
+//! | `.ts`  | transpiled in-process (oxc) | none - output is `greet.js` |
 //!
 //! Scaffolding lives in `.apiplant-build/` inside the app directory. Rust gets a
 //! throwaway crate around the file plus one shared `target/`, so dependencies are
@@ -66,14 +69,17 @@
 //! The only requirement is whichever toolchain the app's own sources need. Each is
 //! overridable through the variable its ecosystem already uses: `CARGO`, `CC`,
 //! `ZIG`, `GO`, plus `CFLAGS`, `ZIGFLAGS` and `CGO_CFLAGS` for extra flags.
+//! TypeScript needs none of that: no toolchain, and nothing to override.
 
 mod native;
 mod rust;
 mod source;
+mod typescript;
 
 use native::{compile_c, compile_go, compile_zig};
 use rust::{compile_rust, compile_rust_dir, function_crate_path};
 pub use source::{discover, Language, Source};
+use typescript::{compile_typescript, write_declarations};
 
 use std::path::Path;
 use std::process::Command;
@@ -183,6 +189,12 @@ pub fn build(app_dir: &Path, options: Options) -> Result<Vec<String>> {
         None
     };
 
+    // Editors need the `ctx` types before anything is built, so this is written
+    // whether or not a function turned out to be stale.
+    if sources.iter().any(|s| s.language == Language::TypeScript) {
+        write_declarations(&functions_dir)?;
+    }
+
     let mut built = Vec::new();
     for source in &sources {
         let library = functions_dir.join(source.library_name());
@@ -224,6 +236,11 @@ pub fn build(app_dir: &Path, options: Options) -> Result<Vec<String>> {
             (Language::C, _) => compile_c(source, &library, options)?,
             (Language::Zig, _) => compile_zig(source, &library, &build_dir, options)?,
             (Language::Go, _) => compile_go(source, &library, &build_dir, options)?,
+
+            // TypeScript is transpiled in-process: no toolchain, no scaffolding,
+            // and what lands beside the source is JavaScript rather than a
+            // shared library. The server runs it in a V8 isolate.
+            (Language::TypeScript, _) => compile_typescript(source, &library)?,
         }
 
         if !library.is_file() {
@@ -341,7 +358,7 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Functions in all four languages live side by side in one `functions/`
+    /// Functions in every language live side by side in one `functions/`
     /// directory, and each source has to be routed to the right toolchain.
     #[test]
     fn discover_tags_each_source_with_its_language() {
@@ -351,6 +368,7 @@ mod tests {
         std::fs::write(functions.join("hello.c"), "/* fn */").unwrap();
         std::fs::write(functions.join("speedy.zig"), "// fn").unwrap();
         std::fs::write(functions.join("gopher.go"), "// fn").unwrap();
+        std::fs::write(functions.join("scripty.ts"), "// fn").unwrap();
         // Neither of these is a source file.
         std::fs::write(functions.join("shared.h"), "/* h */").unwrap();
         std::fs::write(functions.join("go.mod"), "module x").unwrap();
@@ -366,6 +384,7 @@ mod tests {
                 ("gopher", Language::Go),
                 ("greet", Language::Rust),
                 ("hello", Language::C),
+                ("scripty", Language::TypeScript),
                 ("speedy", Language::Zig),
             ]
         );
@@ -380,6 +399,9 @@ mod tests {
         assert_eq!(Language::Rust.tool(), "cargo");
         assert_eq!(Language::Zig.tool(), "zig");
         assert_eq!(Language::Go.tool(), "go");
+        // TypeScript is the exception: nothing external builds it, so there is
+        // no variable to point somewhere else.
+        assert_eq!(Language::TypeScript.command(), "apiplant build");
 
         // Defaults when nothing is set. `command()` reads the environment, so
         // only assert on a variable this test controls.
@@ -503,6 +525,77 @@ mod tests {
         // Panics must keep unwinding: the host turns a panicking function into a
         // 500 rather than letting it abort the whole server.
         assert!(release.get("panic").is_none());
+    }
+
+    /// TypeScript is the one language whose artifact is not a shared library, so
+    /// staleness, loading and `apiplant build`'s output all key off a `.js`.
+    #[test]
+    fn a_typescript_source_builds_a_js_beside_it() {
+        let dir = temp_dir("typescript");
+        let functions = dir.join("functions");
+        std::fs::write(
+            functions.join("greet.ts"),
+            "export const manifest = [{ name: \"greet\", permission: \"public\" }];\n\
+             export function greet(input: { name: string }) { return { hi: input.name }; }\n",
+        )
+        .unwrap();
+
+        let found = discover(&functions).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].language, Language::TypeScript);
+        assert_eq!(found[0].library_name(), "greet.js");
+
+        let built = build(&dir, Options::default()).unwrap();
+        assert_eq!(built, vec!["greet.js".to_string()]);
+
+        let js = std::fs::read_to_string(functions.join("greet.js")).unwrap();
+        assert!(js.contains("export function greet(input)"), "{js}");
+        // The types are gone, and so is any doubt about where the file came from.
+        assert!(!js.contains(": { name: string }"), "{js}");
+        assert!(js.starts_with("// Generated by `apiplant build`"), "{js}");
+
+        // Editors need the ambient types and the libraries an isolate has, so
+        // both are written too.
+        assert!(functions.join("apiplant.d.ts").is_file());
+        let tsconfig = functions.join("tsconfig.json");
+        assert!(tsconfig.is_file());
+
+        // The tsconfig is the author's once it exists: a second build leaves
+        // whatever they changed alone.
+        std::fs::write(&tsconfig, "{ \"mine\": true }").unwrap();
+        build(
+            &dir,
+            Options {
+                force: true,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&tsconfig).unwrap(),
+            "{ \"mine\": true }"
+        );
+
+        // Nothing is stale immediately after a build, and the declarations file
+        // must not be mistaken for a function of its own.
+        assert!(stale(&dir).is_empty(), "{:?}", stale(&dir));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A `.ts` that cannot be transpiled fails the build with the file named,
+    /// rather than producing a `.js` that fails at boot.
+    #[test]
+    fn a_broken_typescript_source_fails_the_build() {
+        let dir = temp_dir("typescript-broken");
+        let functions = dir.join("functions");
+        std::fs::write(functions.join("greet.ts"), "export function greet( {").unwrap();
+
+        let err = build(&dir, Options::default()).unwrap_err().to_string();
+        assert!(err.contains("greet.ts"), "{err}");
+        assert!(!functions.join("greet.js").exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// A directory is a function too, classified by what it holds, and named for

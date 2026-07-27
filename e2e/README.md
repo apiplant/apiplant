@@ -23,12 +23,12 @@ the runner.
 
 | Step | The claim |
 |------|-----------|
-| boot | migrations build the schema from `models/` alone; `/_health` and the resource answer on an empty database |
+| boot | migrations build the schema from `models/` alone; `/_health` and the resource answer on an empty database; the manifest carries the app's `[app] name` |
 | registration | `auth.allow_registration`, a real user row, a session token that logs in over the API too |
 | onboarding | creating an organisation makes the creator its admin, via a `membership` the server stamps |
 | navigation | the sidebar offers the app's resources and its non-private functions, and leaves the auth resources to their own screens |
 | create / edit | a form writes through the CRUD API — verified by reading the row back |
-| list & search | pagination hints, and `search_field` filtering |
+| list & search | pagination hints, and `search_field` matched as a case-insensitive substring (`?field~=`) |
 | actions | a function's `Input` type becomes a form (doc comments become help text), `functions/greet.toml` config reaches the handler, and results render |
 | visibility | `Public` runs anonymously, `Authenticated` answers `401` without a credential |
 | API keys | a key minted in the dashboard authenticates against the API; a forged one does not |

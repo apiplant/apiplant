@@ -8,3 +8,14 @@ description = "Stable C-ABI contract between apiplant and dynamically-loaded fun
 
 [dependencies]
 abi_stable.workspace = true
+serde_json = { workspace = true, optional = true }
+
+[features]
+# `manifest-json` adds `manifest_from_json`, the shared reader for manifests that
+# arrive as JSON rather than as Rust — C libraries and TypeScript modules. Off by
+# default so a function crate linking this ABI stays free of serde_json.
+default = []
+manifest-json = ["dep:serde_json"]
+
+[dev-dependencies]
+serde_json.workspace = true

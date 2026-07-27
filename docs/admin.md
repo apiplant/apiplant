@@ -21,8 +21,16 @@ enabled = true
 path    = "/admin"
 ```
 
-The header reads *`<app name>` admin* beside the apiplant mark. Point `logo` at
-an image of your own to replace the mark:
+The header reads *`<app name>` admin* beside the apiplant mark. That name is the
+app directory's until the app gives itself one, which it should — a directory is
+named for whoever files it, and this line is read by people who never see it:
+
+```toml
+[app]
+name = "Acme Logistics"      # → "Acme Logistics admin"
+```
+
+Point `logo` at an image of your own to replace the mark:
 
 ```toml
 [admin]
@@ -153,7 +161,7 @@ columns       = ["name", "status", "category_id"]   # the list table, in order
 | `group` | none; the resource sorts after every named group |
 | `order` | `0` |
 | `display_field` | the first of `name`, `title`, `label`, `slug`, `code`, `number`, `email`, else the first string field |
-| `search_field` | `display_field` |
+| `search_field` | `display_field` — the search box matches any part of it, case-insensitively (the API's [`?field~=`](api-reference.md#query-parameters-list--nested-list)) |
 | `columns` | `display_field`, then up to four more fields, skipping `text` and `json` (they never read well in a cell) |
 
 `columns`, `display_field` and `search_field` must name real fields; a typo

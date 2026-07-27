@@ -22,6 +22,10 @@ pub enum Language {
     Zig,
     /// `.go` — `go build -buildmode=c-shared`, which needs a module around it.
     Go,
+    /// `.ts` — type annotations stripped in-process, producing a `.js` the
+    /// server runs in a V8 isolate. The one language that compiles to something
+    /// other than a shared library, because there is nothing here to link.
+    TypeScript,
 }
 
 impl Language {
@@ -32,6 +36,7 @@ impl Language {
             "c" => Some(Language::C),
             "zig" => Some(Language::Zig),
             "go" => Some(Language::Go),
+            "ts" => Some(Language::TypeScript),
             _ => None,
         }
     }
@@ -43,6 +48,8 @@ impl Language {
             Language::C => ("CC", "cc"),
             Language::Zig => ("ZIG", "zig"),
             Language::Go => ("GO", "go"),
+            // Transpiled in-process: there is no external tool to override.
+            Language::TypeScript => return "apiplant build".to_string(),
         };
         std::env::var(var).unwrap_or_else(|_| default.into())
     }
@@ -54,6 +61,7 @@ impl Language {
             Language::C => "a C compiler",
             Language::Zig => "zig",
             Language::Go => "go",
+            Language::TypeScript => "the TypeScript transpiler",
         }
     }
 }
@@ -78,9 +86,13 @@ pub struct Source {
 }
 
 impl Source {
-    /// The library file this source compiles to, e.g. `libgreet.so`.
+    /// What this source compiles to: `libgreet.so` for a native language, and
+    /// `greet.js` for TypeScript, which the server runs rather than loads.
     pub fn library_name(&self) -> String {
-        library_name(&self.crate_name)
+        match self.language {
+            Language::TypeScript => format!("{}.js", self.crate_name),
+            _ => library_name(&self.crate_name),
+        }
     }
 }
 
@@ -138,6 +150,16 @@ pub fn discover(functions_dir: &Path) -> Result<Vec<Source>> {
             continue;
         }
 
+        // `apiplant.d.ts` (and any other declarations file) is types, not code:
+        // it ends in `.ts` but there is nothing in it to compile.
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(".d.ts"))
+        {
+            continue;
+        }
+
         let Some(language) = path
             .extension()
             .and_then(|e| e.to_str())
@@ -187,6 +209,17 @@ pub(super) fn classify_directory(dir: &Path) -> Result<Option<Language>> {
     }
     if dir.join("go.mod").is_file() {
         return Ok(Some(Language::Go));
+    }
+
+    // TypeScript is not bundled (see `compile::typescript`), so a directory of
+    // `.ts` files has no entry point apiplant could pick and no way to join
+    // them. Say what to do instead rather than ignoring the directory.
+    if dir.join("index.ts").is_file() {
+        bail!(
+            "function directory `{}` looks like a TypeScript project, but apiplant \
+             does not bundle TypeScript; make it a single `.ts` file",
+            dir.display()
+        );
     }
 
     let mut has_c = false;

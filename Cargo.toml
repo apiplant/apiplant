@@ -9,6 +9,7 @@ members = [
     "crates/apiplant-auth",
     "crates/apiplant-email",
     "crates/apiplant-cache",
+    "crates/apiplant-js",
     "crates/apiplant-server",
     "crates/apiplant",
 ]
@@ -31,6 +32,7 @@ apiplant-db = { path = "crates/apiplant-db" }
 apiplant-auth = { path = "crates/apiplant-auth" }
 apiplant-email = { path = "crates/apiplant-email" }
 apiplant-cache = { path = "crates/apiplant-cache" }
+apiplant-js = { path = "crates/apiplant-js" }
 apiplant-server = { path = "crates/apiplant-server" }
 
 # Stable ABI for dynamically loaded functions
@@ -105,6 +107,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 libloading = "0.8"
+
+# TypeScript/JavaScript functions: V8 isolates at runtime, oxc to strip types at build time
+deno_core = "0.409"
+deno_error = "0.7"
+oxc_allocator = "0.141"
+oxc_ast = "0.141"
+oxc_codegen = "0.141"
+oxc_parser = "0.141"
+oxc_semantic = "0.141"
+oxc_span = "0.141"
+oxc_transformer = "0.141"
+crossbeam-channel = "0.5"
 
 [profile.release]
 opt-level = 3

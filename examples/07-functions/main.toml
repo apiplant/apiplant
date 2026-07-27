@@ -1,6 +1,9 @@
 # apiplant demo app configuration. Every key here is optional; delete the file
 # entirely and the framework still boots with safe defaults.
 
+[app]
+name = "07 · Functions"
+
 [server]
 host = "127.0.0.1"
 port = 8099

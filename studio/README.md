@@ -14,6 +14,11 @@ pnpm dev         # http://localhost:5273
 Then click **Open app directory** and choose an app — or choose a parent folder
 like `examples/` and pick the app inside it.
 
+**New app directory** starts one instead: pick the folder to hold it, name it,
+and the studio creates that directory and stages a `main.toml` (plus an optional
+example `note` resource) as pending changes. Nothing is on disk until you press
+**Save**, so a new app is reviewable in *Pending changes* like any other edit.
+
 There is no server and no build step for your app: the page holds a
 [File System Access][fsa] handle to the directory you picked, and everything
 happens in the browser. Chrome, Edge, Opera and Arc support that API; Firefox

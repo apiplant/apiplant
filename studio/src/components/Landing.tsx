@@ -1,7 +1,16 @@
-import { For, Show, createSignal } from "solid-js";
-import { Badge, Button, HeadMark, Mono, ThemeToggle } from "./ui";
+import { For, Show, createMemo, createSignal } from "solid-js";
+import { Badge, Button, HeadMark, Labelled, Modal, Mono, Switch, TextInput, ThemeToggle } from "./ui";
 import { isSupported } from "../lib/fs";
-import { chooseDirectory, openProject, studio, toast, type AppCandidate } from "../lib/store";
+import {
+  APP_NAME_RULE,
+  chooseDirectory,
+  chooseParentDirectory,
+  createProject,
+  openProject,
+  studio,
+  toast,
+  type AppCandidate,
+} from "../lib/store";
 
 /** What the studio does with the directory, said plainly before it asks for it. */
 const PROMISES = [
@@ -19,11 +28,106 @@ const PROMISES = [
   },
 ];
 
+/** The parent folder chosen for a new app, held while its name is typed. */
+interface NewAppTarget {
+  handle: FileSystemDirectoryHandle;
+  entryNames: string[];
+}
+
+function NewAppDialog(props: { target: NewAppTarget; onClose: () => void }) {
+  const [name, setName] = createSignal("");
+  const [withExample, setWithExample] = createSignal(true);
+  const [busy, setBusy] = createSignal(false);
+
+  const taken = createMemo(() => props.target.entryNames.includes(name()));
+  const valid = createMemo(() => APP_NAME_RULE.test(name()) && !taken());
+
+  const create = async () => {
+    if (!valid() || busy()) return;
+    setBusy(true);
+    try {
+      if (await createProject(props.target.handle, name(), { withExampleResource: withExample() })) {
+        props.onClose();
+      }
+    } catch (failure) {
+      toast(failure instanceof Error ? failure.message : String(failure), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="New app"
+      subtitle={`A new directory inside ${props.target.handle.name}, laid out the way apiplant expects.`}
+      onClose={props.onClose}
+    >
+      <div class="grid gap-4">
+        <Labelled
+          label="Directory name"
+          hint="Also the docs title and the database name in the generated main.toml."
+        >
+          <TextInput
+            value={name()}
+            onInput={setName}
+            placeholder="my-app"
+            mono
+            onKeyDown={(event: KeyboardEvent) => {
+              if (event.key === "Enter") void create();
+            }}
+          />
+        </Labelled>
+
+        <Show when={name() && !valid()}>
+          <p class="text-xs text-danger">
+            {taken()
+              ? `${props.target.handle.name} already has an entry named ${name()}.`
+              : "Start with a letter or digit; then letters, digits, dot, underscore or dash."}
+          </p>
+        </Show>
+
+        <Switch
+          checked={withExample()}
+          onChange={setWithExample}
+          label="Add an example note resource"
+        />
+
+        <p class="text-xs leading-relaxed text-faint">
+          The directory is created now; <Mono>main.toml</Mono> and the models are staged like any other
+          edit and hit disk when you press <strong>Save</strong>.
+        </p>
+
+        <div class="flex justify-end gap-2">
+          <Button onClick={props.onClose}>Cancel</Button>
+          <Button variant="primary" onClick={create} disabled={!valid() || busy()}>
+            {busy() ? "Creating…" : "Create app"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export function Landing() {
   const [candidates, setCandidates] = createSignal<AppCandidate[] | null>(null);
   const [parentName, setParentName] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
+  const [newTarget, setNewTarget] = createSignal<NewAppTarget | null>(null);
+  /** The last folder browsed into, so a new app can go straight in it. */
+  const [parent, setParent] = createSignal<NewAppTarget | null>(null);
   const supported = isSupported();
+
+  const startNew = async () => {
+    setError(null);
+    try {
+      const target = await chooseParentDirectory();
+      if (target) setNewTarget(target);
+    } catch (failure) {
+      const message = failure instanceof Error ? failure.message : String(failure);
+      setError(message);
+      toast(message, "error");
+    }
+  };
 
   const browse = async () => {
     setError(null);
@@ -35,6 +139,7 @@ export function Landing() {
         return;
       }
       setParentName(result.parent.name);
+      setParent({ handle: result.parent, entryNames: result.parentEntryNames });
       if (result.candidates.length === 0) {
         setCandidates([]);
         setError(
@@ -86,6 +191,16 @@ export function Landing() {
             </svg>
             {studio.loading ? "Opening…" : "Open app directory"}
           </Button>
+          <Button onClick={startNew} disabled={!supported || studio.loading}>
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path
+                d="M1.75 12.25V4.5c0-.55.45-1 1-1h3.1c.32 0 .62.15.81.4l.78 1.05c.19.25.49.4.81.4h4c.55 0 1 .45 1 1v5.9c0 .55-.45 1-1 1H2.75c-.55 0-1-.45-1-1z"
+                stroke-linejoin="round"
+              />
+              <path d="M8 7.4v3.2M6.4 9h3.2" stroke-linecap="round" />
+            </svg>
+            New app directory
+          </Button>
           <span class="text-xs text-faint">
             or pick a parent folder — <Mono>examples/</Mono> works — and choose the app inside it.
           </span>
@@ -128,6 +243,15 @@ export function Landing() {
           </div>
         </Show>
 
+        <Show when={parent()}>
+          {(target) => (
+            <div class="mt-4 flex items-center gap-3 text-xs text-faint">
+              <Button onClick={() => setNewTarget(target())}>New app in {target().handle.name}</Button>
+              <span>Creates a fresh app directory inside the folder you just browsed.</span>
+            </div>
+          )}
+        </Show>
+
         <div class="mt-14 grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3">
           <For each={PROMISES}>
             {(promise) => (
@@ -146,6 +270,10 @@ export function Landing() {
           </span>
         </div>
       </div>
+
+      <Show when={newTarget()}>
+        {(target) => <NewAppDialog target={target()} onClose={() => setNewTarget(null)} />}
+      </Show>
     </div>
   );
 }

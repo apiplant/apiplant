@@ -5,6 +5,9 @@ a missing file, section, or key falls back to a safe default. The only setting
 that is *inferred* rather than declared is TLS (see [HTTPS](#https)).
 
 ```toml
+[app]
+name = "Acme Logistics"      # what people are shown; default: the directory name
+
 [server]
 host      = "0.0.0.0"        # interface to bind
 port      = 8080             # TCP port
@@ -53,6 +56,12 @@ api_key  = "${SENDGRID_API_KEY}"
 url    = "redis://127.0.0.1:6379"
 prefix = "my-app:"
 ```
+
+## `[app]`
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `name` | the app directory's name | What the app is called wherever a person reads it: the [dashboard](admin.md) header and the browser title. The directory an app lives in is a filing decision — `07-functions`, `backend`, `api-v2` — and operators should not have to read it. |
 
 ## `[server]`
 

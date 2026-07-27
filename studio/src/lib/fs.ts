@@ -128,6 +128,17 @@ export async function listSubdirectories(dir: FileSystemDirectoryHandle): Promis
   return names.sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * Create (or open) a subdirectory. Used to start a new app inside the folder
+ * the user picked — the only directory the studio ever creates on its own.
+ */
+export async function createSubdirectory(
+  parent: FileSystemDirectoryHandle,
+  name: string,
+): Promise<FileSystemDirectoryHandle> {
+  return parent.getDirectoryHandle(name, { create: true });
+}
+
 export async function listEntryNames(dir: FileSystemDirectoryHandle): Promise<string[]> {
   const names: string[] = [];
   for await (const [name] of entriesOf(dir)) names.push(name);

@@ -122,10 +122,23 @@ impl Resource {
             ("search_field", &self.admin.search_field),
         ] {
             if let Some(field) = declared {
-                if !self.fields.contains_key(field) {
+                let Some(declared_field) = self.fields.get(field) else {
                     return Err(crate::Error::Schema {
                         resource: self.meta.name.clone(),
                         message: format!("[admin] {key} names unknown field `{field}`"),
+                    });
+                };
+                // The search box matches substrings, which only a text column
+                // can do — a search field of another type would be a box that
+                // answers 400 to every keystroke.
+                if key == "search_field"
+                    && !matches!(declared_field.ty, FieldType::String | FieldType::Text)
+                {
+                    return Err(crate::Error::Schema {
+                        resource: self.meta.name.clone(),
+                        message: format!(
+                            "[admin] search_field names `{field}`, which is not a text field and cannot be searched"
+                        ),
                     });
                 }
             }
@@ -175,11 +188,20 @@ impl Resource {
     }
 
     /// The field the dashboard's list search box filters on.
+    ///
+    /// Always a `string` or `text` column, because searching means matching
+    /// part of a value: a `display_field` of another type names records
+    /// perfectly well and simply leaves the resource without a search box.
     pub fn admin_search_field(&self) -> Option<String> {
-        match &self.admin.search_field {
+        let candidate = match &self.admin.search_field {
             Some(declared) if self.fields.contains_key(declared) => Some(declared.clone()),
             Some(_) | None => self.admin_display_field(),
-        }
+        };
+        candidate.filter(|name| {
+            self.fields
+                .get(name)
+                .is_some_and(|field| matches!(field.ty, FieldType::String | FieldType::Text))
+        })
     }
 
     /// The columns the list table shows, in order.
@@ -1180,6 +1202,25 @@ type = "string"
         )
         .unwrap();
         assert!(bad_display.validate().is_err());
+
+        // The search box matches substrings, so a search field that is not text
+        // would be a box that answers 400 to every keystroke.
+        let unsearchable: Resource = toml::from_str(
+            "[resource]\nname = \"tick\"\n\n[admin]\nsearch_field = \"count\"\n\n[fields.count]\ntype = \"integer\"\n",
+        )
+        .unwrap();
+        assert!(unsearchable.validate().is_err());
+
+        // And one inherited from a non-text `display_field` simply leaves the
+        // resource without a search box, rather than failing the app.
+        let named_by_a_number = parse_resource(
+            "[resource]\nname = \"tick\"\n\n[admin]\ndisplay_field = \"count\"\n\n[fields.count]\ntype = \"integer\"\n",
+        );
+        assert_eq!(
+            named_by_a_number.admin_display_field().as_deref(),
+            Some("count")
+        );
+        assert_eq!(named_by_a_number.admin_search_field(), None);
 
         // A typo in a key is caught too, rather than silently ignored.
         assert!(toml::from_str::<Resource>(

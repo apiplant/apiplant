@@ -1,8 +1,12 @@
 //! Loading and invoking dynamically-compiled function libraries.
 //!
-//! At boot the framework scans the app's `functions/` directory for shared
-//! libraries, loads each through the [`apiplant_abi`] contract, and records its
-//! manifest. At request time it constructs a [`HostBridge`] (database + config +
+//! At boot the framework scans the app's `functions/` directory for artifacts
+//! `apiplant build` produced: shared libraries, loaded through the
+//! [`apiplant_abi`] contract, and `.js` modules, loaded into V8 isolates by
+//! [`apiplant_js`]. Both arrive as the same [`BoxedFunction`], so the difference
+//! stops at the loader.
+//!
+//! At request time the framework constructs a [`HostBridge`] (database + config +
 //! caller identity) and calls the function on a blocking worker so the function
 //! author never has to deal with async.
 
@@ -135,11 +139,14 @@ impl FunctionRegistry {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let is_lib = matches!(
+            // Two kinds of function artifact live here: a shared library, and
+            // the JavaScript `apiplant build` produced from a `.ts`. Loading is
+            // the only place the difference shows.
+            let loadable = matches!(
                 path.extension().and_then(|e| e.to_str()),
-                Some("so") | Some("dylib") | Some("dll")
+                Some("so") | Some("dylib") | Some("dll") | Some(apiplant_js::EXTENSION)
             );
-            if !is_lib {
+            if !loadable {
                 continue;
             }
             match Self::load_library(&path) {
@@ -171,6 +178,20 @@ impl FunctionRegistry {
     /// exports the [plain C symbols](apiplant_abi::c) instead. Both arrive here as
     /// [`BoxedFunction`]s, so nothing downstream knows the difference.
     fn load_library(path: &Path) -> Result<Vec<LoadedFunction>, String> {
+        // A `.js` never speaks either native ABI: it is a module for a V8
+        // isolate, and `apiplant_js` gives back the same `BoxedFunction`s, so
+        // everything below this line is shared with the compiled languages.
+        let exported = if path.extension().and_then(|e| e.to_str()) == Some(apiplant_js::EXTENSION)
+        {
+            apiplant_js::load(path)?.into()
+        } else {
+            Self::load_native(path)?
+        };
+        Self::wrap(path, exported)
+    }
+
+    /// Load a shared library through whichever of the two native ABIs it speaks.
+    fn load_native(path: &Path) -> Result<abi_stable::std_types::RVec<BoxedFunction>, String> {
         let exported = match Self::open(path) {
             Ok(module) => module.new_functions()(),
             Err(rust_abi_error) => match crate::cabi::load(path)? {
@@ -180,6 +201,15 @@ impl FunctionRegistry {
                 None => return Err(rust_abi_error),
             },
         };
+        Ok(exported)
+    }
+
+    /// Turn the functions a library exported into registry entries: check the
+    /// names, then resolve each one's config file.
+    fn wrap(
+        path: &Path,
+        exported: abi_stable::std_types::RVec<BoxedFunction>,
+    ) -> Result<Vec<LoadedFunction>, String> {
         if exported.is_empty() {
             return Err("library exports no functions".to_string());
         }

@@ -123,6 +123,7 @@ including foreign keys:
 GET /api/comment?post_id=<uuid>       # comments on one post
 GET /api/post?published=true          # published posts
 GET /api/user?email=you@example.com
+GET /api/post?title~=launch           # substring, case-insensitive (text columns)
 ```
 
 Values are parsed according to the column's type (a bad value ⇒ `400`). Unknown

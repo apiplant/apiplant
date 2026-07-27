@@ -1,0 +1,27 @@
+{
+  "name": "apiplant",
+  "version": "0.1.0",
+  "description": "The apiplant module TypeScript functions import: typed Postgres, cache, email and function declarations",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "apiplant.js",
+  "types": "apiplant.d.ts",
+  "exports": {
+    ".": {
+      "types": "./apiplant.d.ts",
+      "default": "./apiplant.js"
+    }
+  },
+  "files": [
+    "apiplant.js",
+    "apiplant.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

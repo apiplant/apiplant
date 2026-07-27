@@ -11,7 +11,8 @@
 //!
 //! An *app directory* holds an optional `main.toml`, an optional `models/`
 //! directory of resource definitions, an optional `functions/` directory of
-//! function sources (Rust, C, Zig or Go) and their compiled libraries, and — to
+//! function sources (Rust, C, Zig, Go or TypeScript) and what `apiplant build`
+//! produced from them, and — to
 //! enable TLS — an
 //! `https/` directory with a certificate and key. Every piece is optional; an
 //! empty directory is a valid (if bare) app.
@@ -51,6 +52,7 @@ host a copy on another origin. Switch the built-in one off with
 
 `build` shells out to a toolchain per language — cargo for .rs, cc for .c, zig
 for .zig, go for .go — so whichever your functions use must be on PATH.
+TypeScript is the exception: .ts is transpiled in-process, so it needs nothing.
 ";
 
 /// What the user asked for.

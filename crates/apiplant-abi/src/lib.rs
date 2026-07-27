@@ -33,6 +33,11 @@
 
 pub mod c;
 
+#[cfg(feature = "manifest-json")]
+mod manifest_json;
+#[cfg(feature = "manifest-json")]
+pub use manifest_json::manifest_from_json;
+
 use abi_stable::{
     declare_root_module_statics,
     library::RootModule,

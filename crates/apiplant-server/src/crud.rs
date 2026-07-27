@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use apiplant_auth::{Principal, ADMIN_ROLE};
 use apiplant_core::schema::Access;
-use apiplant_core::{HookEvent, Resource};
+use apiplant_core::{FieldType, HookEvent, Resource};
 use apiplant_db::{value, Filter};
 use ntex::web::types::{Json, Path, State};
 use ntex::web::{HttpRequest, HttpResponse};
@@ -242,12 +242,32 @@ fn field_filters(
         if RESERVED.contains(&key.as_str()) {
             continue;
         }
-        let Some(field) = r.fields.get(key) else {
+        // `?title~=depot` searches instead of matching: the one thing a search
+        // box means and an equality filter cannot express. It is a separate
+        // spelling rather than a change to `?title=`, because a filter that
+        // silently matched substrings would be a trap for everything else.
+        let (name, contains) = match key.strip_suffix('~') {
+            Some(name) => (name, true),
+            None => (key.as_str(), false),
+        };
+        let Some(field) = r.fields.get(name) else {
             continue;
         };
         // A hidden field is stripped from responses; filtering on one would
         // turn the list endpoint into an oracle for it (`?password_hash=…`).
         if field.hidden {
+            continue;
+        }
+        if contains {
+            // Substring matching on a number or a timestamp would be a search
+            // of its text rendering, which is not a thing anyone means.
+            if !matches!(field.ty, FieldType::String | FieldType::Text) {
+                return Err(error(
+                    400,
+                    format!("`{name}` is not a text field, so `{name}~` cannot search it"),
+                ));
+            }
+            filters.push(Filter::contains(name.to_string(), raw.clone()));
             continue;
         }
         match value::string_to_sql(field.ty, raw) {

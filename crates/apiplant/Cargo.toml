@@ -15,6 +15,7 @@ apiplant-abi.workspace = true
 apiplant-assets.workspace = true
 apiplant-core.workspace = true
 apiplant-server.workspace = true
+apiplant-js = { workspace = true, features = ["transpile"] }
 ntex.workspace = true
 tokio.workspace = true
 tracing.workspace = true

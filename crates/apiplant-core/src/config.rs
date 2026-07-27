@@ -18,6 +18,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub app: AppConfig,
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
@@ -26,6 +27,20 @@ pub struct Config {
     pub public: PublicConfig,
     pub email: EmailConfig,
     pub cache: CacheConfig,
+}
+
+/// What the app calls itself.
+///
+/// The directory an app lives in is a developer's filing decision —
+/// `07-functions`, `api-v2`, `backend` — and the dashboard header is read by
+/// people who never see it. This is where an app says the name they should
+/// read instead.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct AppConfig {
+    /// Display name, used wherever the app is named to a person — the admin
+    /// dashboard's header and title. Unset falls back to the directory name.
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

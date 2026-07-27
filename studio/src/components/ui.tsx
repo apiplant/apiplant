@@ -105,6 +105,7 @@ export function TextInput(
     disabled?: boolean;
     list?: string;
     type?: string;
+    onKeyDown?: (event: KeyboardEvent) => void;
   },
 ) {
   return (
@@ -118,6 +119,7 @@ export function TextInput(
       spellcheck={false}
       autocomplete="off"
       onInput={(event) => props.onInput(event.currentTarget.value)}
+      onKeyDown={(event) => props.onKeyDown?.(event)}
     />
   );
 }

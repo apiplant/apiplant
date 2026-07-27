@@ -12,8 +12,9 @@ apiplant-db.workspace = true
 apiplant-auth.workspace = true
 apiplant-email.workspace = true
 apiplant-cache.workspace = true
-apiplant-abi.workspace = true
+apiplant-abi = { workspace = true, features = ["manifest-json"] }
 apiplant-assets.workspace = true
+apiplant-js.workspace = true
 abi_stable.workspace = true
 libloading.workspace = true
 ntex.workspace = true

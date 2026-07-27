@@ -403,3 +403,111 @@ type = "string"
     fs::remove_dir_all(root).unwrap();
     db.cleanup().await;
 }
+
+/// `?field~=term` searches; `?field=value` still means equality.
+///
+/// The two spellings are deliberately different things: a search box wants
+/// "contains, case-insensitively", and everything that filters a list by an
+/// exact value must keep meaning exactly that.
+#[ntex::test]
+async fn substring_search_matches_parts_of_a_value_without_loosening_filters() {
+    let db = TempDatabase::create("search").await;
+    let root = temp_dir("search");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    "\n[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n",
+                    db.url
+                ),
+            ),
+            (
+                "models/note.toml",
+                r#"
+[resource]
+name = "note"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+
+[fields.title]
+type     = "string"
+required = true
+
+[fields.secret]
+type   = "string"
+hidden = true
+
+[fields.pages]
+type = "integer"
+"#,
+            ),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let create = |title: &str, secret: &str, pages: i64| {
+        test::TestRequest::post()
+            .uri("/api/note")
+            .header(CONTENT_TYPE, "application/json")
+            .set_payload(json!({"title": title, "secret": secret, "pages": pages}).to_string())
+            .to_request()
+    };
+    for (title, secret, pages) in [
+        ("Depot inventory", "alpha", 3),
+        ("First delivery run", "beta", 5),
+        ("100% recycled packaging", "gamma", 7),
+    ] {
+        let resp = test::call_service(&app, create(title, secret, pages)).await;
+        assert_eq!(resp.status().as_u16(), 201);
+    }
+
+    let titles = |value: &Value| -> Vec<String> {
+        value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["title"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let list = |uri: &str| test::TestRequest::get().uri(uri).to_request();
+
+    // Part of a value finds it, and the case does not have to match.
+    let found = read_json(test::call_service(&app, list("/api/note?title~=depot")).await).await;
+    assert_eq!(titles(&found), vec!["Depot inventory"]);
+
+    // The middle of a word counts too — this is `contains`, not `starts with`.
+    let middle = read_json(test::call_service(&app, list("/api/note?title~=livery")).await).await;
+    assert_eq!(titles(&middle), vec!["First delivery run"]);
+
+    // Equality is untouched: half a title matches nothing, the whole one does.
+    let exact_miss = read_json(test::call_service(&app, list("/api/note?title=Depot")).await).await;
+    assert_eq!(titles(&exact_miss), Vec::<String>::new());
+    let exact_hit =
+        read_json(test::call_service(&app, list("/api/note?title=Depot%20inventory")).await).await;
+    assert_eq!(titles(&exact_hit), vec!["Depot inventory"]);
+
+    // A `%` in the term is a per-cent sign, not "match anything".
+    let literal = read_json(test::call_service(&app, list("/api/note?title~=100%25")).await).await;
+    assert_eq!(titles(&literal), vec!["100% recycled packaging"]);
+
+    // A hidden field is no more searchable than it is filterable: the parameter
+    // is ignored rather than answered, so the list cannot be used to probe it.
+    let hidden = read_json(test::call_service(&app, list("/api/note?secret~=alph")).await).await;
+    assert_eq!(hidden.as_array().unwrap().len(), 3);
+
+    // Searching a number would be a search of its text rendering, which is not
+    // a thing anyone means.
+    let wrong_type = test::call_service(&app, list("/api/note?pages~=5")).await;
+    assert_eq!(wrong_type.status().as_u16(), 400);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}

@@ -433,7 +433,8 @@ export function ReferencePicker(props: {
       setLoading(true);
       try {
         const params = new URLSearchParams({ limit: "20" });
-        if (term.trim() && target.search_field) params.set(target.search_field, term.trim());
+        // `field~` is the substring match, so typing part of a name finds it.
+        if (term.trim() && target.search_field) params.set(`${target.search_field}~`, term.trim());
         setResults(
           asRecords(
             await api(`/${target.name}?${params.toString()}`, {

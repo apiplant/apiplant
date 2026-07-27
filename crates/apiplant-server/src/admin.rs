@@ -285,12 +285,24 @@ fn build_manifest(
     functions: &FunctionRegistry,
     api_base_url: String,
 ) -> Result<AdminManifest> {
+    // `[app] name` when the app gives itself one; the directory it lives in
+    // otherwise, which is a filing decision rather than a name a person should
+    // have to read.
     let app_name = app
-        .root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("apiplant app")
-        .to_string();
+        .config
+        .app
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            app.root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("apiplant app")
+                .to_string()
+        });
     let user = app.resources.get("user");
     let identity_field = user
         .and_then(|resource| resource.auth.as_ref())
@@ -830,14 +842,17 @@ mod tests {
     }
 
     fn build_manifest_for(models: &[(&str, &str)]) -> Value {
+        build_manifest_with_config(
+            "[server]\nbase_path = \"/api\"\n\n[auth]\nallow_registration = true\n",
+            models,
+        )
+    }
+
+    fn build_manifest_with_config(main_toml: &str, models: &[(&str, &str)]) -> Value {
         let app_dir = temp_dir("app");
         let out_dir = temp_dir("out");
         fs::create_dir_all(app_dir.join("models")).unwrap();
-        fs::write(
-            app_dir.join("main.toml"),
-            "[server]\nbase_path = \"/api\"\n\n[auth]\nallow_registration = true\n",
-        )
-        .unwrap();
+        fs::write(app_dir.join("main.toml"), main_toml).unwrap();
         for (name, src) in models {
             fs::write(app_dir.join(format!("models/{name}.toml")), src).unwrap();
         }
@@ -866,6 +881,35 @@ mod tests {
             .iter()
             .find(|resource| resource["name"] == name)
             .unwrap_or_else(|| panic!("no `{name}` in manifest"))
+    }
+
+    /// The header an operator reads is the app's to choose; the directory it
+    /// happens to live in is only the fallback.
+    #[test]
+    fn app_name_comes_from_config_and_falls_back_to_the_directory() {
+        let named = build_manifest_with_config(
+            "[app]\nname = \"Acme Logistics\"\n\n[server]\nbase_path = \"/api\"\n",
+            &[],
+        );
+        assert_eq!(named["app_name"], "Acme Logistics");
+        assert_eq!(named["title"], "Acme Logistics admin");
+
+        // A blank name is not a name: it would render as a header with nothing
+        // in it, so it falls back like an absent one.
+        let blank = build_manifest_with_config(
+            "[app]\nname = \"   \"\n\n[server]\nbase_path = \"/api\"\n",
+            &[],
+        );
+        assert!(blank["app_name"]
+            .as_str()
+            .unwrap()
+            .starts_with("apiplant-admin-app-"));
+
+        let unnamed = build_manifest_for(&[]);
+        assert!(unnamed["app_name"]
+            .as_str()
+            .unwrap()
+            .starts_with("apiplant-admin-app-"));
     }
 
     #[test]
