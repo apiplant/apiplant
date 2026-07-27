@@ -43,28 +43,85 @@ pub struct NavItem {
     pub kind: NavKind,
 }
 
+/// What the console knows about the caller when it decides what to show them.
+///
+/// The dashboard makes the same decision from the same three facts. The fourth
+/// — whether the roles are *known* — exists because this console has to work
+/// them out from the API rather than being handed them: an app that will not
+/// let you list your own memberships leaves us unable to say, and "unable to
+/// say" must not read as "you hold none".
+#[derive(Debug, Clone, Copy)]
+pub struct Reach<'a> {
+    pub signed_in: bool,
+    /// Whether there is an active organisation to work in.
+    pub organization: bool,
+    pub roles: &'a [String],
+    pub roles_known: bool,
+}
+
+impl Reach<'_> {
+    /// Nobody, before we know who is asking.
+    pub fn unknown() -> Reach<'static> {
+        Reach {
+            signed_in: false,
+            organization: false,
+            roles: &[],
+            roles_known: false,
+        }
+    }
+
+    /// Whether to put this action in front of the caller.
+    ///
+    /// Hiding is a claim, so it is only made from knowledge: a `role:` policy
+    /// we cannot check is left alone, and the server refuses it if we were
+    /// wrong. Everything else the manifest settles — `private` is nobody,
+    /// `authenticated` needs a session, and organisation-scoped work needs an
+    /// organisation to do it in.
+    pub fn may(&self, global: bool, permission: &api::ActionPermission) -> bool {
+        // A policy this console does not recognise — an older build against a
+        // newer server — is not grounds for hiding anything.
+        if permission.value.is_empty() {
+            return true;
+        }
+        if permission.role.is_some() && !self.roles_known {
+            // A role is held *in* an organisation, so a session in none holds
+            // none and this is decidable after all. Inside one it is not, and
+            // a door that might open beats one that is missing.
+            return permission.possible() && self.signed_in && self.organization;
+        }
+        permission.allowed(self.signed_in, global || self.organization, self.roles)
+    }
+
+    /// The same question for a function, whose permission is a bare string.
+    pub fn may_run(&self, function: &FunctionManifest) -> bool {
+        let permission = api::ActionPermission {
+            role: function
+                .permission
+                .strip_prefix("role:")
+                .map(str::to_string),
+            value: function.permission.clone(),
+            ..Default::default()
+        };
+        self.may(!function.requires_org, &permission)
+    }
+}
+
 /// Build the sidebar from the manifest.
 ///
 /// Only what the operator can actually reach: a resource the server will not
 /// list for anyone, or a function with no endpoint, is a dead entry that only
 /// teaches people the console is broken.
-fn navigation(manifest: &Manifest, roles: &[String]) -> Vec<NavItem> {
-    // A resource only an `editor` may list is not a door for anybody else, so
-    // it is left out once we know what the caller holds. Before we know — the
-    // console has not signed in yet — nothing is hidden on a guess.
-    let reachable = |permission: &api::ActionPermission| {
-        permission.possible()
-            && match (&permission.role, roles.is_empty()) {
-                (Some(role), false) => roles.iter().any(|held| held == role || held == ADMIN_ROLE),
-                _ => true,
-            }
-    };
+fn navigation(manifest: &Manifest, reach: &Reach) -> Vec<NavItem> {
+    let reachable =
+        |permission: &api::ActionPermission, global: bool| reach.may(global, permission);
 
     let mut resources: Vec<(usize, &ResourceManifest)> = manifest
         .resources
         .iter()
         .enumerate()
-        .filter(|(_, resource)| resource.visible && reachable(&resource.permissions.list))
+        .filter(|(_, resource)| {
+            resource.visible && reachable(&resource.permissions.list, resource.scope == "global")
+        })
         .collect();
     resources.sort_by(|(_, a), (_, b)| {
         a.group
@@ -83,7 +140,9 @@ fn navigation(manifest: &Manifest, roles: &[String]) -> Vec<NavItem> {
         .collect();
 
     for (index, function) in manifest.functions.iter().enumerate() {
-        if !function.visible {
+        // An action needing a role you do not hold, or an organisation you have
+        // not got, is a button that can only answer 403.
+        if !function.visible || !reach.may_run(function) {
             continue;
         }
         items.push(NavItem {
@@ -103,11 +162,15 @@ fn navigation(manifest: &Manifest, roles: &[String]) -> Vec<NavItem> {
             .resources
             .iter()
             .position(|resource| resource.name == name)
-            .filter(|index| reachable(&manifest.resources[*index].permissions.list))
+            .filter(|index| {
+                let resource = &manifest.resources[*index];
+                reachable(&resource.permissions.list, resource.scope == "global")
+            })
     };
 
     let mut console = Vec::new();
-    if !manifest.auth.profile_fields.is_empty() {
+    // Your own account is only a screen once there is a session to own it.
+    if reach.signed_in && !manifest.auth.profile_fields.is_empty() {
         console.push(NavItem {
             label: "Account".into(),
             group: "Console".into(),
@@ -827,6 +890,9 @@ pub struct Cli {
     pub identity_note: Option<String>,
     /// Every role the caller holds in the active organisation, primary first.
     pub roles: Vec<String>,
+    /// Whether that list is a fact. False when the app will not tell us —
+    /// which is not the same as holding none, and must never be read as it.
+    pub roles_known: bool,
     pub status: String,
     pub error: Option<String>,
     pub quit: bool,
@@ -836,7 +902,7 @@ pub struct Cli {
 
 impl Cli {
     pub fn new(client: Client, manifest: Manifest, store: Store, dir: PathBuf) -> Cli {
-        let nav = navigation(&manifest, &[]);
+        let nav = navigation(&manifest, &Reach::unknown());
         Cli {
             client,
             manifest,
@@ -857,6 +923,7 @@ impl Cli {
             identity_id: None,
             identity_note: None,
             roles: Vec::new(),
+            roles_known: false,
             status: String::new(),
             error: None,
             quit: false,
@@ -1109,12 +1176,22 @@ impl Cli {
     /// again whenever they change or the active organisation does.
     fn rebuild_nav(&mut self) {
         let here = self.nav.get(self.nav_index).map(|item| item.kind);
-        self.nav = navigation(&self.manifest, &self.roles);
+        self.nav = navigation(&self.manifest, &self.reach());
         // Keep the cursor on whatever it was on, when that still exists.
         self.nav_index = here
             .and_then(|kind| self.nav.iter().position(|item| item.kind == kind))
             .unwrap_or(0)
             .min(self.nav.len().saturating_sub(1));
+    }
+
+    /// What is known about the caller right now.
+    pub fn reach(&self) -> Reach<'_> {
+        Reach {
+            signed_in: !self.client.credentials.is_empty(),
+            organization: self.client.organization.is_some(),
+            roles: &self.roles,
+            roles_known: self.roles_known,
+        }
     }
 
     /// Whether the caller may take this action, as far as the manifest can say.
@@ -1123,9 +1200,7 @@ impl Cli {
     /// only the server knows which those are. This decides what to put in front
     /// of somebody, which is what the dashboard uses the same rule for.
     pub fn may(&self, resource: &ResourceManifest, action: &api::ActionPermission) -> bool {
-        let signed_in = !self.client.credentials.is_empty();
-        let somewhere = resource.scope == "global" || self.client.organization.is_some();
-        action.allowed(signed_in, somewhere, &self.roles)
+        self.reach().may(resource.scope == "global", action)
     }
 
     /// Whether a resource is in the manifest and listable at all.
@@ -1143,6 +1218,8 @@ impl Cli {
     /// and an app may well let you see your own membership and nobody else's.
     async fn load_roles(&mut self) {
         self.roles = Vec::new();
+        self.roles_known = false;
+
         let Some(me) = self.identity_id.clone() else {
             return;
         };
@@ -1153,39 +1230,56 @@ impl Cli {
         let Ok(rows) = self.client.list("membership", &query).await else {
             return;
         };
-        let Some(row) = rows.first() else { return };
+        // No membership row is a fact too: you hold no roles here.
+        let Some(row) = rows.first() else {
+            self.roles_known = true;
+            return;
+        };
         let Some(id) = row.get("id").map(api::scalar).filter(|id| !id.is_empty()) else {
+            return;
+        };
+        let Some(grants) = self.grants_for(&id).await else {
+            // The primary role alone is worth showing, but it is not the whole
+            // list, so nothing may be hidden on the strength of it.
+            self.roles = role_of(row).into_iter().collect();
             return;
         };
         let member = Member {
             membership_id: id.clone(),
             name: String::new(),
             primary: role_of(row),
-            grants: self.grants_for(&id).await,
+            grants,
             is_me: true,
         };
         self.roles = member.roles();
+        self.roles_known = true;
     }
 
-    /// The `membership_role` rows belonging to one membership.
+    /// The `membership_role` rows belonging to one membership, or `None` when
+    /// this caller cannot see them.
     ///
-    /// An app is free to drop that resource, and an operator may not be allowed
-    /// to list it; either way the primary role is still worth showing, so a
-    /// failure here is emptiness rather than an error.
-    async fn grants_for(&self, membership_id: &str) -> Vec<(String, String)> {
+    /// An app is free to drop that resource, in which case there are no grants
+    /// and the primary role is the whole list — a known answer. An app that has
+    /// it but will not let an operator list it is the other case: the grants
+    /// exist and we cannot read them, so the answer is "we do not know".
+    async fn grants_for(&self, membership_id: &str) -> Option<Vec<(String, String)>> {
+        let declared = self
+            .manifest
+            .resources
+            .iter()
+            .any(|resource| resource.name == "membership_role");
+        if !declared {
+            return Some(Vec::new());
+        }
         if !self.listable("membership_role") {
-            return Vec::new();
+            return None;
         }
         let query = [
             ("membership_id", membership_id.to_string()),
             ("limit", "100".into()),
         ];
-        let rows = self
-            .client
-            .list("membership_role", &query)
-            .await
-            .unwrap_or_default();
-        rows.iter().filter_map(grant_of).collect()
+        let rows = self.client.list("membership_role", &query).await.ok()?;
+        Some(rows.iter().filter_map(grant_of).collect())
     }
 
     /// Everyone in the active organisation, with their roles.
@@ -1204,12 +1298,14 @@ impl Cli {
         };
 
         // One request for every grant in the organisation, not one per member:
-        // a team of forty should not be forty round trips.
+        // a team of forty should not be forty round trips. A failure here is
+        // reported rather than swallowed — a Team screen quietly missing half
+        // of somebody's roles is worse than one that says it could not load.
         let grants = if self.listable("membership_role") {
             self.client
                 .list("membership_role", &[("limit", "500".into())])
                 .await
-                .unwrap_or_default()
+                .map_err(|error| format!("the roles could not be loaded: {error}"))?
         } else {
             Vec::new()
         };
@@ -1277,9 +1373,12 @@ impl Cli {
         match self.fetch_members().await {
             Ok(members) => {
                 // Whatever the team says about *us* is fresher than what we
-                // knew, and it is the same fact.
+                // knew, and it is the same fact — read from the same two tables
+                // in one go, so it is a known one.
                 if let Some(me) = members.iter().find(|member| member.is_me) {
                     self.roles = me.roles();
+                    self.roles_known = true;
+                    self.rebuild_nav();
                 }
                 let count = members.len();
                 self.main = Main::Team(Team {
@@ -1959,6 +2058,8 @@ impl Cli {
                 }
                 self.save_credentials();
                 self.load_roles().await;
+                // Everything scoped to an organisation just became reachable.
+                self.rebuild_nav();
                 self.onboarding = None;
                 self.say(format!("{label} is ready. You are its admin."));
                 self.open_selected().await;
@@ -2163,6 +2264,7 @@ impl Cli {
         self.identity_id = None;
         self.identity_note = None;
         self.roles.clear();
+        self.roles_known = false;
         self.rebuild_nav();
         self.onboarding = None;
         self.main = Main::Empty(String::new());
@@ -3191,6 +3293,16 @@ mod tests {
         }
     }
 
+    /// Somebody signed in, working in an organisation, whose roles are known.
+    fn signed_in(roles: &[String]) -> Reach<'_> {
+        Reach {
+            signed_in: true,
+            organization: true,
+            roles,
+            roles_known: true,
+        }
+    }
+
     /// A console that has asked the server about organisations and been told
     /// the answer — which is what makes an empty list mean anything.
     fn console(resources: Vec<ResourceManifest>) -> Cli {
@@ -3201,6 +3313,12 @@ mod tests {
         let client = Client::new("http://x:1".into(), "/api".into(), "/admin".into()).unwrap();
         let mut cli = Cli::new(client, manifest, Store::default(), PathBuf::from("."));
         cli.organizations_known = true;
+        // Signed in, somewhere to work, and roles we could actually read —
+        // which is what the sidebar is built from.
+        cli.client.credentials.api_key = Some("apik_test".into());
+        cli.client.organization = Some("org-1".into());
+        cli.roles_known = true;
+        cli.rebuild_nav();
         cli
     }
 
@@ -3292,7 +3410,7 @@ mod tests {
         manifest.resources.push(resource());
         manifest.auth.profile_fields = vec![field("display_name", "string")];
 
-        let nav = navigation(&manifest, &[]);
+        let nav = navigation(&manifest, &signed_in(&[]));
         let data: Vec<&str> = nav
             .iter()
             .filter(|item| item.group == "Data")
@@ -3328,7 +3446,7 @@ mod tests {
             .unwrap();
         manifest.resources[index].visible = true;
 
-        let nav = navigation(&manifest, &[]);
+        let nav = navigation(&manifest, &signed_in(&[]));
         let labels: Vec<&str> = nav.iter().map(|item| item.label.as_str()).collect();
         assert_eq!(labels.iter().filter(|l| **l == "Organizations").count(), 1);
     }
@@ -3349,7 +3467,20 @@ mod tests {
 
         let labels = |roles: &[&str]| -> Vec<String> {
             let roles: Vec<String> = roles.iter().map(|r| r.to_string()).collect();
-            navigation(&manifest, &roles)
+            navigation(&manifest, &signed_in(&roles))
+                .iter()
+                .map(|item| item.label.clone())
+                .collect()
+        };
+        let unknowable = || -> Vec<String> {
+            // An app that will not let you list your own memberships.
+            let reach = Reach {
+                signed_in: true,
+                organization: true,
+                roles: &[],
+                roles_known: false,
+            };
+            navigation(&manifest, &reach)
                 .iter()
                 .map(|item| item.label.clone())
                 .collect()
@@ -3359,9 +3490,116 @@ mod tests {
         assert!(labels(&["billing"]).iter().any(|l| l == "Invoices"));
         // An admin holds every role, so it is theirs too.
         assert!(labels(&["admin"]).iter().any(|l| l == "Invoices"));
-        // And before anything is known about the caller, nothing is hidden on
-        // a guess.
-        assert!(labels(&[]).iter().any(|l| l == "Invoices"));
+        // Holding no roles is a fact, and it hides it.
+        assert!(labels(&[]).iter().all(|l| l != "Invoices"));
+        // Being unable to find out is not, and hides nothing: the server
+        // refuses it if we were wrong, which is better than a door that is
+        // missing for someone who has the key.
+        assert!(unknowable().iter().any(|l| l == "Invoices"));
+    }
+
+    #[test]
+    fn a_session_with_no_organization_is_not_shown_the_work_that_needs_one() {
+        let mut scoped = resource();
+        scoped.scope = "organization".into();
+        scoped.permissions.list.value = "member".into();
+        let mut global = resource();
+        global.name = "article".into();
+        global.plural = "Articles".into();
+        global.scope = "global".into();
+        global.permissions.list.value = "authenticated".into();
+
+        let manifest = Manifest {
+            resources: vec![scoped, global],
+            functions: vec![
+                FunctionManifest {
+                    name: "reconcile".into(),
+                    label: "Reconcile".into(),
+                    visible: true,
+                    permission: "member".into(),
+                    requires_org: true,
+                    ..Default::default()
+                },
+                FunctionManifest {
+                    name: "ping".into(),
+                    label: "Ping".into(),
+                    visible: true,
+                    permission: "authenticated".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let labels = |reach: &Reach| -> Vec<String> {
+            navigation(&manifest, reach)
+                .iter()
+                .map(|item| item.label.clone())
+                .collect()
+        };
+
+        // Signed in, but nowhere to work: the org-scoped table would list
+        // nothing and the org-scoped action could only answer 403.
+        let homeless = Reach {
+            signed_in: true,
+            organization: false,
+            roles: &[],
+            roles_known: true,
+        };
+        let seen = labels(&homeless);
+        assert!(seen.iter().all(|l| l != "Products"), "{seen:?}");
+        assert!(seen.iter().all(|l| l != "Reconcile"), "{seen:?}");
+        // What does not need one is still there.
+        assert!(seen.iter().any(|l| l == "Articles"));
+        assert!(seen.iter().any(|l| l == "Ping"));
+
+        let settled = labels(&signed_in(&[]));
+        assert!(settled.iter().any(|l| l == "Products"));
+        assert!(settled.iter().any(|l| l == "Reconcile"));
+    }
+
+    #[test]
+    fn an_action_gated_on_a_role_leaves_the_sidebar_the_same_way_a_table_does() {
+        let manifest = Manifest {
+            functions: vec![FunctionManifest {
+                name: "settle".into(),
+                label: "Settle accounts".into(),
+                visible: true,
+                permission: "role:billing".into(),
+                requires_org: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let labels = |roles: &[&str]| -> Vec<String> {
+            let roles: Vec<String> = roles.iter().map(|r| r.to_string()).collect();
+            navigation(&manifest, &signed_in(&roles))
+                .iter()
+                .map(|item| item.label.clone())
+                .collect()
+        };
+        assert!(labels(&["member"]).iter().all(|l| l != "Settle accounts"));
+        assert!(labels(&["billing"]).iter().any(|l| l == "Settle accounts"));
+        assert!(labels(&["admin"]).iter().any(|l| l == "Settle accounts"));
+    }
+
+    #[test]
+    fn nothing_is_offered_before_the_console_knows_who_is_asking() {
+        let mut manifest = Manifest {
+            resources: auth_resources(),
+            ..Default::default()
+        };
+        manifest.resources.push(resource());
+        manifest.auth.profile_fields = vec![field("display_name", "string")];
+
+        // The sign-in screen owns the display at this point. What matters is
+        // that nothing needing a session is drawn for one that does not exist
+        // yet — Products is `public`, and public means public.
+        let labels: Vec<String> = navigation(&manifest, &Reach::unknown())
+            .iter()
+            .map(|item| item.label.clone())
+            .collect();
+        assert_eq!(labels, vec!["Products", "Session"]);
     }
 
     #[test]
@@ -3781,7 +4019,7 @@ mod tests {
             ..Default::default()
         };
 
-        let nav = navigation(&manifest, &[]);
+        let nav = navigation(&manifest, &signed_in(&[]));
         let labels: Vec<&str> = nav.iter().map(|item| item.label.as_str()).collect();
         // Products, the one visible action, and the session screen — nothing else.
         assert_eq!(labels, vec!["Products", "Sync", "Session"]);

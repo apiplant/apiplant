@@ -116,11 +116,26 @@ brings it back.
 ## Using it
 
 A sidebar of every resource and function you can reach, grouped exactly as the
-dashboard groups them; a pane showing whichever you picked. A resource nobody
-may list, a function with no endpoint, and anything gated on a role you do not
-hold are left out — they would only teach you the console is broken. The
-sidebar is rebuilt when your roles or your organization change, because what
-you can reach is a fact about where you are working.
+dashboard groups them; a pane showing whichever you picked.
+
+Only what you can reach: the console applies the same rule the dashboard does,
+from the manifest and your session. A `private` action belongs to nobody. An
+`authenticated` one needs a session. Anything scoped to an organization needs an
+active one, so a session that belongs to none is not shown the tables that would
+list nothing or the actions that could only answer 403. A `role:` policy needs
+that role, or `admin`, which holds every role. The sidebar is rebuilt whenever
+your roles or your organization change, because what you can reach is a fact
+about where you are working.
+
+Hiding something is a claim, so it is only made from knowledge. The console has
+to work your roles out from the API rather than being handed them, and an app
+that will not let you list your own `membership_role` rows leaves it unable to
+say — in which case role-gated entries stay put, and the server refuses them if
+the guess was wrong. A door that might open is better than one that is missing
+for somebody holding the key. Two things are still nobody's to predict: `owner`
+narrows a list to your own rows rather than refusing it, and whether you own a
+particular record is only knowable per record — so those still arrive as a
+server 403 on the thing you tried.
 
 Below the app's own resources is a **Console** group, the same purpose-built
 screens the dashboard has instead of raw tables: your account, your team, the

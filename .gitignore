@@ -23,3 +23,7 @@ examples/**/admin
 
 pgdata
 .apiplant-build/
+
+# Playwright artefacts from the end-to-end suite.
+e2e/test-results/
+e2e/playwright-report/
