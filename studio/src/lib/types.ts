@@ -47,7 +47,7 @@ export const HOOK_EVENTS = [
 ] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
-export const LANGUAGES = ["rust", "c", "zig", "go"] as const;
+export const LANGUAGES = ["rust", "typescript", "c", "zig", "go"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
 export type TomlValue = string | number | boolean | Date | TomlValue[] | { [key: string]: TomlValue };
@@ -113,7 +113,7 @@ export interface FunctionConfig {
 }
 
 export interface FunctionEntry {
-  /** The library name: `greet.rs` and `greet/` both produce `libgreet.so`. */
+  /** What it builds to: `libgreet.so`, or `greet.js` for TypeScript. */
   name: string;
   language: Language;
   layout: "file" | "directory";
@@ -167,6 +167,7 @@ export function emptyResource(name: string): Resource {
 
 export const LANGUAGE_LABEL: Record<Language, string> = {
   rust: "Rust",
+  typescript: "TypeScript",
   c: "C",
   zig: "Zig",
   go: "Go",
@@ -174,6 +175,7 @@ export const LANGUAGE_LABEL: Record<Language, string> = {
 
 export const LANGUAGE_EXT: Record<Language, string> = {
   rust: "rs",
+  typescript: "ts",
   c: "c",
   zig: "zig",
   go: "go",

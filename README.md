@@ -81,8 +81,9 @@ requirement is a working `cargo`.
 
 When a function needs a dependency, a second source file, or its own build setup,
 an entry in `functions/` can be a **directory** instead of a file — a real crate
-(`Cargo.toml`), a Go module (`go.mod`), or a set of C/Zig files. apiplant builds
-it its native way and drops `lib<dir>.so` beside it, loaded just like a
+(`Cargo.toml`), a Go module (`go.mod`), an npm project (`package.json`), or a set
+of C/Zig files. apiplant builds it its native way — your manifest, your
+dependencies, your bundler — and drops the result beside it, loaded just like a
 single-file function. See
 [`examples/12-function-dependencies`](examples/12-function-dependencies).
 

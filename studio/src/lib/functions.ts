@@ -1,14 +1,31 @@
 /**
  * Reading `functions/` the way `apiplant build` does: an entry is either a
- * source file or a directory, its language comes from what it holds, and the
- * library it produces is `lib<entry>.so` beside it.
+ * source file or a directory, its language comes from what it holds, and what it
+ * produces sits beside it — `lib<entry>.so` for the compiled languages, and
+ * `<entry>.js` for TypeScript, which the server runs in a V8 isolate instead of
+ * loading as a library.
  */
 
 import { extensionOf, type ScannedFile } from "./fs";
 import { LANGUAGE_EXT, type FunctionEntry, type FunctionFile, type Language } from "./types";
 
-const EXT_LANGUAGE: Record<string, Language> = { rs: "rust", c: "c", zig: "zig", go: "go" };
+const EXT_LANGUAGE: Record<string, Language> = {
+  rs: "rust",
+  ts: "typescript",
+  c: "c",
+  zig: "zig",
+  go: "go",
+};
 const LIB_EXTENSIONS = ["so", "dylib", "dll"];
+
+/**
+ * Files in `functions/` that end in `.ts` but are not functions: the ambient
+ * declarations `apiplant build` writes, and any other `.d.ts` an app keeps
+ * beside its sources. They are types, and there is nothing in them to build.
+ */
+function isDeclarations(fileName: string): boolean {
+  return fileName.endsWith(".d.ts");
+}
 
 /**
  * Function names a library exports, read out of its source.
@@ -29,23 +46,81 @@ export function extractExports(sources: string[]): string[] {
     for (const pattern of patterns) {
       for (const match of source.matchAll(pattern)) names.add(match[1]);
     }
+    for (const name of definedFunctions(source)) names.add(name);
   }
   return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * The keys of a TypeScript module's `defineFunctions({...})`, which is where the
+ * names live in that form — there is no `name:` to match, because the key *is*
+ * the name.
+ *
+ * Braces are counted rather than the whole call parsed: enough to know which
+ * keys are at the top level of the object, which is all a hook picker needs.
+ */
+function definedFunctions(source: string): string[] {
+  const call = source.indexOf("defineFunctions(");
+  if (call < 0) return [];
+  const open = source.indexOf("{", call);
+  if (open < 0) return [];
+
+  const names: string[] = [];
+  let depth = 0;
+  let atKey = false;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "{" || ch === "[" || ch === "(") {
+      depth++;
+      atKey = depth === 1;
+      continue;
+    }
+    if (ch === "}" || ch === "]" || ch === ")") {
+      depth--;
+      if (depth === 0) break;
+      continue;
+    }
+    if (ch === ",") {
+      atKey = depth === 1;
+      continue;
+    }
+    if (!atKey || depth !== 1) continue;
+    if (/\s/.test(ch)) continue;
+
+    const rest = source.slice(i);
+    // A key, quoted or not, followed by its colon.
+    const key = /^["']?([A-Za-z_$][A-Za-z0-9_$]*)["']?\s*:/.exec(rest);
+    if (key) {
+      names.push(key[1]);
+      i += key[0].length - 1;
+    }
+    atKey = false;
+  }
+  return names;
 }
 
 function directoryLanguage(files: FunctionFile[]): Language {
   const names = files.map((f) => f.path.slice(f.path.lastIndexOf("/") + 1));
   if (names.includes("Cargo.toml")) return "rust";
   if (names.includes("go.mod")) return "go";
+  // A TypeScript directory is an npm project, and package.json is what says so.
+  if (names.includes("package.json")) return "typescript";
   const extensions = files.map((f) => extensionOf(f.path));
   if (extensions.includes("zig")) return "zig";
+  if (extensions.includes("ts")) return "typescript";
   if (extensions.includes("c")) return "c";
   if (extensions.includes("rs")) return "rust";
   return "c";
 }
 
-export function libraryName(name: string): string {
-  return `lib${name}.so`;
+/**
+ * What `apiplant build` writes for this entry.
+ *
+ * TypeScript is the one language that produces no shared library: there is
+ * nothing to link, so the server loads the JavaScript directly.
+ */
+export function libraryName(name: string, language: Language): string {
+  return language === "typescript" ? `${name}.js` : `lib${name}.so`;
 }
 
 /** Group everything under `functions/` into libraries, configs and artifacts. */
@@ -74,6 +149,10 @@ export function detectFunctions(files: ScannedFile[]): {
     const ext = extensionOf(rest);
     const stem = rest.slice(0, rest.length - (ext ? ext.length + 1 : 0));
 
+    // apiplant.d.ts and tsconfig.json are what `apiplant build` writes for your
+    // editor, not functions.
+    if (isDeclarations(rest) || rest === "tsconfig.json") continue;
+
     if (EXT_LANGUAGE[ext]) {
       byName.set(stem, {
         name: stem,
@@ -87,7 +166,7 @@ export function detectFunctions(files: ScannedFile[]): {
       });
     } else if (ext === "toml") {
       configs.push(file);
-    } else if (LIB_EXTENSIONS.includes(ext)) {
+    } else if (LIB_EXTENSIONS.includes(ext) || ext === "js") {
       libraries.push(file);
     }
   }
@@ -109,7 +188,9 @@ export function detectFunctions(files: ScannedFile[]): {
   for (const lib of libraries) {
     const base = lib.path.slice("functions/".length);
     const ext = extensionOf(base);
-    const stem = base.slice(0, base.length - ext.length - 1).replace(/^lib/, "");
+    const bare = base.slice(0, base.length - ext.length - 1);
+    // `libgreet.so` belongs to `greet`; `greet.js` is already named for it.
+    const stem = ext === "js" ? bare : bare.replace(/^lib/, "");
     const entry = byName.get(stem);
     if (entry) {
       entry.libPath = lib.path;
@@ -141,6 +222,8 @@ export function sourcePathFor(name: string, language: Language, layout: "file" |
       return `functions/${name}/src/lib.rs`;
     case "go":
       return `functions/${name}/main.go`;
+    case "typescript":
+      return `functions/${name}/src/index.ts`;
     default:
       return `functions/${name}/${name}.${LANGUAGE_EXT[language]}`;
   }

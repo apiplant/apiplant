@@ -73,6 +73,46 @@ fn report<'a, D: std::fmt::Display + 'a>(
     (!message.is_empty()).then_some(message)
 }
 
+/// Check that a bundle a *directory* function produced can be loaded.
+///
+/// A directory is built by the project's own bundler, so the two things the
+/// isolate requires are the two things a bundler is configured to get right or
+/// wrong: the output has to be ESM, and `apiplant` has to have been left
+/// external. Both fail informatively here rather than at boot, where the error
+/// would be about module resolution instead of about bundler flags.
+pub fn check_bundle(code: &str) -> Result<(), String> {
+    let allocator = Allocator::default();
+    let source_type = SourceType::mjs();
+    let parsed = Parser::new(&allocator, code, source_type).parse();
+    if let Some(errors) = report(parsed.diagnostics.iter()) {
+        return Err(errors);
+    }
+    reject_imports(code, &parsed.program)?;
+
+    // A module the host can use exports *something* — the default
+    // `defineFunctions` produced, or a `manifest` and its handlers. A bundle
+    // with no exports at all is the signature of CommonJS output: it parses as a
+    // module (`require(…)` is just a call) but declares nothing, and would fail
+    // at boot with `require is not defined` instead of naming the real problem.
+    let exports_something = parsed.program.body.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::ExportDefaultDeclaration(_)
+                | Statement::ExportNamedDeclaration(_)
+                | Statement::ExportAllDeclaration(_)
+        )
+    });
+    if !exports_something {
+        return Err(
+            "the bundle exports nothing. The isolate loads an ES module, so \
+                    bundle with `--format=esm`; CommonJS output (`module.exports`) \
+                    declares no exports and cannot be loaded."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Refuse an import of anything but the `apiplant` module.
 ///
 /// Nothing here bundles, so a relative import would resolve to a file the server
@@ -199,6 +239,30 @@ mod tests {
 
         let err = to_js("greet", "import {\n  x,\n} from \"./other.ts\";\n").unwrap_err();
         assert!(err.contains("line 1"), "{err}");
+    }
+
+    /// What a directory function's own bundler produced, checked before it is
+    /// copied into `functions/` — because the two ways to misconfigure a bundler
+    /// both produce a file that only fails at boot.
+    #[test]
+    fn a_bundle_must_be_esm_with_apiplant_left_external() {
+        // The shape esbuild produces with `--format=esm --external:apiplant`.
+        let good = "import { db } from \"apiplant\";\n\
+                    var slugify = (s) => s.toLowerCase();\n\
+                    export default { manifest: [], handlers: {} };\n";
+        assert!(check_bundle(good).is_ok());
+
+        // A dependency that was left external instead of inlined: nothing will
+        // resolve `slugify` at runtime.
+        let unbundled = "import slugify from \"slugify\";\nexport default {};\n";
+        let err = check_bundle(unbundled).unwrap_err();
+        assert!(err.contains("cannot import `slugify`"), "{err}");
+
+        // CommonJS output. It parses as a module -- `require(…)` is only a call
+        // -- so what gives it away is that it declares no exports at all.
+        let cjs = "const { db } = require(\"apiplant\");\nmodule.exports = {};\n";
+        let err = check_bundle(cjs).unwrap_err();
+        assert!(err.contains("--format=esm"), "{err}");
     }
 
     #[test]

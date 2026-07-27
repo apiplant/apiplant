@@ -198,7 +198,7 @@ export function OverviewPage(props: {
               },
               {
                 command: `apiplant build --release ${props.project.name}`,
-                note: "compile every source in functions/ into a loadable library",
+                note: "build every source in functions/ into what the server loads",
               },
               { command: `apiplant ${props.project.name}`, note: "migrate, mount and serve" },
             ]}
@@ -219,7 +219,7 @@ export function OverviewPage(props: {
           <Show when={unbuilt().length}>
             <p class="pt-1 text-[0.6875rem] leading-relaxed text-warn">
               {unbuilt().length} function
-              {unbuilt().length === 1 ? " has" : "s have"} no compiled library yet — until{" "}
+              {unbuilt().length === 1 ? " has" : "s have"} not been built yet — until{" "}
               <Mono>apiplant build</Mono> runs, those endpoints are not mounted and any hook pointing at them
               fails closed.
             </p>

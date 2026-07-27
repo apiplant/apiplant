@@ -16,7 +16,7 @@ is a complete app: point the binary at it and it runs.
 | 09 | [c-functions](09-c-functions) | the same idea in C: a function is just a shared library |
 | 10 | [zig-functions](10-zig-functions) | and in Zig, reaching the ABI through `@cImport` |
 | 11 | [go-functions](11-go-functions) | and in Go, via cgo and the standard library |
-| 12 | [function-dependencies](12-function-dependencies) | function *directories*: crates, modules, multi-file — with dependencies |
+| 12 | [function-dependencies](12-function-dependencies) | function *directories*: crates, modules, npm projects, multi-file — with dependencies |
 | 13 | [real-world](13-real-world) | all of it at once: 20 resources, self-references, join rows, ledgers |
 | 14 | [email-domains](14-email-domains) | a hook on registration: joining the org that owns your email domain |
 | 15 | [email](15-email) | sending mail: one `[email]` provider, named in config |
@@ -33,9 +33,10 @@ cargo run -p apiplant -- run examples/02-resources
 ```
 
 Examples 07–12 and 14–17 have functions, so build them first. Rust functions need
-`cargo` on PATH; C, Zig and Go need their own toolchain (`cc`, `zig`, `go`), and
-example 12 needs all four. TypeScript needs nothing — `apiplant build` transpiles
-it itself:
+`cargo` on PATH; C, Zig and Go need their own toolchain (`cc`, `zig`, `go`). A
+single `.ts` file needs nothing — `apiplant build` transpiles it itself — but the
+TypeScript *directory* in example 12 is an npm project, so that one needs node
+and `pnpm`. Example 12 needs the lot:
 
 ```bash
 createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hooks
@@ -43,9 +44,9 @@ cargo run -p apiplant -- build examples/08-hooks
 cargo run -p apiplant -- run examples/08-hooks
 ```
 
-A function can be a single source file or a whole directory (a crate, a module, a
-set of C or Zig files) — example 12 shows the directory form, which is how a
-function pulls in dependencies.
+A function can be a single source file or a whole directory (a crate, a Go
+module, an npm project, a set of C or Zig files) — example 12 shows the directory
+form, which is how a function pulls in dependencies.
 
 Each example serves on `127.0.0.1:8099` under `/api`, with Swagger UI at
 <http://127.0.0.1:8099/api/docs>. Run one at a time.

@@ -211,21 +211,17 @@ pub(super) fn classify_directory(dir: &Path) -> Result<Option<Language>> {
         return Ok(Some(Language::Go));
     }
 
-    // TypeScript is not bundled (see `compile::typescript`), so a directory of
-    // `.ts` files has no entry point apiplant could pick and no way to join
-    // them. Say what to do instead rather than ignoring the directory.
-    if dir.join("index.ts").is_file() {
-        bail!(
-            "function directory `{}` looks like a TypeScript project, but apiplant \
-             does not bundle TypeScript; make it a single `.ts` file",
-            dir.display()
-        );
+    // A TypeScript directory is an npm project, and `package.json` is what says
+    // so — the same signal `Cargo.toml` and `go.mod` are for the two above.
+    if dir.join("package.json").is_file() {
+        return Ok(Some(Language::TypeScript));
     }
 
     let mut has_c = false;
     let mut has_zig = false;
     let mut has_rs = false;
     let mut has_go = false;
+    let mut has_ts = false;
     for entry in std::fs::read_dir(dir)
         .with_context(|| format!("reading {}", dir.display()))?
         .flatten()
@@ -235,6 +231,7 @@ pub(super) fn classify_directory(dir: &Path) -> Result<Option<Language>> {
             Some("zig") => has_zig = true,
             Some("rs") => has_rs = true,
             Some("go") => has_go = true,
+            Some("ts") => has_ts = true,
             _ => {}
         }
     }
@@ -263,6 +260,15 @@ pub(super) fn classify_directory(dir: &Path) -> Result<Option<Language>> {
         bail!(
             "function directory `{}` has Go sources but no go.mod; \
              add one, or make it a single `.go` file instead",
+            dir.display()
+        );
+    }
+    // Nothing bundles a loose pile of `.ts` files: without a package.json there
+    // is no entry point to pick and no bundler to run.
+    if has_ts {
+        bail!(
+            "function directory `{}` has TypeScript sources but no package.json; \
+             add one with a `build` script, or make it a single `.ts` file instead",
             dir.display()
         );
     }

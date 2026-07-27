@@ -47,9 +47,7 @@ native way:
 | `go.mod`                | Go   | `go build -buildmode=c-shared` on your module |
 | `.c` files              | C    | `cc` over every `.c` in the directory, with it on the include path |
 | `.zig` files            | Zig  | `zig build-lib` from a root `.zig` (named for the directory) that may `@import` the rest |
-
-TypeScript has no directory form: nothing bundles, so a `.ts` function is always
-one self-contained file.
+| `package.json`          | TypeScript | your `build` script — npm dependencies, your own bundler |
 
 A directory named `greet/` compiles to `libgreet.so` beside it, so the host loads
 it exactly like a single-file function. For **Rust and Go the project is yours**:
@@ -510,6 +508,7 @@ changes:
 | `.zig` | `zig build-lib -dynamic -lc` | none |
 | `.go` | `go build -buildmode=c-shared` | a generated `go.mod` |
 | `.ts` | transpiled in-process, no toolchain | none — output is `greet.js`, not a library |
+| `<dir>/package.json` | your `build` script, via npm/pnpm/yarn/bun | the project is yours |
 
 ```bash
 apiplant build my-app            # every .rs, .c, .zig, .go and .ts in functions/
@@ -726,11 +725,12 @@ cannot turn a failure into data.
 
 ### The import-free form
 
-There is no bundler, so a function is one self-contained file: relative imports
-and npm packages are refused at build time, with the line number. A module that
-would rather import nothing at all can still declare itself the long way, which
-is the same JSON a C library returns from `apiplant_manifest` plus one export per
-entry:
+A **single `.ts` file** is not bundled, so it is self-contained: relative imports
+and npm packages are refused at build time, with the line number. Reach for a
+[directory](#a-typescript-directory-npm-dependencies-and-your-own-bundler) when
+you need either. A module that would rather import nothing at all can still
+declare itself the long way, which is the same JSON a C library returns from
+`apiplant_manifest` plus one export per entry:
 
 ```ts
 export const manifest: FunctionManifest[] = [
@@ -752,6 +752,63 @@ for `BadRequest`, are global, so this form needs no import and no schema.
 
 Worked example: [17-typescript-functions](../examples/17-typescript-functions),
 the same two endpoints as the C, Zig and Go ones.
+
+### A TypeScript directory: npm dependencies and your own bundler
+
+A single file covers a lot, but not a package from npm or a second source file.
+For that a TypeScript function is a **directory**, and it follows the rule every
+other language's directory follows: it is a project in the language's own native
+form, built by the language's own toolchain.
+
+```text
+functions/
+├── slug/
+│   ├── package.json      # yours: dependencies, and the `build` script apiplant runs
+│   ├── tsconfig.json     # yours: for your editor
+│   ├── src/index.ts      # imports npm packages, siblings, and `apiplant`
+│   └── src/reserved.ts
+├── slug.toml             # config, still keyed by the directory name
+└── slug.js               # ← the bundle, copied out by `apiplant build`
+```
+
+`apiplant build` runs `<pm> install` (only when `node_modules` is missing, so the
+network is touched once) and then `<pm> run build`, and copies what it produced
+to `functions/slug.js`. The package manager is read from the lockfile the project
+already has — `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb` —
+defaulting to pnpm, and `NODE_PACKAGE_MANAGER` overrides it the way `CARGO`,
+`CC`, `ZIG` and `GO` override the others.
+
+Two requirements on what your build produces, both checked at build time rather
+than left to fail at boot:
+
+* **ESM.** The isolate loads a module. CommonJS output declares no exports and
+  is rejected with that explanation.
+* **`apiplant` left external.** The host provides that module; a bundler that
+  inlines it, or that leaves some *other* import unresolved, is told which
+  specifier is the problem.
+
+A `build` script that satisfies both, with esbuild:
+
+```json
+{
+  "type": "module",
+  "module": "dist/slug.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=neutral --main-fields=module,main --external:apiplant --outfile=dist/slug.js"
+  },
+  "devDependencies": { "esbuild": "^0.25.0" }
+}
+```
+
+Any bundler works — rollup, tsup, bun build, esbuild — because apiplant runs
+*your* script and never generates a config. It looks for the bundle at the
+package's `module` field, then `main`, then `dist/<name>.js`.
+
+So the toolchain requirement follows the layout, which is the point: a single
+`.ts` file needs nothing on `PATH`, and a directory needs the node toolchain the
+`package.json` already implies. Worked example:
+[12-function-dependencies](../examples/12-function-dependencies), which has one
+directory function per language.
 
 ### Isolates, concurrency and runaway code
 

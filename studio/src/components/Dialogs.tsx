@@ -79,6 +79,8 @@ export function NewResourceDialog(props: { onClose: () => void }) {
 
 const LAYOUT_NOTE: Record<Language, string> = {
   rust: "A directory becomes a crate you own — any crates.io dependency, any module layout.",
+  typescript:
+    "A single file imports only `apiplant` and needs no toolchain. A directory is an npm project: your package.json, your dependencies, your bundler.",
   go: "A directory brings its own go.mod, so it can require other modules and split across files.",
   c: "A directory compiles every .c it holds, with itself on the include path.",
   zig: "A directory builds from a root <name>.zig that may @import its siblings.",
@@ -92,10 +94,12 @@ export function NewFunctionDialog(props: { onClose: () => void }) {
   const [withConfig, setWithConfig] = createSignal(false);
 
   const valid = createMemo(() => isValidFunctionName(name()));
+  /** The two languages whose starting point differs for an endpoint and a hook. */
+  const hasTemplates = createMemo(() => language() === "rust" || language() === "typescript");
 
   const create = () => {
     if (!valid()) return;
-    if (addFunction(name(), language(), layout(), language() === "rust" ? kind() : "endpoint", withConfig())) {
+    if (addFunction(name(), language(), layout(), hasTemplates() ? kind() : "endpoint", withConfig())) {
       setView({ kind: "function", name: name() });
       props.onClose();
     }
@@ -104,7 +108,7 @@ export function NewFunctionDialog(props: { onClose: () => void }) {
   return (
     <Modal
       title="New function"
-      subtitle="A compiled library in functions/, mounted as an endpoint or wired into a resource's lifecycle."
+      subtitle="A library in functions/, mounted as an endpoint or wired into a resource's lifecycle."
       onClose={props.onClose}
       width="38rem"
     >
@@ -119,7 +123,14 @@ export function NewFunctionDialog(props: { onClose: () => void }) {
             </Show>
           </Labelled>
 
-          <Labelled label="language" hint="Each needs its own toolchain on PATH when you build.">
+          <Labelled
+            label="language"
+            hint={
+              language() === "typescript"
+                ? "A single .ts file needs no toolchain at all; a directory needs node and its package manager."
+                : "Each needs its own toolchain on PATH when you build."
+            }
+          >
             <div class="flex gap-1">
               <For each={LANGUAGES}>
                 {(option) => (
@@ -174,13 +185,13 @@ export function NewFunctionDialog(props: { onClose: () => void }) {
           </div>
         </Labelled>
 
-        <Show when={language() === "rust"}>
+        <Show when={hasTemplates()}>
           <Labelled label="template">
             <Select
               value={kind()}
               options={[
                 { value: "endpoint" as const, label: "HTTP endpoint — typed input and output, public" },
-                { value: "hook" as const, label: "Lifecycle hook — private, returns a reply::* decision" },
+                { value: "hook" as const, label: "Lifecycle hook — private, decides what the request does" },
               ]}
               onChange={setKind}
             />

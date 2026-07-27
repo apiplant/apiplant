@@ -54,6 +54,7 @@
 //! |-------------------------|-------------|-------|
 //! | `Cargo.toml`            | Rust | `cargo build` on *your* crate — any deps, any modules |
 //! | `go.mod`                | Go   | `go build -buildmode=c-shared` on your module |
+//! | `package.json`          | TypeScript | *your* `build` script — npm deps, your own bundler |
 //! | `.c` files              | C    | `cc` over every `.c` in the directory, `-I` the directory |
 //! | `.zig` files            | Zig  | `zig build-lib` from a root `.zig` that may `@import` the rest |
 //!
@@ -79,7 +80,7 @@ mod typescript;
 use native::{compile_c, compile_go, compile_zig};
 use rust::{compile_rust, compile_rust_dir, function_crate_path};
 pub use source::{discover, Language, Source};
-use typescript::{compile_typescript, write_declarations};
+use typescript::{compile_typescript, compile_typescript_dir, write_declarations};
 
 use std::path::Path;
 use std::process::Command;
@@ -130,7 +131,13 @@ fn newest_source_mtime(dir: &Path) -> Option<std::time::SystemTime> {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            if matches!(name.as_ref(), "target" | "zig-out" | "zig-cache") || name.starts_with('.')
+            // Build output and installed dependencies: `node_modules` is also
+            // the one that matters for speed, since walking it would mean
+            // thousands of files on every staleness check.
+            if matches!(
+                name.as_ref(),
+                "target" | "zig-out" | "zig-cache" | "node_modules" | "dist"
+            ) || name.starts_with('.')
             {
                 continue;
             }
@@ -237,10 +244,13 @@ pub fn build(app_dir: &Path, options: Options) -> Result<Vec<String>> {
             (Language::Zig, _) => compile_zig(source, &library, &build_dir, options)?,
             (Language::Go, _) => compile_go(source, &library, &build_dir, options)?,
 
-            // TypeScript is transpiled in-process: no toolchain, no scaffolding,
-            // and what lands beside the source is JavaScript rather than a
-            // shared library. The server runs it in a V8 isolate.
-            (Language::TypeScript, _) => compile_typescript(source, &library)?,
+            // A single TypeScript file is transpiled in-process: no toolchain,
+            // no scaffolding. A directory is an npm project, so it is built by
+            // its own bundler, like a Rust directory is by its own cargo. Either
+            // way what lands beside the source is JavaScript rather than a
+            // shared library, and the server runs it in a V8 isolate.
+            (Language::TypeScript, false) => compile_typescript(source, &library)?,
+            (Language::TypeScript, true) => compile_typescript_dir(source, &library, options)?,
         }
 
         if !library.is_file() {
@@ -594,6 +604,91 @@ mod tests {
         let err = build(&dir, Options::default()).unwrap_err().to_string();
         assert!(err.contains("greet.ts"), "{err}");
         assert!(!functions.join("greet.js").exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A TypeScript *directory* is an npm project, and `package.json` is what
+    /// says so — the same role `Cargo.toml` and `go.mod` play for the others.
+    #[test]
+    fn a_typescript_directory_is_recognised_by_its_package_json() {
+        let dir = temp_dir("typescript-dir");
+        let functions = dir.join("functions");
+
+        let slug = functions.join("slug");
+        std::fs::create_dir_all(slug.join("src")).unwrap();
+        std::fs::write(slug.join("package.json"), r#"{"name":"slug"}"#).unwrap();
+        std::fs::write(slug.join("src/index.ts"), "export default {};").unwrap();
+
+        let found = discover(&functions).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].language, Language::TypeScript);
+        assert!(found[0].is_dir);
+        // Still a `.js` beside the directory, loaded like any other function.
+        assert_eq!(found[0].library_name(), "slug.js");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Loose `.ts` files with nothing to build them is the one case worth an
+    /// error: there is no entry point to guess and no bundler to run.
+    #[test]
+    fn a_typescript_directory_without_a_package_json_says_so() {
+        let dir = temp_dir("typescript-dir-bare");
+        let functions = dir.join("functions");
+        let loose = functions.join("loose");
+        std::fs::create_dir_all(&loose).unwrap();
+        std::fs::write(loose.join("index.ts"), "export default {};").unwrap();
+
+        let err = discover(&functions).unwrap_err().to_string();
+        assert!(err.contains("package.json"), "{err}");
+        assert!(err.contains("single `.ts` file"), "{err}");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Where the bundle is looked for. `module` wins because a package that
+    /// distinguishes the two puts its ESM build there, and the isolate loads ESM.
+    #[test]
+    fn the_bundle_is_found_where_the_package_says() {
+        use super::typescript::bundle_path;
+        let dir = PathBuf::from("/app/functions/slug");
+
+        let declared = serde_json::json!({ "module": "dist/slug.js", "main": "dist/slug.cjs" });
+        assert_eq!(
+            bundle_path(&dir, &declared, "slug"),
+            dir.join("dist/slug.js")
+        );
+
+        let main_only = serde_json::json!({ "main": "build/out.js" });
+        assert_eq!(
+            bundle_path(&dir, &main_only, "slug"),
+            dir.join("build/out.js")
+        );
+
+        // Neither: the conventional path, so a minimal package.json still works.
+        let silent = serde_json::json!({ "name": "slug" });
+        assert_eq!(bundle_path(&dir, &silent, "slug"), dir.join("dist/slug.js"));
+    }
+
+    /// The package manager comes from the lockfile the project already has, so
+    /// there is nothing to configure and nothing to get out of step.
+    #[test]
+    fn the_package_manager_is_read_from_the_lockfile() {
+        use super::typescript::PackageManager;
+        let dir = temp_dir("package-manager");
+
+        // No lockfile yet: pnpm, which is also what a fresh install produces.
+        assert_eq!(PackageManager::detect(&dir), PackageManager::Pnpm);
+
+        std::fs::write(dir.join("package-lock.json"), "{}").unwrap();
+        assert_eq!(PackageManager::detect(&dir), PackageManager::Npm);
+        assert_eq!(PackageManager::detect(&dir).command(), "npm");
+
+        // An explicit choice outranks whatever is lying in the directory.
+        std::env::set_var("NODE_PACKAGE_MANAGER", "bun");
+        assert_eq!(PackageManager::detect(&dir), PackageManager::Bun);
+        std::env::remove_var("NODE_PACKAGE_MANAGER");
 
         std::fs::remove_dir_all(dir).unwrap();
     }

@@ -2,12 +2,14 @@
  * Starting points for a new function, one per language and layout.
  *
  * Each template compiles as-is with `apiplant build` and mounts at
- * `<base>/functions/<name>`. The Rust ones use the `function!` macro; the
- * others export the four C symbols in `crates/apiplant-abi/include/apiplant.h`,
- * kept deliberately short — the full-fat versions live in `examples/09`–`11`.
+ * `<base>/functions/<name>`. The Rust ones use the `function!` macro; C, Zig and
+ * Go export the four C symbols in `crates/apiplant-abi/include/apiplant.h`; and
+ * TypeScript imports the `apiplant` module the host provides. All are kept
+ * deliberately short — the full-fat versions live in `examples/09`–`12` and
+ * `examples/17`.
  */
 
-import type { Language } from "./types";
+import { LANGUAGE_EXT, type Language } from "./types";
 
 export type TemplateKind = "endpoint" | "hook";
 
@@ -364,6 +366,122 @@ func apiplant_invoke(name *C.char, inputJSON *C.char, host *C.ApiplantHost, out 
 func main() {}
 `;
 
+
+const typescriptSource = (name: string, kind: TemplateKind) =>
+  kind === "hook"
+    ? `/**
+ * \`${name}\` — an apiplant lifecycle hook in TypeScript.
+ *
+ * Point a resource's [hooks] at it (models/<resource>.toml), and it runs around
+ * that resource's CRUD. \`apiplant build\` strips the types and writes
+ * ${name}.js beside this file; the server runs it in a V8 isolate.
+ *
+ * Return \`{ data }\` to replace the body, throw \`BadRequest\` to reject the
+ * request, or return nothing to let it through unchanged.
+ */
+
+import { defineFunctions, hook, log, BadRequest } from "apiplant";
+
+export default defineFunctions({
+  ${name}: {
+    description: "Describe what ${name} guards or fills in.",
+
+    handler() {
+      const context = hook();
+      if (!context) throw new Error("${name} only runs as a lifecycle hook");
+
+      log.info(\`${name} running for \${context.event}\`);
+
+      const data = context.data ?? {};
+      if (typeof data.title === "string" && data.title.trim() === "") {
+        throw new BadRequest("title cannot be blank");
+      }
+
+      // Nothing to change: let the request through as it was.
+      return {};
+    },
+  },
+});
+`
+    : `/**
+ * \`${name}\` — an apiplant function in TypeScript.
+ *
+ * \`apiplant build\` strips the types and writes ${name}.js beside this file; the
+ * server runs it in a V8 isolate. Nothing to install: the \`apiplant\` module is
+ * provided by the host, and its types come from the apiplant.d.ts that
+ * \`apiplant build\` writes into functions/.
+ *
+ * Mounted at POST /functions/${name}.
+ */
+
+import { config, db, defineFunctions, log, s } from "apiplant";
+
+/**
+ * The request body, declared once: it becomes the JSON Schema in the generated
+ * docs, the check that runs before the handler, and the type of \`input\`.
+ */
+const Input = s.object({
+  name: s.string({ minLength: 1, description: "Who to greet." }),
+});
+
+export default defineFunctions({
+  ${name}: {
+    version: "1.0.0",
+    description: "Describe what ${name} does.",
+    permission: "public",
+    method: "POST",
+    input: Input,
+    output: s.object({ message: s.string() }),
+
+    handler(input) {
+      // functions/${name}.toml, if there is one.
+      const { greeting = "Hello" } = config<{ greeting?: string }>();
+
+      log.info(\`${name} invoked for \${input.name}\`);
+
+      // The host, when you need it — synchronous, no pool to open:
+      //   const rows = db.query("SELECT id FROM apiplant_user LIMIT 1");
+      //   db.query(sql\`SELECT … WHERE id = \${input.id}\`)  binds its values.
+
+      return { message: \`\${greeting}, \${input.name}!\` };
+    },
+  },
+});
+`;
+
+const typescriptPackage = (name: string) => `{
+  "name": "${name}",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "//": "A function directory is an npm project you own. apiplant runs \`install\` once, then \`build\`, and copies the bundle to ../${name}.js.",
+  "module": "dist/${name}.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=neutral --main-fields=module,main --external:apiplant --outfile=dist/${name}.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
+`;
+
+const typescriptTsconfig = () => `{
+  "//": "For your editor. apiplant builds this directory with the \`build\` script in package.json.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "../apiplant.d.ts"]
+}
+`;
+
 const cargoManifest = (name: string) => `# A function directory is a crate you own: \`apiplant build\` runs this manifest
 # as written and copies the cdylib it produces to ../lib${name}.so.
 [package]
@@ -426,6 +544,8 @@ export function scaffoldFunction(
     switch (language) {
       case "rust":
         return kind === "hook" ? rustHook(name) : rustEndpoint(name);
+      case "typescript":
+        return typescriptSource(name, kind);
       case "c":
         return cSource(name);
       case "zig":
@@ -436,7 +556,7 @@ export function scaffoldFunction(
   };
 
   if (layout === "file") {
-    const ext = { rust: "rs", c: "c", zig: "zig", go: "go" }[language];
+    const ext = LANGUAGE_EXT[language];
     files.push({ path: `functions/${name}.${ext}`, text: source() });
   } else {
     switch (language) {
@@ -447,6 +567,13 @@ export function scaffoldFunction(
       case "go":
         files.push({ path: `functions/${name}/go.mod`, text: goModule(name) });
         files.push({ path: `functions/${name}/main.go`, text: source() });
+        break;
+      case "typescript":
+        // An npm project: your dependencies, your bundler. apiplant runs the
+        // `build` script and copies out what it produced.
+        files.push({ path: `functions/${name}/package.json`, text: typescriptPackage(name) });
+        files.push({ path: `functions/${name}/tsconfig.json`, text: typescriptTsconfig() });
+        files.push({ path: `functions/${name}/src/index.ts`, text: source() });
         break;
       case "c":
         files.push({ path: `functions/${name}/${name}.c`, text: source() });

@@ -11,11 +11,17 @@ import {
   studio,
 } from "../lib/store";
 import { formatBytes } from "../lib/fs";
+import { libraryName } from "../lib/functions";
 import { LANGUAGE_LABEL, type FunctionEntry } from "../lib/types";
 import { Badge, Button, Card, CardHeader, CodeEditor, EmptyState, Modal, Mono, TextInput } from "./ui";
 
 const EDITOR_LANGUAGE: Record<string, string> = {
   rs: "rust",
+  ts: "typescript",
+  js: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  json: "json",
   c: "c",
   h: "c",
   zig: "zig",
@@ -87,14 +93,19 @@ export function FunctionPage(props: { entry: FunctionEntry }) {
             fallback={<Badge tone="warn">not built</Badge>}
           >
             <Badge tone={staleLibrary() ? "warn" : "accent"}>
-              {staleLibrary() ? "library out of date" : `built · ${formatBytes(props.entry.libSize)}`}
+              {staleLibrary() ? "build out of date" : `built · ${formatBytes(props.entry.libSize)}`}
             </Badge>
           </Show>
         </div>
 
         <p class="mt-2 max-w-3xl text-xs leading-relaxed text-muted">
-          Compiles to <Mono>functions/lib{props.entry.name}.so</Mono> with{" "}
-          <Mono>apiplant build &lt;app&gt;</Mono>. Every function it exports is mounted at{" "}
+          Builds to <Mono>functions/{libraryName(props.entry.name, props.entry.language)}</Mono> with{" "}
+          <Mono>apiplant build &lt;app&gt;</Mono>
+          <Show when={props.entry.language === "typescript"}>
+            {" "}
+            — JavaScript the server runs in a V8 isolate, not a shared library
+          </Show>
+          . Every function it exports is mounted at{" "}
           <Mono>{basePath()}/functions/&lt;name&gt;</Mono> with the method and visibility its manifest
           declares — unless it is Private, which keeps it available to lifecycle hooks only.
         </p>

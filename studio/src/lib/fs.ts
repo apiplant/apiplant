@@ -9,6 +9,10 @@
 const TEXT_EXTENSIONS = new Set([
   "toml",
   "rs",
+  "ts",
+  "js",
+  "mjs",
+  "cjs",
   "c",
   "h",
   "zig",

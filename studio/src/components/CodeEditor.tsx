@@ -27,6 +27,8 @@ import {
 } from "@codemirror/language";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { tags } from "@lezer/highlight";
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
 import { rust } from "@codemirror/lang-rust";
 import { cpp } from "@codemirror/lang-cpp";
 import { go } from "@codemirror/lang-go";
@@ -105,6 +107,18 @@ export function languageExtension(name: string | undefined): Extension {
       return go();
     case "zig":
       return zig;
+    // One grammar, two dialects: `typescript` turns on the type syntax, which
+    // is the only difference that matters for highlighting a function.
+    case "ts":
+    case "typescript":
+      return javascript({ typescript: true });
+    case "js":
+    case "mjs":
+    case "cjs":
+    case "javascript":
+      return javascript();
+    case "json":
+      return json();
     case "toml":
       return StreamLanguage.define(toml);
     default:
