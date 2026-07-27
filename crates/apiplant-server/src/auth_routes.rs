@@ -187,6 +187,35 @@ pub async fn login(
     }
 }
 
+/// `GET <base>/auth/me` — answer whether this credential still means anything.
+///
+/// A token can verify against the secret and still be worthless: the account it
+/// names may have been deleted since it was issued. Both halves are checked
+/// here — the signature by [`AppState::resolve_principal`], the account by
+/// looking the row up — so a client holding a token has one call to ask whether
+/// to keep it. Anything short of a live user is a flat 401.
+pub async fn me(req: HttpRequest, state: State<AppState>) -> HttpResponse {
+    let Some(principal) = state.resolve_principal(&req).await else {
+        return error(401, "authentication required");
+    };
+    let Some(user_tbl) = table(&state, "user") else {
+        return error(500, "missing user resource");
+    };
+    let sql = format!("SELECT id::text AS id FROM {user_tbl} WHERE id = $1::uuid LIMIT 1");
+    let rows = match state
+        .db
+        .raw_json(&sql, &[Value::String(principal.user_id.to_string())])
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => return db_error(e),
+    };
+    if rows.as_array().is_none_or(|a| a.is_empty()) {
+        return error(401, "user no longer exists");
+    }
+    HttpResponse::Ok().json(&json!({ "user_id": principal.user_id.to_string() }))
+}
+
 /// `POST <base>/auth/apikeys` — issue an API key for the authenticated caller.
 /// The plaintext key is returned exactly once.
 pub async fn create_api_key(

@@ -101,8 +101,41 @@ pub struct Db {
 }
 
 impl Db {
-    /// Open a pool against the given Postgres URL.
+    /// Open a pool against the given Postgres URL, creating the database first
+    /// if it does not exist yet.
+    ///
+    /// A fresh checkout pointed at a running Postgres would otherwise fail with
+    /// `database "…" does not exist` before migrations ever get a chance to
+    /// run, so on that specific error we connect to the `postgres` maintenance
+    /// database on the same server, `CREATE DATABASE`, and retry once. Any
+    /// other failure (bad credentials, no server) is returned untouched.
     pub async fn connect(url: &str, max_connections: u32) -> Result<Self, Error> {
+        match Self::open(url, max_connections).await {
+            Ok(db) => Ok(db),
+            Err(err) if is_missing_database(&err) => {
+                let Some((admin_url, name)) = maintenance_url(url) else {
+                    return Err(err);
+                };
+                tracing::info!("database `{name}` does not exist; creating it");
+                let admin = Self::open(&admin_url, 1).await?;
+                // Another worker starting at the same time may win the race and
+                // create it first, which is fine: what matters is whether the
+                // database is there on the retry, so a failed CREATE is only
+                // reported if the retry also fails.
+                let created = admin
+                    .raw_json(&format!("CREATE DATABASE {}", quote_ident(&name)?), &[])
+                    .await;
+                match (Self::open(url, max_connections).await, created) {
+                    (Ok(db), _) => Ok(db),
+                    (Err(_), Err(create_err)) => Err(create_err),
+                    (Err(open_err), Ok(_)) => Err(open_err),
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn open(url: &str, max_connections: u32) -> Result<Self, Error> {
         let mut opt = ConnectOptions::new(url.to_owned());
         opt.max_connections(max_connections).sqlx_logging(false);
         let conn = Database::connect(opt).await?;
@@ -439,5 +472,70 @@ impl Db {
             }
         }
         Ok(s)
+    }
+}
+
+/// Does this error mean "the database in the URL isn't there"?
+///
+/// sea-orm flattens the sqlx error into its message, so the SQLSTATE for
+/// `invalid_catalog_name` (`3D000`) is matched on text — that code only ever
+/// means a missing database.
+fn is_missing_database(err: &Error) -> bool {
+    let Error::Db(err) = err else { return false };
+    let msg = err.to_string();
+    msg.contains("3D000") || msg.contains("does not exist")
+}
+
+/// Split a Postgres URL into (same server, `postgres` database) and the database
+/// name it asked for. Returns `None` when the URL names no database, in which
+/// case there is nothing to create.
+fn maintenance_url(url: &str) -> Option<(String, String)> {
+    let (before_query, query) = match url.find(['?', '#']) {
+        Some(i) => (&url[..i], &url[i..]),
+        None => (url, ""),
+    };
+    // Skip the `scheme://` so its slashes aren't mistaken for the path.
+    let authority_start = before_query.find("://")? + 3;
+    let slash = authority_start + before_query[authority_start..].find('/')?;
+    let name = &before_query[slash + 1..];
+    if name.is_empty() || name.contains('/') {
+        return None;
+    }
+    Some((
+        format!("{}/postgres{query}", &before_query[..slash]),
+        name.to_string(),
+    ))
+}
+
+#[cfg(test)]
+mod connect_tests {
+    use super::maintenance_url;
+
+    #[test]
+    fn swaps_the_database_name() {
+        assert_eq!(
+            maintenance_url("postgres://user:pw@127.0.0.1:55432/apiplant"),
+            Some((
+                "postgres://user:pw@127.0.0.1:55432/postgres".into(),
+                "apiplant".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn keeps_query_parameters() {
+        assert_eq!(
+            maintenance_url("postgres://localhost/app?sslmode=require"),
+            Some((
+                "postgres://localhost/postgres?sslmode=require".into(),
+                "app".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn no_database_in_url() {
+        assert_eq!(maintenance_url("postgres://localhost"), None);
+        assert_eq!(maintenance_url("postgres://localhost/"), None);
     }
 }

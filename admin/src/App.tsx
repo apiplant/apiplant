@@ -48,6 +48,7 @@ import {
   signOut,
   syncRouteFromHash,
   toasts,
+  verifySession,
   visibleFunctions,
 } from "./store";
 import type { AdminManifest, Route } from "./types";
@@ -77,7 +78,10 @@ export function App() {
         document.title = manifest()?.title ?? "apiplant admin";
         if (isSignedIn()) {
           try {
-            await refreshSession();
+            // Establish that the stored credential is still good before
+            // loading anything with it; a dead token is dropped by this and
+            // the sign-in screen takes over.
+            if (await verifySession()) await refreshSession();
           } catch (error) {
             // A stale token is the usual cause; showing the sign-in screen is a
             // better answer than an error nobody can act on.

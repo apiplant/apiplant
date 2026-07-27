@@ -55,6 +55,7 @@ pub fn build(app: &App, functions: &FunctionRegistry) -> Value {
     // Built-in auth endpoints.
     paths.insert("/auth/register".into(), auth_register_path());
     paths.insert("/auth/login".into(), auth_login_path(app));
+    paths.insert("/auth/me".into(), auth_me_path());
     paths.insert("/auth/apikeys".into(), auth_apikeys_path());
 
     // Function endpoints. Typed input/output schemas (from the function's
@@ -495,6 +496,28 @@ fn auth_login_path(app: &App) -> Value {
             "responses": {
                 "200": { "description": "Authenticated", "content": { "application/json": { "schema": token_response() } } },
                 "401": { "description": "Invalid credentials" },
+            }
+        }
+    })
+}
+
+fn auth_me_path() -> Value {
+    json!({
+        "get": {
+            "tags": ["auth"],
+            "operationId": "me",
+            "summary": "Check the current credential",
+            "description": "Verifies the caller's token or API key and that the account it names still exists. Returns 401 if either is no longer true.",
+            "security": [{ "bearerAuth": [] }, { "apiKeyAuth": [] }],
+            "responses": {
+                "200": {
+                    "description": "Credential is valid",
+                    "content": { "application/json": { "schema": json!({
+                        "type": "object",
+                        "properties": { "user_id": { "type": "string", "format": "uuid" } },
+                    }) } }
+                },
+                "401": { "description": "Invalid credential, or the user no longer exists" },
             }
         }
     })

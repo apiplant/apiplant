@@ -45,6 +45,11 @@ export function App() {
   onMount(() => window.addEventListener("keydown", onKeyDown));
   onCleanup(() => window.removeEventListener("keydown", onKeyDown));
 
+  createEffect(() => {
+    const name = studio.project?.name;
+    document.title = name ? `${name} - apiplant studio` : "apiplant studio";
+  });
+
   // Losing unsaved edits to a stray tab close would be unrecoverable.
   createEffect(() => {
     const dirty = changes().length > 0;

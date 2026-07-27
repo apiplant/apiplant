@@ -63,6 +63,10 @@ macro_rules! build_app {
                 $crate::ntex_web::post().to($crate::auth_routes::login),
             )
             .route(
+                "/auth/me",
+                $crate::ntex_web::get().to($crate::auth_routes::me),
+            )
+            .route(
                 "/auth/apikeys",
                 $crate::ntex_web::post().to($crate::auth_routes::create_api_key),
             )

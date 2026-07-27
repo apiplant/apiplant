@@ -265,6 +265,36 @@ export function asRecords(value: unknown): ApiRecord[] {
 
 // --- session lifecycle -----------------------------------------------------
 
+/**
+ * Ask the server whether the stored credential still means anything.
+ *
+ * A token in `localStorage` proves nothing on its own: it may be signed with a
+ * secret the server has rotated, or name an account that has since been
+ * deleted. `/auth/me` answers both, and a 401 means the credential is dead —
+ * so it is dropped here rather than left to fail every subsequent request.
+ *
+ * Returns whether a usable session survived. Anything other than a 401 (the
+ * server being down, a network blip) leaves the credential alone: an
+ * unreachable server is not evidence that a token is bad.
+ */
+export async function verifySession(): Promise<boolean> {
+  if (!isSignedIn()) return false;
+  try {
+    const identity = asRecord(await api("/auth/me"));
+    // An API-key session has no JWT to read a subject out of, so this is the
+    // only place its user id comes from.
+    const userId = identity && typeof identity.user_id === "string" ? identity.user_id : null;
+    if (userId) session.userId = userId;
+    return true;
+  } catch (error) {
+    if ((error as ApiError).status === 401) {
+      signOut();
+      return false;
+    }
+    throw error;
+  }
+}
+
 export async function refreshSession() {
   if (!isSignedIn()) return;
   session.loading = true;

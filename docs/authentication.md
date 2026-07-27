@@ -54,6 +54,7 @@ Defaults if you don't provide `models/users.toml`: `identity_field = "email"`,
 |--------|------|---------|
 | `POST` | `<base>/auth/register` | Create a user, return a session token |
 | `POST` | `<base>/auth/login` | Exchange credentials for a session token |
+| `GET` | `<base>/auth/me` | Check the caller's credential is valid and their user still exists |
 | `POST` | `<base>/auth/apikeys` | Issue an API key for the caller |
 
 ### Register
@@ -86,6 +87,18 @@ POST /api/auth/login
 The identity property name is whatever `identity_field` is set to. Returns
 `{ "token": "..." }` on success, `401` otherwise. The token embeds the user's id;
 organisation memberships are loaded fresh on each request.
+
+### Check a credential
+
+```http
+GET /api/auth/me             (authenticated)
+```
+
+Returns `{ "user_id": "…" }` when the credential verifies *and* the account it
+names still exists; `401` when either fails. A signature check alone cannot tell
+you the second — a token signed before the user was deleted still verifies — so
+a client holding a stored token has one call to ask whether to keep it. The
+admin dashboard calls this on load and discards the token on a `401`.
 
 ### Issue an API key
 

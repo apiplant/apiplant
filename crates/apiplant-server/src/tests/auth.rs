@@ -181,3 +181,123 @@ allow_registration = false
     fs::remove_dir_all(root).unwrap();
     db.cleanup().await;
 }
+
+/// `/auth/me` answers for the credential *and* the account behind it: a token
+/// keeps verifying against the secret long after its user is gone, which is
+/// exactly the case a client cannot detect on its own.
+#[ntex::test]
+async fn me_rejects_credentials_whose_user_is_gone() {
+    let db = TempDatabase::create("auth_me").await;
+    let root = temp_dir("auth_me");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    r#"
+[server]
+base_path = "/api"
+
+[database]
+url = "{}"
+"#,
+                    db.url
+                ),
+            ),
+            (
+                "models/users.toml",
+                r#"
+[resource]
+name = "user"
+scope = "global"
+
+[permissions]
+list = "authenticated"
+read = "owner"
+create = "public"
+update = "owner"
+delete = "owner"
+
+[auth]
+identity_field = "email"
+password_field = "password_hash"
+
+[fields.email]
+type = "string"
+required = true
+unique = true
+
+[fields.password_hash]
+type = "string"
+hidden = true
+"#,
+            ),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let resp = test::call_service(
+        &app,
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({"email":"a@b.com","password":"hunter2"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let registered = read_json(resp).await;
+    let token = registered["token"].as_str().unwrap().to_string();
+    let user_id = registered["user"]["id"].as_str().unwrap().to_string();
+
+    // No credential at all.
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get().uri("/api/auth/me").to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 401);
+
+    // A credential that does not verify against the secret.
+    let resp = test::call_service(
+        &app,
+        bearer(test::TestRequest::get().uri("/api/auth/me"), "not-a-token").to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 401);
+
+    // The real thing.
+    let resp = test::call_service(
+        &app,
+        bearer(test::TestRequest::get().uri("/api/auth/me"), &token).to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(read_json(resp).await["user_id"], user_id);
+
+    // Now delete the account the token names. The signature still checks out;
+    // the session does not.
+    let resp = test::call_service(
+        &app,
+        bearer(
+            test::TestRequest::delete().uri(&format!("/api/user/{user_id}")),
+            &token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert!(resp.status().is_success(), "delete failed: {:?}", resp.status());
+
+    let resp = test::call_service(
+        &app,
+        bearer(test::TestRequest::get().uri("/api/auth/me"), &token).to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 401);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
