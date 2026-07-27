@@ -153,6 +153,12 @@ name = "api_key"
 scope = "global"
 timestamps = true
 
+# "Api key" is what titleising the name produces, and it is not how anybody
+# writes it.
+[admin]
+label = "API key"
+plural = "API keys"
+
 [permissions]
 list   = "owner"
 read   = "owner"

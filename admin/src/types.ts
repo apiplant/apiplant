@@ -35,6 +35,9 @@ export type Widget =
   | "number"
   | "reference";
 
+/** What a free-text field holds. `plain` is an ordinary textarea. */
+export type ContentFormat = "plain" | "markdown" | "html";
+
 export interface FieldOption {
   value: string;
   label: string;
@@ -47,6 +50,8 @@ export interface FieldManifest {
   widget: Widget;
   help: string | null;
   placeholder: string | null;
+  /** Markup the editor highlights and previews; `plain` for everything else. */
+  format: ContentFormat;
   options: FieldOption[];
   required: boolean;
   unique: boolean;

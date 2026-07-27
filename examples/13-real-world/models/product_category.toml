@@ -30,6 +30,13 @@ type     = "string"
 required = true
 unique   = true
 
+[fields.description]
+type = "text"
+
+[fields.description.admin]
+format = "markdown"
+help   = "Shown at the top of the category page."
+
 [fields.parent_id]
 type       = "reference"
 references = "product_category"   # self-reference: a category tree

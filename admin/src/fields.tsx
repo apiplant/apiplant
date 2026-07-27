@@ -10,6 +10,7 @@
 
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Field, Spinner, Toggle } from "./ui";
+import { MarkupEditor } from "./markup";
 import { api, asRecord, asRecords, resourceByName, session } from "./store";
 import type { ApiRecord, FieldManifest, JsonValue, ResourceManifest } from "./types";
 
@@ -283,6 +284,25 @@ export function FieldEditor(props: {
           </Show>
           <For each={props.field.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
         </select>
+      </Field>
+    );
+  }
+
+  if (props.field.widget === "textarea" && props.field.format !== "plain") {
+    return (
+      <Field
+        label={props.field.label}
+        help={props.field.help}
+        required={props.field.required}
+        error={props.error}
+      >
+        <MarkupEditor
+          value={text()}
+          format={props.field.format}
+          onChange={set}
+          disabled={props.disabled}
+          placeholder={props.field.placeholder ?? undefined}
+        />
       </Field>
     );
   }

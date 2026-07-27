@@ -287,3 +287,287 @@
 .animate-rise {
   animation: rise 180ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
+
+/* ---- markup fields ---------------------------------------------------------
+ * A `text` field with `format = "markdown"` or `"html"` is edited with syntax
+ * colouring and a live preview. The colouring is a <pre> behind a textarea
+ * whose own text is transparent, so every metric below that affects layout —
+ * font, size, line height, padding, wrapping — must stay identical between
+ * `.markup-input` and `.markup-layer`, or the caret drifts off the letters. */
+.markup {
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background-color: var(--color-surface-2);
+}
+
+.markup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3125rem 0.5rem;
+  border-bottom: 1px solid var(--color-line);
+  background-color: var(--color-surface);
+}
+
+.markup-format {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+.markup-tabs {
+  display: flex;
+  gap: 0.125rem;
+  padding: 0.125rem;
+  border-radius: 0.375rem;
+  background-color: var(--color-surface-2);
+}
+
+.markup-tab {
+  padding: 0.1875rem 0.5rem;
+  border-radius: 0.3125rem;
+  font-size: 0.75rem;
+  color: var(--color-faint);
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+.markup-tab:hover {
+  color: var(--color-muted);
+}
+.markup-tab.is-active {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.markup-body {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+.markup-body.is-split {
+  grid-template-columns: 1fr 1fr;
+}
+.markup-body.is-split .markup-preview {
+  border-left: 1px solid var(--color-line);
+}
+
+.markup-editor {
+  position: relative;
+  min-height: 14rem;
+  background-color: var(--color-editor-bg);
+}
+
+.markup-input,
+.markup-layer {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  width: 100%;
+  height: 100%;
+  min-height: 14rem;
+  font-family: var(--font-mono);
+  font-size: 0.78125rem;
+  line-height: 1.7;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  border: 0;
+}
+
+.markup-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+
+.markup-input {
+  position: relative;
+  background-color: transparent;
+  color: transparent;
+  caret-color: var(--color-ink);
+  resize: vertical;
+  outline: none;
+}
+.markup-input::selection {
+  background-color: var(--color-editor-select);
+}
+.markup-input::placeholder {
+  color: var(--color-faint);
+}
+
+.markup-preview {
+  padding: 0.625rem 0.875rem;
+  max-height: 32rem;
+  overflow: auto;
+  background-color: var(--color-surface);
+}
+
+.markup-empty {
+  font-size: 0.75rem;
+  color: var(--color-faint);
+}
+
+/* markup tokens */
+.tok-head {
+  color: var(--color-syn-func);
+  font-weight: 600;
+}
+.tok-strong {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.tok-em {
+  color: var(--color-ink);
+  font-style: italic;
+}
+.tok-code {
+  color: var(--color-syn-string);
+}
+.tok-quote {
+  color: var(--color-syn-comment);
+  font-style: italic;
+}
+.tok-mark {
+  color: var(--color-syn-keyword);
+}
+.tok-link {
+  color: var(--color-accent);
+}
+.tok-url {
+  color: var(--color-syn-string);
+}
+.tok-tag {
+  color: var(--color-syn-keyword);
+}
+.tok-attr {
+  color: var(--color-syn-type);
+}
+.tok-str {
+  color: var(--color-syn-string);
+}
+.tok-punct {
+  color: var(--color-faint);
+}
+.tok-comment {
+  color: var(--color-syn-comment);
+  font-style: italic;
+}
+
+/* ---- rendered markup -------------------------------------------------------
+ * Deliberately modest: this previews an operator's copy, it is not a theme for
+ * the site that will eventually render it. */
+.prose {
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: var(--color-muted);
+  overflow-wrap: break-word;
+}
+.prose > :first-child {
+  margin-top: 0;
+}
+.prose > :last-child {
+  margin-bottom: 0;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  color: var(--color-ink);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.25em 0 0.5em;
+}
+.prose h1 {
+  font-size: 1.375em;
+}
+.prose h2 {
+  font-size: 1.2em;
+}
+.prose h3 {
+  font-size: 1.05em;
+}
+.prose p,
+.prose ul,
+.prose ol,
+.prose pre,
+.prose blockquote,
+.prose table {
+  margin: 0.6em 0;
+}
+.prose ul,
+.prose ol {
+  padding-left: 1.25em;
+}
+.prose ul {
+  list-style: disc;
+}
+.prose ol {
+  list-style: decimal;
+}
+.prose li {
+  margin: 0.2em 0;
+}
+.prose a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+.prose strong {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.prose em {
+  font-style: italic;
+}
+.prose del {
+  text-decoration: line-through;
+  color: var(--color-faint);
+}
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background-color: var(--color-surface-2);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+}
+.prose pre {
+  background-color: var(--color-editor-bg);
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  overflow-x: auto;
+}
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+}
+.prose blockquote {
+  border-left: 2px solid var(--color-line-strong);
+  padding-left: 0.75em;
+  color: var(--color-faint);
+}
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--color-line);
+  margin: 1em 0;
+}
+.prose img {
+  max-width: 100%;
+  border-radius: 0.375rem;
+}
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--color-line);
+  padding: 0.3em 0.5em;
+  text-align: left;
+}

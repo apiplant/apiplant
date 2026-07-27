@@ -27,7 +27,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use apiplant_abi::{FunctionAccess, HttpMethod};
 use apiplant_core::schema::{
-    is_auth_resource, relation_name, titleize, Access, Field, FieldType, OnDelete, Resource, Widget,
+    is_auth_resource, relation_name, titleize, Access, ContentFormat, Field, FieldType, OnDelete,
+    Resource, Widget,
 };
 use apiplant_core::App;
 use serde::Serialize;
@@ -135,6 +136,9 @@ struct FieldManifest {
     widget: &'static str,
     help: Option<String>,
     placeholder: Option<String>,
+    /// What the text is: `plain`, `markdown` or `html`. Presentation only —
+    /// the dashboard highlights and previews the markup.
+    format: &'static str,
     options: Vec<FieldOption>,
     required: bool,
     unique: bool,
@@ -554,6 +558,7 @@ fn field_manifest(name: &str, field: &Field, resource: &Resource) -> FieldManife
         widget: resolve_widget(field),
         help: field.admin.help.clone(),
         placeholder: field.admin.placeholder.clone(),
+        format: field.admin.format.as_str(),
         options: field
             .admin
             .options
@@ -592,6 +597,10 @@ fn resolve_widget(field: &Field) -> &'static str {
     }
     if !field.admin.options.is_empty() {
         return "select";
+    }
+    // Markup needs room and a preview beside it, whatever the column type.
+    if field.admin.format != ContentFormat::Plain {
+        return "textarea";
     }
     match field.ty {
         FieldType::Text => "textarea",
@@ -1010,6 +1019,51 @@ visible = false
         // The injected tenancy column is never an input.
         assert_eq!(field("organization_id")["writable"], false);
         assert_eq!(field("organization_id")["admin_visible"], false);
+    }
+
+    #[test]
+    fn content_format_reaches_the_manifest_and_forces_a_textarea() {
+        let manifest = build_manifest_for(&[(
+            "article",
+            r#"
+[resource]
+name = "article"
+
+[fields.body]
+type = "text"
+
+[fields.body.admin]
+format = "markdown"
+
+[fields.summary]
+type = "string"
+
+[fields.summary.admin]
+format = "html"
+
+[fields.slug]
+type = "string"
+"#,
+        )]);
+
+        let article = resource(&manifest, "article");
+        let field = |name: &str| {
+            article["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|field| field["name"] == name)
+                .unwrap()
+                .clone()
+        };
+
+        assert_eq!(field("body")["format"], "markdown");
+        assert_eq!(field("body")["widget"], "textarea");
+        // Markup needs the room even when the column is a plain string.
+        assert_eq!(field("summary")["format"], "html");
+        assert_eq!(field("summary")["widget"], "textarea");
+        assert_eq!(field("slug")["format"], "plain");
+        assert_eq!(field("slug")["widget"], "text");
     }
 
     #[test]

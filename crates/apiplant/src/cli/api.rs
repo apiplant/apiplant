@@ -37,6 +37,10 @@ pub struct AuthManifest {
     pub identity_field: String,
     pub identity_label: String,
     pub allow_registration: bool,
+    /// What the register form collects besides the identity and a password.
+    pub signup_fields: Vec<FieldManifest>,
+    /// What someone may change about themselves on the account screen.
+    pub profile_fields: Vec<FieldManifest>,
     /// Every role this app names anywhere — in a permission, a function or a
     /// field's options. It is what the Team screen offers, because a role the
     /// app never mentions grants nothing to whoever is given it.
@@ -49,6 +53,8 @@ impl Default for AuthManifest {
             identity_field: "email".into(),
             identity_label: "Email".into(),
             allow_registration: false,
+            signup_fields: Vec::new(),
+            profile_fields: Vec::new(),
             known_roles: Vec::new(),
         }
     }
@@ -63,12 +69,44 @@ pub struct ResourceManifest {
     pub group: Option<String>,
     pub order: i64,
     pub visible: bool,
+    /// One of the auth/tenancy resources the dashboard manages with a
+    /// purpose-built screen instead of a generic table.
+    pub auth_resource: bool,
     pub scope: String,
     pub display_field: Option<String>,
     pub search_field: Option<String>,
     pub columns: Vec<String>,
     pub fields: Vec<FieldManifest>,
+    /// What each reference field points at, and the key the expanded record
+    /// arrives under when the API is asked to inline it.
+    pub relations: Vec<RelationManifest>,
+    /// The resources whose records point back at this one.
+    pub children: Vec<ChildManifest>,
     pub permissions: ActionPermissions,
+}
+
+/// A reference from this resource to another.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct RelationManifest {
+    /// The field holding the id.
+    pub field: String,
+    /// The key `?expand=` puts the whole record under.
+    pub relation: String,
+    /// The resource it points at.
+    pub target: String,
+    pub label: String,
+}
+
+/// A resource that points back at this one — the records "underneath" it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ChildManifest {
+    /// The child resource's name.
+    pub resource: String,
+    /// The field on the child holding this record's id.
+    pub field: String,
+    pub label: String,
 }
 
 impl ResourceManifest {
@@ -171,10 +209,31 @@ pub struct ActionPermission {
 }
 
 impl ActionPermission {
-    /// Whether the endpoint exists at all. `none` means the server refuses it
-    /// for everyone, so offering the key would only produce a 403.
+    /// Whether this action is offered to anybody at all. `private` means the
+    /// server refuses it for everyone, so showing the key would only produce a
+    /// 403 — the resource is written to by hooks, or by nothing.
     pub fn possible(&self) -> bool {
-        self.value != "none"
+        self.value != "private"
+    }
+
+    /// Whether *this* caller may do it, as far as the manifest can say.
+    ///
+    /// The API remains the authority — `owner` narrows to your own rows and
+    /// only the server knows which those are. This is for deciding what to put
+    /// in front of somebody, which is exactly what the dashboard does with it.
+    pub fn allowed(&self, signed_in: bool, organization: bool, roles: &[String]) -> bool {
+        match self.value.as_str() {
+            "public" => true,
+            "private" => false,
+            "authenticated" => signed_in,
+            // Organisation-scoped work needs somewhere to do it.
+            "member" | "owner" => signed_in && organization,
+            _ => match &self.role {
+                // `admin` holds every role, here as everywhere else.
+                Some(role) => roles.iter().any(|held| held == role || held == "admin"),
+                None => false,
+            },
+        }
     }
 }
 
@@ -405,8 +464,25 @@ impl Client {
     }
 
     pub async fn read(&self, resource: &str, id: &str) -> Result<Value> {
-        self.get(&format!("/{}/{}", encode(resource), encode(id)))
-            .await
+        self.read_expanding(resource, id, &[]).await
+    }
+
+    /// Read a record with the named relations inlined, so a reference shows the
+    /// name of what it points at rather than a uuid.
+    pub async fn read_expanding(
+        &self,
+        resource: &str,
+        id: &str,
+        relations: &[String],
+    ) -> Result<Value> {
+        let query = expand_query(relations);
+        self.get(&format!(
+            "/{}/{}{}",
+            encode(resource),
+            encode(id),
+            query_string(&query)
+        ))
+        .await
     }
 
     pub async fn create(&self, resource: &str, body: Value) -> Result<Value> {
@@ -458,8 +534,17 @@ impl Client {
         password: &str,
     ) -> Result<String> {
         let body = json!({ identity_field: identity, "password": password });
+        self.authenticate("/auth/login", body).await
+    }
+
+    /// Create an account, on an app that allows it, and be signed in.
+    pub async fn register(&self, body: Value) -> Result<String> {
+        self.authenticate("/auth/register", body).await
+    }
+
+    async fn authenticate(&self, path: &str, body: Value) -> Result<String> {
         let response = self
-            .request(reqwest::Method::POST, "/auth/login", Some(body))
+            .request(reqwest::Method::POST, path, Some(body))
             .await?;
         response
             .get("token")
@@ -548,6 +633,16 @@ fn normalise_path(path: &str) -> String {
         String::new()
     } else {
         format!("/{trimmed}")
+    }
+}
+
+/// The `?expand=` parameter for a set of relations, or nothing when there are
+/// none to ask for.
+pub fn expand_query(relations: &[String]) -> Vec<(&'static str, String)> {
+    if relations.is_empty() {
+        Vec::new()
+    } else {
+        vec![("expand", relations.join(","))]
     }
 }
 

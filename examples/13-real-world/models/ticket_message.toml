@@ -34,6 +34,11 @@ on_delete  = "set_null"
 type     = "text"
 required = true
 
+[fields.body.admin]
+# The other format: replies arrive as HTML from the mail gateway, so the
+# dashboard colours the tags and previews the message rather than showing markup.
+format = "html"
+
 [fields.internal]
 type    = "boolean"
 default = false

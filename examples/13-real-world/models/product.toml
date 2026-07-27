@@ -29,6 +29,10 @@ required = true
 [fields.description]
 type = "text"
 
+[fields.description.admin]
+format      = "markdown"   # highlighted, with a live preview in the dashboard
+placeholder = "## What it is\n\nSell it in a paragraph, then bullet the specs."
+
 [fields.category_id]
 type       = "reference"
 references = "product_category"

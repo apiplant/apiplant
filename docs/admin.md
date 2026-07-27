@@ -199,6 +199,29 @@ someone reads need not be the same.
 Override it with `text`, `textarea`, `select`, `email`, `url`, `password`,
 `color`, `date`, `date_time`, `json` or `switch`.
 
+### Markup fields
+
+A `text` (or `string`) field can say what its content *is*:
+
+```toml
+[fields.description]
+type = "text"
+
+[fields.description.admin]
+format = "markdown"        # or "html"; "plain" is the default
+```
+
+Nothing changes server-side — the column, the API request and the API response
+are the same characters they were. It only changes the editor: the dashboard
+colours the markup and renders it live beside the input, or behind a
+`Write`/`Preview` tab pair when the screen is too narrow for two columns. A
+formatted field is always given a textarea, whatever `widget` would have picked.
+
+The preview is sanitised (no scripts, no event handlers, no `javascript:` URLs),
+because the text it renders is operator input and the dashboard session it
+renders in can edit every record. What your own front end does with the stored
+markup is your business — apiplant never renders it for you.
+
 Note the two different "hidden"s:
 
 * `hidden = true` on the field strips it from **every API response** — that is

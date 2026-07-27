@@ -15,7 +15,8 @@ use serde_json::Value;
 
 use super::api::scalar;
 use super::state::{
-    Cli, Focus, Form, Main, NavKind, Onboarding, SignIn, Team, PAGE, SIGN_IN_OPTIONS,
+    related_label, relation_keys, sign_in_options, Cli, Focus, Form, Main, NavKind, Onboarding,
+    SignIn, Team, PAGE,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -271,15 +272,27 @@ fn draw_main(frame: &mut Frame, cli: &Cli, area: Rect) {
                     format!("{} — {}", resource.label, resource.title_of(&detail.record))
                 })
                 .unwrap_or_else(|| "Record".into());
+            let inlined: Vec<&str> = resource.map(relation_keys).unwrap_or_default();
             let mut lines = Vec::new();
             for (name, value) in super::api::as_object(&detail.record) {
+                // The inlined records are shown through the fields that point
+                // at them; printing them again as raw JSON is noise.
+                if inlined.contains(&name.as_str()) {
+                    continue;
+                }
                 let label = resource
                     .and_then(|resource| resource.field(&name))
                     .map(|field| field.label.clone())
                     .unwrap_or_else(|| name.clone());
+                let text = resource
+                    .and_then(|resource| {
+                        related_label(&cli.manifest, resource, &detail.record, &name)
+                    })
+                    .map(|label| format!("{label}  ({})", scalar(&value)))
+                    .unwrap_or_else(|| long(&value));
                 lines.push(Line::from(vec![
                     Span::styled(format!("{label:>22}  "), Style::default().fg(FAINT)),
-                    Span::raw(long(&value)),
+                    Span::raw(text),
                 ]));
             }
             if lines.is_empty() {
@@ -321,8 +334,12 @@ fn draw_list(frame: &mut Frame, cli: &Cli, list: &super::state::List, area: Rect
     };
 
     let title = format!(
-        "{}  ·  page {}{}",
+        "{}{}  ·  page {}{}",
         resource.plural,
+        match &list.filter_label {
+            Some(parent) => format!(" of {parent}"),
+            None => String::new(),
+        },
         list.page + 1,
         if list.search.is_empty() {
             String::new()
@@ -359,10 +376,15 @@ fn draw_list(frame: &mut Frame, cli: &Cli, list: &super::state::List, area: Rect
     if list.rows.is_empty() {
         frame.render_widget(
             Paragraph::new(if list.search.is_empty() {
-                format!(
-                    "No {} yet. Press n to create one.",
-                    resource.plural.to_lowercase()
-                )
+                match &list.filter_label {
+                    Some(parent) => {
+                        format!("No {} belong to {parent}.", resource.plural.to_lowercase())
+                    }
+                    None => format!(
+                        "No {} yet. Press n to create one.",
+                        resource.plural.to_lowercase()
+                    ),
+                }
             } else {
                 "Nothing matched that search.".to_string()
             })
@@ -408,7 +430,14 @@ fn draw_list(frame: &mut Frame, cli: &Cli, list: &super::state::List, area: Rect
             Row::new(
                 columns
                     .iter()
-                    .map(|name| Cell::from(cell(record.get(name))))
+                    .map(|name| {
+                        // A reference reads as the name of what it points at,
+                        // when the server was able to inline it.
+                        match related_label(&cli.manifest, resource, record, name) {
+                            Some(label) => Cell::from(cell(Some(&Value::String(label)))),
+                            None => Cell::from(cell(record.get(name))),
+                        }
+                    })
                     .collect::<Vec<_>>(),
             )
         })
@@ -612,9 +641,9 @@ fn draw_team(frame: &mut Frame, cli: &Cli, team: &Team, area: Rect, focused: boo
     );
 
     let hint = if team.manage {
-        "  g  give a role      d  take one away      r  reload"
+        "  n  add someone      d  remove them      g  give a role      t  take one away      r  reload"
     } else {
-        "  You may not change roles in this organization."
+        "  n  add someone      d  remove them      r  reload      (roles are not yours to change here)"
     };
     frame.render_widget(
         Paragraph::new(vec![
@@ -684,7 +713,7 @@ fn draw_session(frame: &mut Frame, cli: &Cli, area: Rect, focused: bool) {
         ),
         Line::from(""),
         Line::from(Span::styled(
-            "  g  issue a new API key and show it",
+            "  g  name and issue an API key",
             Style::default().fg(FAINT),
         )),
         Line::from(Span::styled(
@@ -744,7 +773,7 @@ fn draw_sign_in(frame: &mut Frame, cli: &Cli, area: Rect) {
                 )),
                 Line::from(""),
             ];
-            for (at, (title, description)) in SIGN_IN_OPTIONS.iter().enumerate() {
+            for (at, (title, description)) in sign_in_options(&cli.manifest).iter().enumerate() {
                 let selected = at == *index;
                 lines.push(Line::from(Span::styled(
                     format!("{}{title}", if selected { "› " } else { "  " }),
@@ -886,6 +915,7 @@ fn help_text() -> Text<'static> {
         key("n", "new record"),
         key("e", "edit"),
         key("d", "delete"),
+        key("c", "records belonging to this one (on a record)"),
         key("/", "search"),
         key("[ ]", format!("previous / next page of {PAGE}").as_str()),
         key("r", "reload"),
@@ -899,12 +929,14 @@ fn help_text() -> Text<'static> {
         Line::from(""),
         section("Team screen"),
         key("↑ ↓ / k j", "move between members"),
+        key("n", "add someone to this organization"),
+        key("d", "remove them from it"),
         key("g", "give the highlighted member a role"),
-        key("d", "take one of their roles away"),
+        key("t", "take one of their roles away"),
         key("r", "reload"),
         Line::from(""),
         section("Session screen"),
-        key("g", "issue an API key"),
+        key("g", "name and issue an API key"),
         key("N", "create an organization"),
         key("x", "sign out"),
     ])

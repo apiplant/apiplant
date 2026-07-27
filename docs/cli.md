@@ -51,7 +51,8 @@ read and says so before it starts.
 
 ## Signing in
 
-Three doors, offered on the first screen:
+Three doors on the first screen, and a fourth — **Create an account** — where
+the app allows registration, collecting whatever it says an account needs.
 
 **Open the dashboard in a browser.** The console opens a one-request web server
 on `127.0.0.1`, sends you to the dashboard with its address attached, and waits.
@@ -115,9 +116,20 @@ brings it back.
 ## Using it
 
 A sidebar of every resource and function you can reach, grouped exactly as the
-dashboard groups them; a pane showing whichever you picked. A resource the
-server will not list for anyone, and a function with no endpoint, are left out —
-they would only teach you the console is broken.
+dashboard groups them; a pane showing whichever you picked. A resource nobody
+may list, a function with no endpoint, and anything gated on a role you do not
+hold are left out — they would only teach you the console is broken. The
+sidebar is rebuilt when your roles or your organization change, because what
+you can reach is a fact about where you are working.
+
+Below the app's own resources is a **Console** group, the same purpose-built
+screens the dashboard has instead of raw tables: your account, your team, the
+organizations you belong to, your API keys, and this session. The tenancy
+tables behind them — `user`, `membership`, `membership_role` — are not in the
+sidebar. They are how membership is *stored*; a table of rows with a `user_id`
+column is not a way to answer "who works here". An app that deliberately turns
+one back on with `[admin] visible = true` gets it as an ordinary resource, and
+no second entry for the same rows.
 
 | Key | |
 |-----|--|
@@ -125,13 +137,14 @@ they would only teach you the console is broken.
 | `↑ ↓` / `k j` | move |
 | `enter` | open a record, edit a field, pick a reference, or submit |
 | `n` `e` `d` | new, edit, delete |
+| `c` | the records belonging to this one (on a record) |
 | `/` | search (on the field the resource names for it) |
 | `[` `]` | previous / next page of 50 |
 | `r` | reload |
 | `space` | toggle a switch in a form |
 | `D` | clear a field |
 | `esc` | back |
-| `g` `d` | give / take away a role (on the Team screen) |
+| `g` `t` | give / take away a role (on the Team screen) |
 | `O` | switch organization |
 | `N` | create an organization (on the Session screen) |
 | `?` | the full list |
@@ -139,26 +152,37 @@ they would only teach you the console is broken.
 
 Forms come from the manifest, so they carry the fields the dashboard would show
 and nothing that is hidden, read-only or not yours to write. A reference field
-opens a picker of records by name rather than asking you to type a UUID. An edit
-sends only what you changed. A function's form is generated from its input
+opens a picker of records by name rather than asking you to type a UUID, and
+reads back the same way: lists and records ask the API to inline what a row
+points at, so a column shows `Beta Foods` and not a uuid. When that is refused —
+a relation whose target you may not read — the request is retried plain, because
+a table of ids beats no table. An edit sends only what you changed.
+
+The dashboard draws a record's children underneath it; a terminal has no room
+for that, so `c` on a record offers them — its order lines, its payments — and
+opens the ordinary list screen pinned to that parent. A function's form is generated from its input
 schema — one box per property, with its description, defaults and `enum` values
 — and a function that declares a confirmation asks for one here too.
 
 Org-scoped resources need an active organization, sent as `X-Organization`;
 `O` switches it, and the choice is remembered with the key.
 
-## Roles
+## The team
 
-`membership` and `membership_role` are ordinary resources, and they are both in
-the sidebar — but a table of membership ids is not a way to answer "who here is
-an admin". The **Team** screen is that answer: everyone in the active
-organization, one row each, with every role they hold. It appears whenever
-memberships can be listed at all.
+The **Team** screen is everyone in the active organization, one row each, with
+every role they hold. It appears whenever memberships can be listed at all.
+
+`n` adds somebody by the identity they signed up with — an email, usually. The
+console does not look the account up first: you may only read users you already
+share an organization with, which the person being added is by definition not.
+The server resolves it, and says so plainly when nobody is registered with that
+address. `d` removes them again; their account is not deleted, only its access
+to this organization.
 
 Roles are a set, and they come from two places — the membership's own `role`
 column and its `membership_role` rows — so the screen stitches them back
 together exactly as the server does when it checks a permission. `g` gives the
-highlighted person a role, `d` takes one away. See [permissions](permissions.md)
+highlighted person a role, `t` takes one away. See [permissions](permissions.md)
 for what a role means.
 
 The pickers only offer what will work. A role someone already holds is not
@@ -170,15 +194,31 @@ administrator removes themselves, so the console will not start it — another
 admin still can, from their own Team screen. An app whose `membership_role` you
 may not create says so instead of offering a picker you would only be refused.
 
+You cannot remove your own access while you are an admin, for the reason you
+cannot drop your own `admin` role: it is the other way an organization could
+end up with nobody who can administer it.
+
 The role a *membership* carries — the primary one, the one the server reports as
 `role` — has no row to delete, so taking it away clears the column instead. It
 is otherwise the same as any other.
 
-The Session screen shows who you are signed in as and what with — the console
-resolves your account from the session token's subject, or from the owner of the
-API key it is using — along with the server, the API and dashboard addresses, and
-the active organization and the roles you hold in it. It issues a fresh API key for pasting into a script
-(`g`), starts an organization (`N`), and signs out (`x`).
+## The other Console screens
+
+**Account** is your own record, built from the fields the app says are yours to
+change, saved with `enter` on the button like any other form.
+
+**Organizations** and **API keys** are ordinary tables underneath, so they are
+the ordinary list screen: the same keys, the same paging, the same detail view.
+Creating a key is the one thing that is not a row — the plaintext exists once,
+in the reply that issues it, and the table only ever holds a hash — so `n` names
+it and the key is then shown, once, to copy. Editing one is not offered at all,
+because there is nothing about a hash to edit.
+
+**Session** shows who you are signed in as and what with — the console resolves
+your account from the session token's subject, or from the owner of the API key
+it is using — along with the server, the API and dashboard addresses, the active
+organization and the roles you hold in it. It issues a key from here too (`g`),
+starts an organization (`N`), and signs out (`x`).
 
 ## When something goes wrong
 

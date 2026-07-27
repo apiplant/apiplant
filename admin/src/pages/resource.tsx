@@ -32,6 +32,7 @@ import {
   recordLabel,
 } from "../fields";
 import type { Draft, DraftError } from "../fields";
+import { MarkupView } from "../markup";
 import {
   api,
   asRecord,
@@ -556,7 +557,14 @@ function RecordSummary(props: { resource: ResourceManifest; record: ApiRecord })
           {(field) => (
             <div>
               <dt class="text-[0.6875rem] uppercase tracking-wide text-faint">{field.label}</dt>
-              <dd class="mt-0.5 text-muted">{formatValue(field, props.record)}</dd>
+              <dd class="mt-0.5 text-muted">
+                <Show
+                  when={field.format !== "plain" && typeof props.record[field.name] === "string"}
+                  fallback={formatValue(field, props.record)}
+                >
+                  <MarkupView value={String(props.record[field.name])} format={field.format} />
+                </Show>
+              </dd>
             </div>
           )}
         </For>

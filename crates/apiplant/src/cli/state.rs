@@ -31,6 +31,7 @@ pub enum Focus {
 pub enum NavKind {
     Resource(usize),
     Function(usize),
+    Account,
     Team,
     Session,
 }
@@ -47,12 +48,23 @@ pub struct NavItem {
 /// Only what the operator can actually reach: a resource the server will not
 /// list for anyone, or a function with no endpoint, is a dead entry that only
 /// teaches people the console is broken.
-fn navigation(manifest: &Manifest) -> Vec<NavItem> {
+fn navigation(manifest: &Manifest, roles: &[String]) -> Vec<NavItem> {
+    // A resource only an `editor` may list is not a door for anybody else, so
+    // it is left out once we know what the caller holds. Before we know — the
+    // console has not signed in yet — nothing is hidden on a guess.
+    let reachable = |permission: &api::ActionPermission| {
+        permission.possible()
+            && match (&permission.role, roles.is_empty()) {
+                (Some(role), false) => roles.iter().any(|held| held == role || held == ADMIN_ROLE),
+                _ => true,
+            }
+    };
+
     let mut resources: Vec<(usize, &ResourceManifest)> = manifest
         .resources
         .iter()
         .enumerate()
-        .filter(|(_, resource)| resource.visible && resource.permissions.list.possible())
+        .filter(|(_, resource)| resource.visible && reachable(&resource.permissions.list))
         .collect();
     resources.sort_by(|(_, a), (_, b)| {
         a.group
@@ -81,27 +93,60 @@ fn navigation(manifest: &Manifest) -> Vec<NavItem> {
         });
     }
 
-    // Roles live on `membership` and `membership_role`, and both are already in
-    // the sidebar as ordinary tables — but a table of membership ids is not a
-    // way to answer "who here is an admin". The Team screen is that answer, so
-    // it appears whenever memberships can be listed at all.
-    if manifest
-        .resources
-        .iter()
-        .any(|resource| resource.name == "membership" && resource.permissions.list.possible())
-    {
-        items.push(NavItem {
+    // The auth resources are hidden from the list above — `user`, `membership`
+    // and the rest are how tenancy is *stored*, and a table of membership rows
+    // with a `user_id` column is a developer's view of a team. The dashboard
+    // gives them purpose-built screens instead, and so does this: an account,
+    // a team, the organizations you belong to, your keys.
+    let listable = |name: &str| {
+        manifest
+            .resources
+            .iter()
+            .position(|resource| resource.name == name)
+            .filter(|index| reachable(&manifest.resources[*index].permissions.list))
+    };
+
+    let mut console = Vec::new();
+    if !manifest.auth.profile_fields.is_empty() {
+        console.push(NavItem {
+            label: "Account".into(),
+            group: "Console".into(),
+            kind: NavKind::Account,
+        });
+    }
+    if listable("membership").is_some() {
+        console.push(NavItem {
             label: "Team".into(),
             group: "Console".into(),
             kind: NavKind::Team,
         });
     }
-
-    items.push(NavItem {
+    // These two are ordinary tables underneath, so they reuse the list screen
+    // rather than getting a bespoke one — the same records, the same keys.
+    for name in ["organization", "api_key"] {
+        if let Some(index) = listable(name) {
+            // An app that deliberately turned the generic table back on has it
+            // in the sidebar already; a second entry for the same rows is only
+            // confusing.
+            if manifest.resources[index].visible {
+                continue;
+            }
+            console.push(NavItem {
+                // Whatever the app calls them, so a renamed `organization`
+                // reads the same here as everywhere else.
+                label: manifest.resources[index].plural.clone(),
+                group: "Console".into(),
+                kind: NavKind::Resource(index),
+            });
+        }
+    }
+    console.push(NavItem {
         label: "Session".into(),
         group: "Console".into(),
         kind: NavKind::Session,
     });
+
+    items.extend(console);
     items
 }
 
@@ -165,6 +210,16 @@ impl FormField {
 pub enum FormKind {
     SignInPassword,
     SignInKey,
+    /// Creating an account, when the app allows it.
+    SignUp,
+    /// Editing your own user record — what the dashboard calls Your account.
+    Profile,
+    /// Naming a key before it is minted. Keys are not created through the
+    /// `api_key` resource: the plaintext exists once, in the reply from
+    /// `/auth/apikeys`, and never again.
+    NewApiKey,
+    /// Adding somebody to the active organisation by their identity.
+    AddMember,
     Create {
         resource: usize,
     },
@@ -255,28 +310,109 @@ impl Form {
         form
     }
 
+    /// Sign-up, when the app allows it: the identity, a password, and whatever
+    /// else the app says an account needs.
+    fn sign_up(manifest: &Manifest) -> Form {
+        let mut identity =
+            FormField::text(&manifest.auth.identity_field, &manifest.auth.identity_label);
+        identity.required = true;
+        let mut password = FormField::text("password", "Password");
+        password.required = true;
+        password.secret = true;
+
+        let mut fields = vec![identity, password];
+        // Whatever the app declared as needed at sign-up — the same list the
+        // dashboard's register form shows.
+        fields.extend(
+            inputs(&manifest.auth.signup_fields)
+                .into_iter()
+                .filter(|field| field.name != manifest.auth.identity_field),
+        );
+
+        let mut form = Form::new(
+            "Create an account",
+            "Create account",
+            FormKind::SignUp,
+            fields,
+        );
+        form.subtitle =
+            Some("This app lets anyone register. You will be signed in straight away.".into());
+        form
+    }
+
+    /// Your own details, from the fields the app says are yours to change.
+    fn profile(manifest: &Manifest, record: Option<&Value>) -> Form {
+        let mut fields = inputs(&manifest.auth.profile_fields);
+        for field in &mut fields {
+            let current = record
+                .and_then(|record| record.get(&field.name))
+                .map(to_text)
+                .unwrap_or_default();
+            field.set(current.clone());
+            field.was = Some(current);
+        }
+        let mut form = Form::new("Your account", "Save changes", FormKind::Profile, fields);
+        form.subtitle = Some("The details other people see, and how you sign in.".into());
+        form
+    }
+
+    /// Naming a key before it is issued.
+    fn new_api_key() -> Form {
+        let mut name = FormField::text("name", "Name");
+        name.help = Some(
+            "Name it after whatever will use it, so you know what you are \
+                          revoking later."
+                .into(),
+        );
+        let mut form = Form::new("New API key", "Create key", FormKind::NewApiKey, vec![name]);
+        form.subtitle = Some(
+            "A key acts as you, with everything you can do. The key itself is shown \
+                  once and never again."
+                .into(),
+        );
+        form
+    }
+
+    /// Adding someone to the organisation, by the identity they signed up with.
+    ///
+    /// Looking the account up first would not work: you may only read users you
+    /// already share an organisation with, which by definition this person is
+    /// not. The server resolves the identity, and says so when nobody has it.
+    fn add_member(manifest: &Manifest, roles: &[String]) -> Form {
+        let mut identity =
+            FormField::text(&manifest.auth.identity_field, &manifest.auth.identity_label);
+        identity.required = true;
+        let mut role = FormField::text("role", "Role");
+        role.options = roles.to_vec();
+        role.help = Some("Their starting role. You can give them more afterwards.".into());
+        role.set(
+            roles
+                .iter()
+                .find(|role| *role == "member")
+                .cloned()
+                .or_else(|| roles.first().cloned())
+                .unwrap_or_default(),
+        );
+        let mut form = Form::new(
+            "Add someone to this organization",
+            "Add to organization",
+            FormKind::AddMember,
+            vec![identity, role],
+        );
+        form.subtitle =
+            Some("They need an account already — adding them here is what gives it access.".into());
+        form
+    }
+
     /// A form for creating one record of `resource`.
     fn create(index: usize, resource: &ResourceManifest) -> Form {
-        let fields = resource
+        let editable: Vec<_> = resource
             .fields
             .iter()
             .filter(|field| field.editable())
-            .map(|field| {
-                let mut entry = FormField::text(&field.name, &field.label);
-                entry.ty = field.ty.clone();
-                entry.help = field.help.clone();
-                entry.required = field.required;
-                entry.secret = field.widget == "password";
-                entry.options = field.options.iter().map(|o| o.value.clone()).collect();
-                entry.references = field.references.clone();
-                if let Some(default) = &field.default_value {
-                    entry.set(to_text(default));
-                } else if field.ty == "boolean" {
-                    entry.set("false".into());
-                }
-                entry
-            })
+            .cloned()
             .collect();
+        let fields = inputs(&editable);
         Form::new(
             format!("New {}", resource.label.to_lowercase()),
             "Create",
@@ -354,6 +490,28 @@ impl Form {
         form.subtitle = (!function.description.is_empty()).then(|| function.description.clone());
         form
     }
+}
+
+/// Turn manifest fields into the boxes an operator types into.
+fn inputs(fields: &[api::FieldManifest]) -> Vec<FormField> {
+    fields
+        .iter()
+        .map(|field| {
+            let mut entry = FormField::text(&field.name, &field.label);
+            entry.ty = field.ty.clone();
+            entry.help = field.help.clone();
+            entry.required = field.required;
+            entry.secret = field.widget == "password";
+            entry.options = field.options.iter().map(|o| o.value.clone()).collect();
+            entry.references = field.references.clone();
+            if let Some(default) = &field.default_value {
+                entry.set(to_text(default));
+            } else if field.ty == "boolean" {
+                entry.set("false".into());
+            }
+            entry
+        })
+        .collect()
 }
 
 /// Read a function's input schema into form fields.
@@ -447,6 +605,11 @@ pub struct List {
     pub search: String,
     pub searching: bool,
     pub cursor: usize,
+    /// A `(field, value)` the list is pinned to — how the records belonging to
+    /// one parent are shown, as `field=value` on the query.
+    pub filter: Option<(String, String)>,
+    /// What that parent is called, for the title.
+    pub filter_label: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -534,6 +697,12 @@ pub enum PickerKind {
     Reference {
         field: usize,
     },
+    /// Opening the records that point at the one on screen.
+    Children {
+        /// `id` of the record they belong to, and what it is called.
+        parent: String,
+        label: String,
+    },
     /// Giving the highlighted member another role.
     GrantRole {
         member: usize,
@@ -555,8 +724,19 @@ pub struct Picker {
 
 #[derive(Debug, Clone)]
 pub enum ConfirmAction {
-    Delete { resource: usize, id: String },
-    Run { function: usize, body: Value },
+    Delete {
+        resource: usize,
+        id: String,
+    },
+    /// Taking away somebody's access to the active organisation.
+    RemoveMember {
+        id: String,
+        name: String,
+    },
+    Run {
+        function: usize,
+        body: Value,
+    },
     SignOut,
 }
 
@@ -595,17 +775,27 @@ pub enum SignIn {
     },
 }
 
-pub const SIGN_IN_OPTIONS: [(&str, &str); 3] = [
-    (
-        "Open the dashboard in a browser",
-        "Sign in there and it sends a key straight back to this console.",
-    ),
-    (
-        "Sign in with an email and password",
-        "The console mints and saves a key for you.",
-    ),
-    ("Paste an API key", "For a key you already have."),
-];
+/// The doors on the first screen, in the order they are offered.
+///
+/// Registering is only one of them where the app actually allows it: an option
+/// that always answers "registration is closed" is worse than no option.
+pub fn sign_in_options(manifest: &Manifest) -> Vec<(&'static str, &'static str)> {
+    let mut options = vec![
+        (
+            "Open the dashboard in a browser",
+            "Sign in there and it sends a key straight back to this console.",
+        ),
+        (
+            "Sign in with an email and password",
+            "The console mints and saves a key for you.",
+        ),
+        ("Paste an API key", "For a key you already have."),
+    ];
+    if manifest.auth.allow_registration {
+        options.push(("Create an account", "This app is open to new accounts."));
+    }
+    options
+}
 
 // --- the console ------------------------------------------------------------
 
@@ -646,7 +836,7 @@ pub struct Cli {
 
 impl Cli {
     pub fn new(client: Client, manifest: Manifest, store: Store, dir: PathBuf) -> Cli {
-        let nav = navigation(&manifest);
+        let nav = navigation(&manifest, &[]);
         Cli {
             client,
             manifest,
@@ -689,6 +879,7 @@ impl Cli {
         self.load_identity().await;
         self.load_organizations().await;
         self.load_roles().await;
+        self.rebuild_nav();
         self.status = format!("Connected to {}", self.client.origin);
 
         // Decide about the organisation *before* opening anything. Loading a
@@ -759,6 +950,11 @@ impl Cli {
     }
 
     // --- helpers ----------------------------------------------------------
+
+    /// The ways in this app offers.
+    pub fn doors(&self) -> Vec<(&'static str, &'static str)> {
+        sign_in_options(&self.manifest)
+    }
 
     pub fn resource(&self, index: usize) -> Option<&ResourceManifest> {
         self.manifest.resources.get(index)
@@ -906,6 +1102,31 @@ impl Cli {
     }
 
     // --- roles ------------------------------------------------------------
+
+    /// Rebuild the sidebar for what the caller turns out to be able to reach.
+    ///
+    /// Roles are per organisation, so this is not a one-off at startup: it runs
+    /// again whenever they change or the active organisation does.
+    fn rebuild_nav(&mut self) {
+        let here = self.nav.get(self.nav_index).map(|item| item.kind);
+        self.nav = navigation(&self.manifest, &self.roles);
+        // Keep the cursor on whatever it was on, when that still exists.
+        self.nav_index = here
+            .and_then(|kind| self.nav.iter().position(|item| item.kind == kind))
+            .unwrap_or(0)
+            .min(self.nav.len().saturating_sub(1));
+    }
+
+    /// Whether the caller may take this action, as far as the manifest can say.
+    ///
+    /// The API is still the authority — `owner` narrows to your own rows, and
+    /// only the server knows which those are. This decides what to put in front
+    /// of somebody, which is what the dashboard uses the same rule for.
+    pub fn may(&self, resource: &ResourceManifest, action: &api::ActionPermission) -> bool {
+        let signed_in = !self.client.credentials.is_empty();
+        let somewhere = resource.scope == "global" || self.client.organization.is_some();
+        action.allowed(signed_in, somewhere, &self.roles)
+    }
 
     /// Whether a resource is in the manifest and listable at all.
     fn listable(&self, name: &str) -> bool {
@@ -1068,7 +1289,7 @@ impl Cli {
                         .resources
                         .iter()
                         .find(|resource| resource.name == "membership_role")
-                        .is_some_and(|resource| resource.permissions.create.possible()),
+                        .is_some_and(|resource| self.may(resource, &resource.permissions.create)),
                     members,
                 });
                 self.say(format!("{count} in {}", self.organization_label()));
@@ -1096,6 +1317,103 @@ impl Cli {
         } else {
             known.clone()
         }
+    }
+
+    /// Offer the records that point at the one on screen.
+    ///
+    /// The dashboard draws these underneath a record; a terminal has no room
+    /// for that, so they are a list you open — the ordinary list screen, pinned
+    /// to this parent.
+    fn open_children_picker(&mut self) {
+        let Some((_, resource)) = self.current_resource() else {
+            return;
+        };
+        let Some(record) = self.current_record() else {
+            return;
+        };
+        let Some(id) = record
+            .get("id")
+            .map(api::scalar)
+            .filter(|id| !id.is_empty())
+        else {
+            return self.say("That record has no id to look anything up by.");
+        };
+
+        let items: Vec<(String, String)> = resource
+            .children
+            .iter()
+            .filter(|child| {
+                self.manifest.resources.iter().any(|target| {
+                    target.name == child.resource && target.permissions.list.possible()
+                })
+            })
+            .map(|child| {
+                (
+                    format!("{}\u{1f}{}", child.resource, child.field),
+                    child.label.clone(),
+                )
+            })
+            .collect();
+        if items.is_empty() {
+            return self.say(format!(
+                "Nothing else in this app points at a {}.",
+                resource.label.to_lowercase()
+            ));
+        }
+        self.picker = Some(Picker {
+            title: format!("Belonging to {}", resource.title_of(&record)),
+            items,
+            index: 0,
+            kind: PickerKind::Children {
+                parent: id,
+                label: resource.title_of(&record),
+            },
+        });
+    }
+
+    fn start_add_member(&mut self) {
+        if self.client.organization.is_none() {
+            return self.say("Pick an organization first — a team belongs to one.");
+        }
+        let may = self
+            .manifest
+            .resources
+            .iter()
+            .find(|resource| resource.name == "membership")
+            .is_some_and(|resource| self.may(resource, &resource.permissions.create));
+        if !may {
+            return self.say("You may not add people to this organization.");
+        }
+        let roles = self.known_roles();
+        self.main = Main::Form(Form::add_member(&self.manifest, &roles));
+    }
+
+    fn ask_remove_member(&mut self) {
+        let Main::Team(team) = &self.main else { return };
+        let Some(member) = team.members.get(team.index) else {
+            return;
+        };
+        // Removing your own membership is the other way to leave an
+        // organisation without an admin, and the server refuses it for the same
+        // reason it refuses dropping your own admin role.
+        if member.is_me && member.roles().iter().any(|role| role == ADMIN_ROLE) {
+            return self.say(
+                "You cannot remove your own access while you are an admin here — another admin \
+                 can do it for you.",
+            );
+        }
+        self.confirm = Some(Confirm {
+            prompt: format!(
+                "Remove {} from {}? They lose access to everything in it; their account itself \
+                 is not deleted.",
+                member.name,
+                self.organization_label()
+            ),
+            action: ConfirmAction::RemoveMember {
+                id: member.membership_id.clone(),
+                name: member.name.clone(),
+            },
+        });
     }
 
     fn open_grant_picker(&mut self) {
@@ -1225,6 +1543,7 @@ impl Cli {
         self.load_team().await;
         if was_me {
             self.load_roles().await;
+            self.rebuild_nav();
         }
         self.status = said;
     }
@@ -1246,6 +1565,8 @@ impl Cli {
                     search: String::new(),
                     searching: false,
                     cursor: 0,
+                    filter: None,
+                    filter_label: None,
                 });
                 self.reload().await;
             }
@@ -1254,6 +1575,23 @@ impl Cli {
                     return;
                 };
                 self.main = Main::Form(Form::run(index, function));
+            }
+            NavKind::Account => {
+                // Read the record fresh: what we loaded at sign-in was for a
+                // name in the header, and this is a form somebody is about to
+                // save over.
+                if let Some(id) = self.identity_id.clone() {
+                    if let Ok(record) = self.client.read("user", &id).await {
+                        self.identity = Some(record);
+                    }
+                }
+                self.main = Main::Form(Form::profile(&self.manifest, self.identity.as_ref()));
+                if self.identity_id.is_none() {
+                    self.fail(
+                        "the console could not work out which account these credentials belong \
+                         to, so there is nothing to edit here",
+                    );
+                }
             }
             NavKind::Team => {
                 self.main = Main::Team(Team {
@@ -1267,10 +1605,28 @@ impl Cli {
         }
     }
 
+    /// The relations worth asking the API to inline: the ones whose target this
+    /// caller may read at all.
+    fn expandable(&self, resource: &ResourceManifest) -> Vec<String> {
+        resource
+            .relations
+            .iter()
+            .filter(|relation| {
+                self.manifest
+                    .resources
+                    .iter()
+                    .find(|target| target.name == relation.target)
+                    .is_some_and(|target| target.permissions.read.possible())
+            })
+            .map(|relation| relation.relation.clone())
+            .collect()
+    }
+
     /// Re-run the current list query.
     pub async fn reload(&mut self) {
         let Main::List(list) = &self.main else { return };
         let (resource_index, page, search) = (list.resource, list.page, list.search.clone());
+        let filter = list.filter.clone();
         let Some(resource) = self.resource(resource_index).cloned() else {
             return;
         };
@@ -1285,9 +1641,28 @@ impl Cli {
         if let (Some(field), false) = (search_field.as_deref(), search.trim().is_empty()) {
             query.push((field, search.trim().to_string()));
         }
+        // A child list is the same list with the parent pinned on it.
+        if let Some((field, value)) = &filter {
+            query.push((field.as_str(), value.clone()));
+        }
 
+        // Ask the API to inline what each row points at, so a column holding a
+        // uuid can show "Acme Ltd" instead. A relation whose target this caller
+        // may not read makes the whole request fail, and a table nobody can see
+        // is worse than a table of ids — so that answer is retried plain.
+        let relations = self.expandable(&resource);
         self.status = format!("Loading {}…", resource.plural.to_lowercase());
-        match self.client.list(&resource.name, &query).await {
+        let mut expanded = query.clone();
+        expanded.extend(api::expand_query(&relations));
+        let answer = match self.client.list(&resource.name, &expanded).await {
+            Err(error) if !relations.is_empty() => self
+                .client
+                .list(&resource.name, &query)
+                .await
+                .map_err(|_| error),
+            other => other,
+        };
+        match answer {
             Ok(rows) => {
                 let count = rows.len();
                 if let Main::List(list) = &mut self.main {
@@ -1322,9 +1697,14 @@ impl Cli {
 
         // The list may have been trimmed by the server; re-reading the record
         // is what makes the detail screen show everything it is allowed to.
+        let relations = self.expandable(&resource);
         let record = match row.get("id").and_then(Value::as_str) {
             Some(id) if resource.permissions.read.possible() => {
-                match self.client.read(&resource.name, id).await {
+                match self
+                    .client
+                    .read_expanding(&resource.name, id, &relations)
+                    .await
+                {
                     Ok(record) => record,
                     Err(error) => {
                         self.fail(error);
@@ -1345,8 +1725,18 @@ impl Cli {
         let Some((index, resource)) = self.current_resource() else {
             return;
         };
-        if !resource.permissions.create.possible() {
-            self.fail(format!("{} cannot be created here", resource.plural));
+        if !self.may(&resource, &resource.permissions.create) {
+            let note = resource.permissions.create.note.clone();
+            self.fail(format!(
+                "{} cannot be created here. {note}",
+                resource.plural
+            ));
+            return;
+        }
+        // A key is not made by writing a row: the plaintext exists once, in the
+        // reply from `/auth/apikeys`, and the table only ever holds its hash.
+        if resource.name == "api_key" {
+            self.main = Main::Form(Form::new_api_key());
             return;
         }
         self.main = Main::Form(Form::create(index, &resource));
@@ -1356,8 +1746,9 @@ impl Cli {
         let Some((index, resource)) = self.current_resource() else {
             return;
         };
-        if !resource.permissions.update.possible() {
-            self.fail(format!("{} cannot be edited here", resource.plural));
+        if !self.may(&resource, &resource.permissions.update) {
+            let note = resource.permissions.update.note.clone();
+            self.fail(format!("{} cannot be edited here. {note}", resource.plural));
             return;
         }
         let Some(record) = self.current_record() else {
@@ -1370,8 +1761,12 @@ impl Cli {
         let Some((index, resource)) = self.current_resource() else {
             return;
         };
-        if !resource.permissions.delete.possible() {
-            self.fail(format!("{} cannot be deleted here", resource.plural));
+        if !self.may(&resource, &resource.permissions.delete) {
+            let note = resource.permissions.delete.note.clone();
+            self.fail(format!(
+                "{} cannot be deleted here. {note}",
+                resource.plural
+            ));
             return;
         }
         let Some(record) = self.current_record() else {
@@ -1524,7 +1919,16 @@ impl Cli {
                 }
                 self.run_function(&function, body).await;
             }
-            FormKind::SignInPassword | FormKind::SignInKey => self.submit_sign_in(form).await,
+            FormKind::Profile => self.save_profile(form).await,
+            FormKind::NewApiKey => {
+                let name = form.fields[0].value.trim().to_string();
+                let name = if name.is_empty() { key_label() } else { name };
+                self.issue_key(&name).await;
+            }
+            FormKind::AddMember => self.add_member(form).await,
+            FormKind::SignInPassword | FormKind::SignInKey | FormKind::SignUp => {
+                self.submit_sign_in(form).await
+            }
             // Only reachable from the onboarding modal, which is handled above.
             FormKind::FoundOrganization { .. } => {}
         }
@@ -1559,6 +1963,58 @@ impl Cli {
                 self.say(format!("{label} is ready. You are its admin."));
                 self.open_selected().await;
             }
+            Err(error) => self.fail(error),
+        }
+    }
+
+    /// Save your own details.
+    async fn save_profile(&mut self, form: Form) {
+        let Some(id) = self.identity_id.clone() else {
+            return self.fail(
+                "there is no account to save — sign in with a password or a key \
+                              whose owner this console can read",
+            );
+        };
+        let body = match Self::body_of(&form, true) {
+            Ok(body) => body,
+            Err(problem) => return self.fail(problem),
+        };
+        if body.as_object().is_some_and(Map::is_empty) {
+            return self.say("Nothing changed.");
+        }
+        self.status = "Saving…".into();
+        match self.client.update("user", &id, body).await {
+            Ok(record) => {
+                self.identity = Some(record);
+                self.say("Your details are saved.");
+                self.main = Main::Form(Form::profile(&self.manifest, self.identity.as_ref()));
+            }
+            Err(error) => self.fail(error),
+        }
+    }
+
+    /// Add somebody to the active organisation.
+    async fn add_member(&mut self, form: Form) {
+        let body = match Self::body_of(&form, false) {
+            Ok(body) => body,
+            Err(problem) => return self.fail(problem),
+        };
+        let who = form.fields[0].value.trim().to_string();
+        self.status = format!("Adding {who}…");
+        match self.client.create("membership", body).await {
+            Ok(_) => {
+                self.say(format!(
+                    "{who} can now work in {}.",
+                    self.organization_label()
+                ));
+                self.load_team().await;
+            }
+            // The server answers 404 when nobody is registered with that
+            // identity, which is worth saying in words rather than as a code.
+            Err(error) if error.to_string().contains("404") => self.fail(format!(
+                "nobody is registered as `{who}`. They need an account before they can be \
+                 added.\n{error}"
+            )),
             Err(error) => self.fail(error),
         }
     }
@@ -1631,12 +2087,27 @@ impl Cli {
                     }
                 }
             }
-            FormKind::SignInPassword => {
+            FormKind::SignInPassword | FormKind::SignUp => {
+                let registering = form.kind == FormKind::SignUp;
                 let identity = form.fields[0].value.trim().to_string();
-                let password = form.fields[1].value.clone();
                 let field = self.manifest.auth.identity_field.clone();
-                self.status = "Signing in…".into();
-                match self.client.login(&field, &identity, &password).await {
+                self.status = if registering {
+                    "Creating your account…".into()
+                } else {
+                    "Signing in…".to_string()
+                };
+                let door = if registering {
+                    // Registration collects whatever else the app declared, so
+                    // the form is the body rather than a fixed pair.
+                    match Self::body_of(&form, false) {
+                        Ok(body) => self.client.register(body).await,
+                        Err(problem) => return self.fail(problem),
+                    }
+                } else {
+                    let password = form.fields[1].value.clone();
+                    self.client.login(&field, &identity, &password).await
+                };
+                match door {
                     Ok(token) => {
                         self.client.credentials.token = Some(token);
                         // Trade the session for a key so the next run is silent.
@@ -1692,6 +2163,7 @@ impl Cli {
         self.identity_id = None;
         self.identity_note = None;
         self.roles.clear();
+        self.rebuild_nav();
         self.onboarding = None;
         self.main = Main::Empty(String::new());
         self.sign_in = Some(SignIn::Menu { index: 0 });
@@ -1700,9 +2172,9 @@ impl Cli {
 
     /// Mint another key and show it — for pasting into a script or another
     /// machine, which is the whole reason to want one from here.
-    async fn issue_key(&mut self) {
+    async fn issue_key(&mut self, name: &str) {
         self.status = "Issuing a key…".into();
-        match self.client.create_api_key(&key_label()).await {
+        match self.client.create_api_key(name).await {
             Ok(key) => {
                 self.say("Copy this now — the server will not show it again.");
                 self.main = Main::Output {
@@ -1802,6 +2274,9 @@ impl Cli {
                 // Roles are per organisation, so the ones we hold here are not
                 // the ones we held there.
                 self.load_roles().await;
+                // What you may reach is a fact about the organisation you are
+                // in, so the sidebar is one of the things that changes.
+                self.rebuild_nav();
                 self.say(format!("Now working in {label}."));
                 // Every org-scoped list on screen is now the wrong list.
                 match self.main {
@@ -1816,6 +2291,31 @@ impl Cli {
                         field.set(value);
                     }
                 }
+            }
+            PickerKind::Children { parent, label } => {
+                let Some((resource, field)) = value.split_once('\u{1f}') else {
+                    return;
+                };
+                let Some(index) = self
+                    .manifest
+                    .resources
+                    .iter()
+                    .position(|entry| entry.name == resource)
+                else {
+                    return;
+                };
+                self.main = Main::List(List {
+                    resource: index,
+                    rows: Vec::new(),
+                    index: 0,
+                    page: 0,
+                    search: String::new(),
+                    searching: false,
+                    cursor: 0,
+                    filter: Some((field.to_string(), parent)),
+                    filter_label: Some(label),
+                });
+                self.reload().await;
             }
             PickerKind::GrantRole { member } => self.grant_role(member, value).await,
             PickerKind::RevokeRole { member } => {
@@ -1853,6 +2353,15 @@ impl Cli {
                     return;
                 };
                 self.run_function(&function, body).await;
+            }
+            ConfirmAction::RemoveMember { id, name } => {
+                match self.client.delete("membership", &id).await {
+                    Ok(()) => {
+                        self.say(format!("{name} no longer has access."));
+                        self.load_team().await;
+                    }
+                    Err(error) => self.fail(error),
+                }
             }
             ConfirmAction::SignOut => self.sign_out(),
         }
@@ -1992,11 +2501,10 @@ impl Cli {
     }
 
     async fn sign_in_key(&mut self, key: KeyEvent) {
+        let last_door = self.doors().len().saturating_sub(1);
         match self.sign_in.as_mut() {
             Some(SignIn::Menu { index }) => match key.code {
-                KeyCode::Down | KeyCode::Char('j') => {
-                    *index = (*index + 1).min(SIGN_IN_OPTIONS.len() - 1)
-                }
+                KeyCode::Down | KeyCode::Char('j') => *index = (*index + 1).min(last_door),
                 KeyCode::Up | KeyCode::Char('k') => *index = index.saturating_sub(1),
                 KeyCode::Char('q') => self.quit = true,
                 KeyCode::Char('?') => self.help = true,
@@ -2006,7 +2514,11 @@ impl Cli {
                         let form = Form::sign_in_password(&self.manifest);
                         self.sign_in = Some(SignIn::Form(form));
                     }
-                    _ => self.sign_in = Some(SignIn::Form(Form::sign_in_key())),
+                    2 => self.sign_in = Some(SignIn::Form(Form::sign_in_key())),
+                    _ => {
+                        let form = Form::sign_up(&self.manifest);
+                        self.sign_in = Some(SignIn::Form(form));
+                    }
                 },
                 _ => {}
             },
@@ -2237,6 +2749,7 @@ impl Cli {
             }
             KeyCode::Char('e') => self.start_edit(),
             KeyCode::Char('d') => self.ask_delete(),
+            KeyCode::Char('c') => self.open_children_picker(),
             KeyCode::Char('r') => {
                 // Re-read, in case someone else changed it.
                 let record = self.current_record();
@@ -2273,7 +2786,14 @@ impl Cli {
         let leaving = matches!(&self.main, Main::Form(form) if !form.editing)
             && matches!(key.code, KeyCode::Esc);
         if leaving {
-            return self.open_selected().await;
+            self.open_selected().await;
+            // A form that *is* the screen — your account, an action, naming a
+            // key — has no list underneath to go back to. Redrawing it would
+            // read as esc doing nothing, so the cursor goes to the sidebar.
+            if matches!(self.main, Main::Form(_)) {
+                self.focus = Focus::Nav;
+            }
+            return;
         }
 
         let submitted = {
@@ -2332,7 +2852,11 @@ impl Cli {
             KeyCode::Home => move_to(self, 0),
             KeyCode::End | KeyCode::Char('G') => move_to(self, last),
             KeyCode::Char('g') => self.open_grant_picker(),
-            KeyCode::Char('d') | KeyCode::Char('x') => self.open_revoke_picker(),
+            KeyCode::Char('t') => self.open_revoke_picker(),
+            // `n` and `d` mean the same here as on any list: make one, remove
+            // one. What they make and remove is a person's access.
+            KeyCode::Char('n') => self.start_add_member(),
+            KeyCode::Char('d') => self.ask_remove_member(),
             KeyCode::Char('r') => self.load_team().await,
             KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => self.focus = Focus::Nav,
             _ => {}
@@ -2341,7 +2865,9 @@ impl Cli {
 
     async fn session_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('g') => self.issue_key().await,
+            // Named, like the dashboard's: an unnamed key is one nobody dares
+            // revoke a year later.
+            KeyCode::Char('g') => self.main = Main::Form(Form::new_api_key()),
             KeyCode::Char('N') => {
                 self.load_organizations().await;
                 self.check_organization();
@@ -2362,6 +2888,42 @@ impl Cli {
             _ => {}
         }
     }
+}
+
+/// What a reference field should read as: the name of the record it points at
+/// when the API inlined it, and nothing when it did not.
+///
+/// A column of uuids says only that these rows differ. This is the whole reason
+/// the console asks for `?expand=`.
+pub fn related_label(
+    manifest: &Manifest,
+    resource: &ResourceManifest,
+    record: &Value,
+    field: &str,
+) -> Option<String> {
+    let relation = resource
+        .relations
+        .iter()
+        .find(|relation| relation.field == field)?;
+    let related = record
+        .get(&relation.relation)
+        .filter(|value| value.is_object())?;
+    let target = manifest
+        .resources
+        .iter()
+        .find(|target| target.name == relation.target)?;
+    let label = target.title_of(related);
+    (!label.is_empty()).then_some(label)
+}
+
+/// The keys holding an inlined record rather than a value of this resource's
+/// own — shown through the field that points at them, not as raw JSON.
+pub fn relation_keys(resource: &ResourceManifest) -> Vec<&str> {
+    resource
+        .relations
+        .iter()
+        .map(|relation| relation.relation.as_str())
+        .collect()
 }
 
 /// A membership's primary role, if it has one. An empty column is no role.
@@ -2691,6 +3253,317 @@ mod tests {
         }
     }
 
+    /// The built-in auth resources, as the manifest describes them: hidden from
+    /// the resource navigation, listable by whoever they belong to.
+    fn auth_resources() -> Vec<ResourceManifest> {
+        let mut resources = membership_resources("role:admin");
+        for (name, label, plural) in [
+            ("organization", "Organization", "Organizations"),
+            ("api_key", "API key", "API keys"),
+            ("user", "User", "Users"),
+        ] {
+            resources.push(ResourceManifest {
+                name: name.into(),
+                label: label.into(),
+                plural: plural.into(),
+                // What the server sends for an auth resource.
+                visible: false,
+                auth_resource: true,
+                scope: "global".into(),
+                permissions: ActionPermissions {
+                    list: ActionPermission {
+                        value: "authenticated".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+        }
+        resources
+    }
+
+    #[test]
+    fn tenancy_tables_stay_out_of_the_resource_list_and_get_their_own_screens() {
+        let mut manifest = Manifest {
+            resources: auth_resources(),
+            ..Default::default()
+        };
+        manifest.resources.push(resource());
+        manifest.auth.profile_fields = vec![field("display_name", "string")];
+
+        let nav = navigation(&manifest, &[]);
+        let data: Vec<&str> = nav
+            .iter()
+            .filter(|item| item.group == "Data")
+            .map(|item| item.label.as_str())
+            .collect();
+        // `membership`, `membership_role` and `user` are how tenancy is stored,
+        // not things to browse as tables.
+        assert_eq!(data, vec!["Products"]);
+
+        let console: Vec<&str> = nav
+            .iter()
+            .filter(|item| item.group == "Console")
+            .map(|item| item.label.as_str())
+            .collect();
+        assert_eq!(
+            console,
+            vec!["Account", "Team", "Organizations", "API keys", "Session"]
+        );
+    }
+
+    #[test]
+    fn a_resource_an_app_deliberately_shows_is_not_listed_twice() {
+        let mut manifest = Manifest {
+            resources: auth_resources(),
+            ..Default::default()
+        };
+        // `[admin] visible = true` on `organization` puts it in the resource
+        // navigation; a second Console entry for the same rows is clutter.
+        let index = manifest
+            .resources
+            .iter()
+            .position(|resource| resource.name == "organization")
+            .unwrap();
+        manifest.resources[index].visible = true;
+
+        let nav = navigation(&manifest, &[]);
+        let labels: Vec<&str> = nav.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(labels.iter().filter(|l| **l == "Organizations").count(), 1);
+    }
+
+    #[test]
+    fn a_screen_only_one_role_may_reach_leaves_the_sidebar_when_it_is_not_yours() {
+        let mut locked = resource();
+        locked.plural = "Invoices".into();
+        locked.permissions.list = ActionPermission {
+            value: "role:billing".into(),
+            role: Some("billing".into()),
+            ..Default::default()
+        };
+        let manifest = Manifest {
+            resources: vec![locked],
+            ..Default::default()
+        };
+
+        let labels = |roles: &[&str]| -> Vec<String> {
+            let roles: Vec<String> = roles.iter().map(|r| r.to_string()).collect();
+            navigation(&manifest, &roles)
+                .iter()
+                .map(|item| item.label.clone())
+                .collect()
+        };
+
+        assert!(labels(&["member"]).iter().all(|l| l != "Invoices"));
+        assert!(labels(&["billing"]).iter().any(|l| l == "Invoices"));
+        // An admin holds every role, so it is theirs too.
+        assert!(labels(&["admin"]).iter().any(|l| l == "Invoices"));
+        // And before anything is known about the caller, nothing is hidden on
+        // a guess.
+        assert!(labels(&[]).iter().any(|l| l == "Invoices"));
+    }
+
+    #[test]
+    fn private_means_nobody_which_is_not_the_same_as_needing_a_role() {
+        let private = ActionPermission {
+            value: "private".into(),
+            ..Default::default()
+        };
+        assert!(!private.possible());
+        assert!(!private.allowed(true, true, &["admin".into()]));
+
+        let role = ActionPermission {
+            value: "role:editor".into(),
+            role: Some("editor".into()),
+            ..Default::default()
+        };
+        assert!(role.possible());
+        assert!(!role.allowed(true, true, &["member".into()]));
+        assert!(role.allowed(true, true, &["editor".into()]));
+        // `admin` satisfies every role check, here as everywhere else.
+        assert!(role.allowed(true, true, &["admin".into()]));
+
+        let member = ActionPermission {
+            value: "member".into(),
+            ..Default::default()
+        };
+        assert!(!member.allowed(true, false, &[]), "needs an organization");
+        assert!(member.allowed(true, true, &[]));
+        assert!(!member.allowed(false, true, &[]));
+    }
+
+    #[tokio::test]
+    async fn an_api_key_is_named_and_minted_rather_than_written_as_a_row() {
+        let mut keys = ResourceManifest {
+            name: "api_key".into(),
+            label: "API key".into(),
+            plural: "API keys".into(),
+            scope: "global".into(),
+            ..Default::default()
+        };
+        keys.permissions.create.value = "authenticated".into();
+        // `update` on `api_key` is private: the row holds a hash, and there is
+        // nothing about it to edit.
+        keys.permissions.update.value = "private".into();
+
+        let mut cli = console(vec![keys]);
+        cli.client.credentials.api_key = Some("apik_test".into());
+        cli.main = Main::List(List {
+            resource: 0,
+            rows: vec![json!({ "id": "k1", "name": "Nightly import" })],
+            index: 0,
+            page: 0,
+            search: String::new(),
+            searching: false,
+            cursor: 0,
+            filter: None,
+            filter_label: None,
+        });
+
+        cli.start_create();
+        let Main::Form(form) = &cli.main else {
+            panic!("expected the naming form, got {:?}", cli.main);
+        };
+        assert_eq!(form.kind, FormKind::NewApiKey);
+
+        // And editing one is not offered at all.
+        cli.main = Main::List(List {
+            resource: 0,
+            rows: vec![json!({ "id": "k1" })],
+            index: 0,
+            page: 0,
+            search: String::new(),
+            searching: false,
+            cursor: 0,
+            filter: None,
+            filter_label: None,
+        });
+        cli.start_edit();
+        assert!(matches!(cli.main, Main::List(_)));
+        assert!(cli.error.is_some());
+    }
+
+    #[test]
+    fn registering_is_offered_only_where_the_app_allows_it() {
+        let mut manifest = Manifest::default();
+        assert_eq!(sign_in_options(&manifest).len(), 3);
+
+        manifest.auth.allow_registration = true;
+        let doors = sign_in_options(&manifest);
+        assert_eq!(doors.len(), 4);
+        assert_eq!(doors[3].0, "Create an account");
+    }
+
+    #[test]
+    fn a_reference_reads_as_the_name_of_what_it_points_at() {
+        let mut order = resource();
+        order.name = "order".into();
+        order.relations = vec![api::RelationManifest {
+            field: "customer_id".into(),
+            relation: "customer".into(),
+            target: "customer".into(),
+            label: "Customer".into(),
+        }];
+        let mut customer = resource();
+        customer.name = "customer".into();
+        customer.display_field = Some("name".into());
+
+        let manifest = Manifest {
+            resources: vec![order.clone(), customer],
+            ..Default::default()
+        };
+
+        let expanded = json!({
+            "customer_id": "c-1",
+            "customer": { "id": "c-1", "name": "Acme Ltd" },
+        });
+        assert_eq!(
+            related_label(&manifest, &order, &expanded, "customer_id").as_deref(),
+            Some("Acme Ltd")
+        );
+        // Not expanded — because the server would not, or was not asked — is a
+        // uuid, and the caller falls back to printing it.
+        let plain = json!({ "customer_id": "c-1" });
+        assert_eq!(
+            related_label(&manifest, &order, &plain, "customer_id"),
+            None
+        );
+        assert_eq!(relation_keys(&order), vec!["customer"]);
+    }
+
+    #[tokio::test]
+    async fn a_record_offers_the_records_that_belong_to_it() {
+        let mut customer = resource();
+        customer.name = "customer".into();
+        customer.label = "Customer".into();
+        customer.display_field = Some("name".into());
+        customer.children = vec![
+            api::ChildManifest {
+                resource: "order".into(),
+                field: "customer_id".into(),
+                label: "Orders".into(),
+            },
+            // A child nobody may list is not a door.
+            api::ChildManifest {
+                resource: "audit".into(),
+                field: "customer_id".into(),
+                label: "Audit entries".into(),
+            },
+        ];
+        let mut order = resource();
+        order.name = "order".into();
+        order.plural = "Orders".into();
+        let mut audit = resource();
+        audit.name = "audit".into();
+        audit.permissions.list.value = "private".into();
+
+        let mut cli = console(vec![customer, order, audit]);
+        cli.main = Main::Detail(Detail {
+            resource: 0,
+            record: json!({ "id": "c-1", "name": "Beta Foods" }),
+            scroll: 0,
+        });
+
+        cli.open_children_picker();
+        let picker = cli.picker.clone().expect("a picker of children");
+        let offered: Vec<&str> = picker.items.iter().map(|(_, l)| l.as_str()).collect();
+        assert_eq!(offered, vec!["Orders"]);
+
+        cli.choose().await;
+        let Main::List(list) = &cli.main else {
+            panic!("expected the child list, got {:?}", cli.main);
+        };
+        // The ordinary list screen, pinned to the record it came from.
+        assert_eq!(list.resource, 1);
+        assert_eq!(
+            list.filter,
+            Some(("customer_id".to_string(), "c-1".to_string()))
+        );
+        assert_eq!(list.filter_label.as_deref(), Some("Beta Foods"));
+    }
+
+    #[test]
+    fn adding_someone_asks_for_the_identity_they_signed_up_with() {
+        let mut manifest = Manifest::default();
+        manifest.auth.identity_field = "email".into();
+        manifest.auth.identity_label = "Email".into();
+
+        let form = Form::add_member(&manifest, &["member".into(), "admin".into()]);
+        let names: Vec<&str> = form.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["email", "role"]);
+        assert!(form.fields[0].required);
+        // The least surprising starting role, not the first one in the list.
+        assert_eq!(form.fields[1].value, "member");
+
+        let mut form = form;
+        form.fields[0].set("sam@example.test".into());
+        assert_eq!(
+            Cli::body_of(&form, false).unwrap(),
+            json!({ "email": "sam@example.test", "role": "member" })
+        );
+    }
+
     #[test]
     fn a_members_roles_are_the_primary_one_and_their_grants_without_repeats() {
         let sam = member("sam", Some("member"), &["editor", "member"], false);
@@ -2714,7 +3587,7 @@ mod tests {
             name: "membership".into(),
             permissions: ActionPermissions {
                 list: ActionPermission {
-                    value: "none".into(),
+                    value: "private".into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -2847,7 +3720,7 @@ mod tests {
     fn an_app_that_provisions_tenants_itself_says_who_to_ask() {
         // A `role:` policy can never be satisfied by someone in no organisation,
         // so offering the form would only produce a 403.
-        for policy in ["role:admin", "none", "member"] {
+        for policy in ["role:admin", "private", "member"] {
             let mut cli = console(vec![organization(policy)]);
             cli.check_organization();
             assert!(
@@ -2888,7 +3761,7 @@ mod tests {
         hidden.visible = false;
         let mut forbidden = resource();
         forbidden.name = "locked".into();
-        forbidden.permissions.list.value = "none".into();
+        forbidden.permissions.list.value = "private".into();
 
         let manifest = Manifest {
             resources: vec![resource(), hidden, forbidden],
@@ -2908,7 +3781,7 @@ mod tests {
             ..Default::default()
         };
 
-        let nav = navigation(&manifest);
+        let nav = navigation(&manifest, &[]);
         let labels: Vec<&str> = nav.iter().map(|item| item.label.as_str()).collect();
         // Products, the one visible action, and the session screen — nothing else.
         assert_eq!(labels, vec!["Products", "Sync", "Session"]);

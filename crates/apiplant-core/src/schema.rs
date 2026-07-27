@@ -94,6 +94,17 @@ impl Resource {
                     message: format!("field `{fname}` is a reference without `references`"),
                 });
             }
+            if field.admin.format != ContentFormat::Plain
+                && !matches!(field.ty, FieldType::Text | FieldType::String)
+            {
+                return Err(crate::Error::Schema {
+                    resource: self.meta.name.clone(),
+                    message: format!(
+                        "field `{fname}` sets [admin] format = \"{}\" but is not a text field",
+                        field.admin.format.as_str()
+                    ),
+                });
+            }
         }
         // `[admin]` is presentation, so a typo here is silent rather than
         // dangerous — but it is still a typo, and naming a column that does not
@@ -345,6 +356,10 @@ pub struct FieldAdmin {
     pub options: Vec<String>,
     /// Placeholder text for free-text inputs.
     pub placeholder: Option<String>,
+    /// What the stored text *is*, for `text`/`string` fields. Purely a
+    /// presentation hint: the dashboard highlights and previews the markup,
+    /// and the API stores and returns the same characters either way.
+    pub format: ContentFormat,
 }
 
 impl Default for FieldAdmin {
@@ -357,6 +372,31 @@ impl Default for FieldAdmin {
             widget: Widget::Auto,
             options: Vec::new(),
             placeholder: None,
+            format: ContentFormat::Plain,
+        }
+    }
+}
+
+/// What kind of content a free-text field holds.
+///
+/// Nothing about storage changes — this only tells the dashboard whether to
+/// give the editor markup highlighting and a live preview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentFormat {
+    /// Ordinary text, edited in a plain textarea (the default).
+    #[default]
+    Plain,
+    Markdown,
+    Html,
+}
+
+impl ContentFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ContentFormat::Plain => "plain",
+            ContentFormat::Markdown => "markdown",
+            ContentFormat::Html => "html",
         }
     }
 }
@@ -827,6 +867,40 @@ type = "reference"
         )
         .unwrap();
         assert!(missing_target.validate().is_err());
+    }
+
+    #[test]
+    fn content_format_is_only_allowed_on_text_fields() {
+        let good: Resource = toml::from_str(
+            r#"
+[resource]
+name = "article"
+
+[fields.body]
+type = "text"
+
+[fields.body.admin]
+format = "markdown"
+"#,
+        )
+        .unwrap();
+        good.validate().unwrap();
+        assert_eq!(good.fields["body"].admin.format, ContentFormat::Markdown);
+
+        let bad: Resource = toml::from_str(
+            r#"
+[resource]
+name = "article"
+
+[fields.published]
+type = "boolean"
+
+[fields.published.admin]
+format = "html"
+"#,
+        )
+        .unwrap();
+        assert!(bad.validate().is_err());
     }
 
     #[test]
