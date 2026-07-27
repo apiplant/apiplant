@@ -66,10 +66,23 @@ export interface Field {
   on_delete?: OnDelete;
 }
 
+export const AUTH_HOOK_EVENTS = [
+  "before_register",
+  "after_register",
+  "before_login",
+  "after_login",
+  "login_failed",
+  "before_api_key",
+  "after_api_key",
+] as const;
+export type AuthHookEvent = (typeof AUTH_HOOK_EVENTS)[number];
+
 export interface AuthSpec {
   identity_field: string;
   password_field: string;
   oauth_providers: string[];
+  /** `[auth.hooks]` — functions bound to the built-in auth endpoints. */
+  hooks: Partial<Record<AuthHookEvent, string>>;
 }
 
 export interface Resource {

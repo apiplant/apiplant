@@ -455,6 +455,18 @@ pub async fn run(app: App) -> anyhow::Result<()> {
                 );
             }
         }
+        for (event, function) in resource.auth.iter().flat_map(|a| a.hooks.iter()) {
+            if registry.get(function).is_some() {
+                tracing::info!("  hook auth.{} -> {}", event.as_str(), function);
+            } else {
+                tracing::error!(
+                    hook = event.as_str(),
+                    function = function,
+                    "auth hook function is not loaded — {} requests will fail with 500",
+                    event.action()
+                );
+            }
+        }
     }
 
     // 5. Generate the OpenAPI document + Swagger UI (once; static per boot).

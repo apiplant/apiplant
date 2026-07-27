@@ -46,7 +46,28 @@ type = "string"
 ```
 
 Defaults if you don't provide `models/users.toml`: `identity_field = "email"`,
-`password_field = "password_hash"`, no OAuth providers.
+`password_field = "password_hash"`, no OAuth providers, no hooks.
+
+### `[auth.hooks]`
+
+The endpoints below are extension points, not fixed behaviour: an `[auth.hooks]`
+sub-section binds one of your functions to a point in each one's lifecycle.
+
+```toml
+[auth.hooks]
+before_register = "invite_only"     # reject a signup without a valid invite
+after_register  = "send_welcome"
+before_login    = "check_lockout"   # 423 an account that failed too often
+after_login     = "record_session"  # and widen the login response
+login_failed    = "count_failure"
+before_api_key  = "stamp_expiry"
+after_api_key   = "audit_key"
+```
+
+They follow the same protocol as [lifecycle hooks](hooks.md) — return
+`{"error": …}` to abort, `{"data": …}` to replace — and never see a plaintext
+password. See [Auth hooks](hooks.md#auth-hooks) for the payload each one
+receives and what a replacement does.
 
 ## Endpoints
 
@@ -154,7 +175,8 @@ Because `user` is a normal resource, you can:
 * add profile fields (`[fields.bio]`, `[fields.avatar_url]`, …),
 * change its permissions (who may list/read/update users),
 * switch the login identifier (`identity_field = "username"`),
-* relate it to other resources with `reference` fields.
+* relate it to other resources with `reference` fields,
+* hook the auth endpoints themselves with [`[auth.hooks]`](#authhooks).
 
 Just create `models/users.toml`; it replaces the default while keeping auth
 wired up.

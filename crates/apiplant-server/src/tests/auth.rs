@@ -289,7 +289,11 @@ hidden = true
         .to_request(),
     )
     .await;
-    assert!(resp.status().is_success(), "delete failed: {:?}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "delete failed: {:?}",
+        resp.status()
+    );
 
     let resp = test::call_service(
         &app,

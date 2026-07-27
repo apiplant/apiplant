@@ -86,6 +86,47 @@ register response, leaving the issued `token` alone. Aborting from
 [`examples/14-email-domains`](../examples/14-email-domains) uses this to put a
 new account straight into the organisation that owns its email domain.
 
+### Auth hooks
+
+The create hooks above fire on *both* doors into the `user` table, which is the
+point of them — and the reason they are the wrong place for anything that
+belongs only to signing up, or that has no `create` at all, like a login. Those
+live in `[auth.hooks]` on the `user` model:
+
+```toml
+# models/users.toml
+[auth.hooks]
+before_login = "check_lockout"
+after_login  = "record_session"
+login_failed = "count_failure"
+```
+
+Seven events, following the same protocol as the events above — a returned
+`{"error": …}` aborts, a returned `{"data": …}` replaces:
+
+| Event | Fires | Payload the hook receives | A returned `data` |
+|-------|-------|---------------------------|-------------------|
+| `before_register` | before `before_create` | the submitted body, password already hashed | replaces the body to insert |
+| `after_register` | after `after_create` | the created account | replaces the response's `user` |
+| `before_login` | before the credential lookup | `{ "<identity_field>": … }` | replaces the credentials looked up |
+| `after_login` | after the token is issued | `{ "user_id": … }` | merged into the response beside `token` |
+| `login_failed` | on an unknown identity or a wrong password | `{ "identity": …, "reason": … }` | ignored — only an `error` has an effect |
+| `before_api_key` | before the key row is written | the key's fields | replaces what is written |
+| `after_api_key` | after the key row is written | the created row | merged into the response beside `api_key` |
+
+The password never reaches a hook, on any of these events: a hook that wants to
+reject an attempt does it on the identity alone. `after_login` and
+`after_api_key` cannot overwrite the secret they run alongside — a `token` or
+`api_key` key in their replacement is dropped, not honoured.
+
+`reason` on `login_failed` is `"unknown_identity"` or `"bad_password"`; the
+caller is told neither. Returning an error there is how a lockout answers `429`
+where the endpoint would have answered `401`.
+
+In the hook context, `action` is `"register"`, `"login"` or `"api_key"`, and
+`phase` is `"failed"` on `login_failed`. Register and login run anonymously
+(`authenticated` is `false`); key issuance runs as the caller.
+
 ## Writing a hook
 
 A hook is an ordinary function; nothing in the `function!` block changes. What's

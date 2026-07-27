@@ -362,6 +362,22 @@ fire there too — which is how
 [`examples/14-email-domains`](examples/14-email-domains) drops a new account
 straight into the organisation that owns its email domain.
 
+The built-in auth endpoints have their own hooks for the parts that aren't a
+create at all, declared on the `user` model:
+
+```toml
+# models/users.toml
+[auth.hooks]
+before_login = "check_lockout"   # 423 an account that has failed too often
+after_login  = "record_session"  # and widen the login response
+login_failed = "count_failure"   # 429 instead of 401, once you've seen enough
+```
+
+`before_register` / `after_register`, `before_login` / `after_login`,
+`login_failed`, and `before_api_key` / `after_api_key` — same protocol, and none
+of them ever sees a plaintext password. See the
+[Auth hooks](docs/hooks.md#auth-hooks) section.
+
 ## Email and caching: two optional services
 
 A function can reach two things beyond the database, each switched on by a

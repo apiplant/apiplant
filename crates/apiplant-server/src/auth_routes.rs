@@ -3,9 +3,36 @@
 //! These operate on the `user` and `api_key` resources — which are just ordinary
 //! resources — but understand the `[auth]` section on the user model
 //! (configurable identity/password field names).
+//!
+//! Each endpoint is extensible through the `[auth.hooks]` section of that same
+//! model, which binds a function to a point in the endpoint's lifecycle:
+//!
+//! ```toml
+//! [auth.hooks]
+//! before_login = "check_lockout"
+//! after_login  = "record_session"
+//! login_failed = "count_failure"
+//! ```
+//!
+//! They follow the same protocol as [resource hooks](crate::hooks) — a returned
+//! `{"error": …}` aborts, a returned `{"data": …}` replaces — over these events:
+//!
+//! | Event | Receives | A `data` replacement |
+//! |-------|----------|----------------------|
+//! | `before_register` | the submitted body, password already hashed | replaces what is inserted |
+//! | `after_register` | the created row | replaces the response's `user` |
+//! | `before_login` | the identity being claimed, never the password | replaces the credentials looked up |
+//! | `after_login` | `{"user_id": …}` for the verified account | is merged into the response beside `token` |
+//! | `login_failed` | `{"identity": …, "reason": …}` | ignored; only an `error` has an effect |
+//! | `before_api_key` | the submitted body | replaces the key's stored fields |
+//! | `after_api_key` | the created row | is merged into the response beside `api_key` |
+//!
+//! Registration additionally fires the `user` resource's own `before_create` /
+//! `after_create`, since it *is* a create; the register hooks run outside those
+//! and are the place for logic that should not fire on `POST <base>/user`.
 
 use apiplant_core::schema::AuthSpec;
-use apiplant_core::HookEvent;
+use apiplant_core::{AuthEvent, HookEvent};
 use ntex::web::types::{Json, State};
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Value};
@@ -79,6 +106,31 @@ pub async fn register(
     // Nobody is authenticated yet: whoever is registering has no principal and
     // no organisation, so the hook context carries the request alone.
     let hook_req = HookRequest::new(&req, &parse_query(req.query_string()), None, None);
+
+    // `before_register` runs outside `before_create`, so a model can reject a
+    // signup without also rejecting an administrative `POST <base>/user`.
+    match hooks::run_auth(
+        &state,
+        user_r,
+        AuthEvent::BeforeRegister,
+        &hook_req,
+        Value::Object(data.clone()),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => {
+            let hook = user_r
+                .auth_hook(AuthEvent::BeforeRegister)
+                .unwrap_or_default();
+            match hooks::replacement_object(replacement, hook) {
+                Ok(map) => data = map,
+                Err(resp) => return resp,
+            }
+        }
+        Ok(None) => {}
+        Err(resp) => return resp,
+    }
+
     match hooks::run(
         &state,
         user_r,
@@ -111,17 +163,34 @@ pub async fn register(
         return error(500, "created user missing id");
     };
 
+    let hook_req = hook_req.with_record(user_id);
     let user = match hooks::run(
         &state,
         user_r,
         HookEvent::AfterCreate,
-        &hook_req.with_record(user_id),
+        &hook_req,
         created.clone(),
     )
     .await
     {
         Ok(Some(replacement)) => replacement,
         Ok(None) => created,
+        Err(resp) => return resp,
+    };
+
+    // The account already exists by now, so an `after_register` rejection fails
+    // the *response*, not the write — the same bargain `after_create` makes.
+    let user = match hooks::run_auth(
+        &state,
+        user_r,
+        AuthEvent::AfterRegister,
+        &hook_req,
+        user.clone(),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => replacement,
+        Ok(None) => user,
         Err(resp) => return resp,
     };
 
@@ -132,14 +201,20 @@ pub async fn register(
 }
 
 /// `POST <base>/auth/login` — verify credentials, return a session token.
+///
+/// The `[auth.hooks]` events fire around the credential check: `before_login`
+/// sees the claimed identity (never the password) and can reject the attempt or
+/// rewrite the identity that is looked up; `login_failed` sees every rejection;
+/// `after_login` sees the verified account and can widen the response.
 pub async fn login(
+    req: HttpRequest,
     state: State<AppState>,
     body: Json<serde_json::Map<String, Value>>,
 ) -> HttpResponse {
     let spec = auth_spec(&state);
     let data = body.into_inner();
 
-    let identity = match data.get(&spec.identity_field).and_then(|v| v.as_str()) {
+    let mut identity = match data.get(&spec.identity_field).and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
         None => return error(400, format!("`{}` is required", spec.identity_field)),
     };
@@ -147,6 +222,44 @@ pub async fn login(
         Some(s) => s.to_string(),
         None => return error(400, "`password` is required"),
     };
+
+    let Some(user_r) = state.app.resources.get("user") else {
+        return error(500, "missing user resource");
+    };
+    // Nobody is authenticated during a login attempt, by definition.
+    let hook_req = HookRequest::new(&req, &parse_query(req.query_string()), None, None);
+
+    // The password never reaches a hook, here or anywhere else: a hook that
+    // wants to reject an attempt does it on the identity alone.
+    match hooks::run_auth(
+        &state,
+        user_r,
+        AuthEvent::BeforeLogin,
+        &hook_req,
+        json!({ spec.identity_field.clone(): identity }),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => {
+            match replacement
+                .get(&spec.identity_field)
+                .and_then(|v| v.as_str())
+            {
+                Some(rewritten) => identity = rewritten.to_string(),
+                None => {
+                    return error(
+                        500,
+                        format!(
+                            "`before_login` replaced the credentials without `{}`",
+                            spec.identity_field
+                        ),
+                    )
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(resp) => return resp,
+    }
 
     let Some(user_tbl) = table(&state, "user") else {
         return error(500, "missing user resource");
@@ -157,7 +270,11 @@ pub async fn login(
         pw = quote(&spec.password_field),
         ident = quote(&spec.identity_field),
     );
-    let rows = match state.db.raw_json(&sql, &[Value::String(identity)]).await {
+    let rows = match state
+        .db
+        .raw_json(&sql, &[Value::String(identity.clone())])
+        .await
+    {
         Ok(v) => v,
         Err(e) => return db_error(e),
     };
@@ -165,14 +282,14 @@ pub async fn login(
         // Spend the argon2 time anyway: answering an unknown identity faster
         // than a wrong password is enough to enumerate accounts.
         let _ = state.auth.hash_password(&password);
-        return error(401, "invalid credentials");
+        return rejected(&state, user_r, &hook_req, &identity, "unknown_identity").await;
     };
     let stored = row
         .get("password_hash")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if !state.auth.verify_password(&password, stored) {
-        return error(401, "invalid credentials");
+        return rejected(&state, user_r, &hook_req, &identity, "bad_password").await;
     }
     let user_id = row
         .get("id")
@@ -181,9 +298,68 @@ pub async fn login(
     let Some(user_id) = user_id else {
         return error(500, "user missing id");
     };
-    match state.auth.issue_token(user_id) {
-        Ok(token) => HttpResponse::Ok().json(&json!({ "token": token })),
-        Err(_) => error(500, "failed to issue token"),
+    let token = match state.auth.issue_token(user_id) {
+        Ok(token) => token,
+        Err(_) => return error(500, "failed to issue token"),
+    };
+
+    // `after_login` can widen the response — attaching the user row, their
+    // roles, whatever the client needs — but never rewrite the token it is
+    // being handed alongside.
+    let mut response = json!({ "token": token });
+    match hooks::run_auth(
+        &state,
+        user_r,
+        AuthEvent::AfterLogin,
+        &hook_req.with_record(user_id),
+        json!({ "user_id": user_id.to_string() }),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => merge_beside(&mut response, replacement, "token"),
+        Ok(None) => {}
+        Err(resp) => return resp,
+    }
+    HttpResponse::Ok().json(&response)
+}
+
+/// Report a rejected login, giving `login_failed` its say first.
+///
+/// The hook's return value is ignored — there is nothing to replace — except an
+/// `{"error": …}`, which lets a lockout hook answer `429` where the endpoint
+/// would have answered `401`. The caller is told no more than "invalid
+/// credentials" either way.
+async fn rejected(
+    state: &AppState,
+    user_r: &apiplant_core::Resource,
+    hook_req: &HookRequest,
+    identity: &str,
+    reason: &str,
+) -> HttpResponse {
+    match hooks::run_auth(
+        state,
+        user_r,
+        AuthEvent::LoginFailed,
+        hook_req,
+        json!({ "identity": identity, "reason": reason }),
+    )
+    .await
+    {
+        Ok(_) => error(401, "invalid credentials"),
+        Err(resp) => resp,
+    }
+}
+
+/// Fold a hook's replacement object into `response`, leaving `reserved` — the
+/// secret the endpoint issued — as the endpoint set it.
+fn merge_beside(response: &mut Value, replacement: Value, reserved: &str) {
+    let (Some(target), Value::Object(fields)) = (response.as_object_mut(), replacement) else {
+        return;
+    };
+    for (key, value) in fields {
+        if key != reserved {
+            target.insert(key, value);
+        }
     }
 }
 
@@ -243,14 +419,72 @@ pub async fn create_api_key(
         Value::String(principal.user_id.to_string()),
     );
 
-    match state.db.create(api_key_r, &data).await {
-        Ok(row) => HttpResponse::Created().json(&json!({
-            "api_key": plaintext,
-            "id": row.get("id").cloned().unwrap_or(Value::Null),
-            "note": "store this key now; it will not be shown again",
-        })),
-        Err(e) => db_error(e),
+    let active_org = state.active_org(&req, &Some(principal.clone()));
+    let hook_req = HookRequest::new(
+        &req,
+        &parse_query(req.query_string()),
+        Some(&principal),
+        active_org,
+    );
+
+    // A `before_api_key` replacement writes the row, so a model can stamp an
+    // expiry or a scope onto every key it issues.
+    match hooks::run_auth(
+        &state,
+        api_key_r,
+        AuthEvent::BeforeApiKey,
+        &hook_req,
+        Value::Object(data.clone()),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => {
+            let hook = state
+                .app
+                .resources
+                .get("user")
+                .and_then(|u| u.auth_hook(AuthEvent::BeforeApiKey))
+                .unwrap_or_default();
+            match hooks::replacement_object(replacement, hook) {
+                Ok(map) => data = map,
+                Err(resp) => return resp,
+            }
+        }
+        Ok(None) => {}
+        Err(resp) => return resp,
     }
+
+    let row = match state.db.create(api_key_r, &data).await {
+        Ok(row) => row,
+        Err(e) => return db_error(e),
+    };
+
+    let mut response = json!({
+        "api_key": plaintext,
+        "id": row.get("id").cloned().unwrap_or(Value::Null),
+        "note": "store this key now; it will not be shown again",
+    });
+    let hook_req = match row.get("id").and_then(|v| v.as_str()) {
+        Some(id) => match Uuid::parse_str(id) {
+            Ok(id) => hook_req.with_record(id),
+            Err(_) => hook_req,
+        },
+        None => hook_req,
+    };
+    match hooks::run_auth(
+        &state,
+        api_key_r,
+        AuthEvent::AfterApiKey,
+        &hook_req,
+        row.clone(),
+    )
+    .await
+    {
+        Ok(Some(replacement)) => merge_beside(&mut response, replacement, "api_key"),
+        Ok(None) => {}
+        Err(resp) => return resp,
+    }
+    HttpResponse::Created().json(&response)
 }
 
 fn table(state: &AppState, name: &str) -> Option<String> {

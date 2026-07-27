@@ -1,11 +1,13 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import {
   ACTIONS,
+  AUTH_HOOK_EVENTS,
   FIELD_TYPES,
   HOOK_EVENTS,
   ON_DELETE,
   SCOPES,
   type Action,
+  type AuthHookEvent,
   type Field,
   type FieldType,
   type HookEvent,
@@ -67,6 +69,16 @@ const ACTION_ENDPOINT: Record<Action, string> = {
 };
 
 const SCALAR_DEFAULTABLE: FieldType[] = ["string", "text", "integer", "big_int", "float", "boolean"];
+
+const AUTH_HOOK_NOTES: Record<AuthHookEvent, string> = {
+  before_register: "the submitted body, password already hashed; a replacement is what gets inserted",
+  after_register: "the created account; a replacement becomes the response's user",
+  before_login: "the claimed identity, never the password; can reject or rewrite it",
+  after_login: "the verified account; a replacement is merged in beside the token",
+  login_failed: "identity and reason; only an error has an effect, e.g. a lockout 429",
+  before_api_key: "the key about to be stored; a replacement is what gets written",
+  after_api_key: "the issued key's row; a replacement is merged in beside the plaintext key",
+};
 
 export function ResourcePage(props: { entry: ResourceEntry }) {
   const [tab, setTab] = createSignal<TabId>("fields");
@@ -749,6 +761,7 @@ function SettingsTab(props: {
                       identity_field: value,
                       password_field: draft.auth?.password_field ?? "password_hash",
                       oauth_providers: draft.auth?.oauth_providers ?? [],
+                      hooks: draft.auth?.hooks ?? {},
                     };
                   })
                 }
@@ -764,6 +777,7 @@ function SettingsTab(props: {
                       identity_field: draft.auth?.identity_field ?? "email",
                       password_field: value,
                       oauth_providers: draft.auth?.oauth_providers ?? [],
+                      hooks: draft.auth?.hooks ?? {},
                     };
                   })
                 }
@@ -787,11 +801,50 @@ function SettingsTab(props: {
                         .split(",")
                         .map((provider) => provider.trim())
                         .filter(Boolean),
+                      hooks: draft.auth?.hooks ?? {},
                     };
                   })
                 }
               />
             </Labelled>
+          </div>
+          <div class="border-t border-line px-4 py-4">
+            <datalist id="auth-function-names">
+              <For each={allFunctionNames()}>{(name) => <option value={name} />}</For>
+            </datalist>
+            <div class="mb-2 flex items-baseline gap-2">
+              <h4 class="text-[0.8125rem] font-medium text-ink">Auth hooks</h4>
+              <p class="text-[0.6875rem] text-faint">
+                One function per event on the built-in endpoints, alongside the resource's own
+                create hooks.
+              </p>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <For each={AUTH_HOOK_EVENTS}>
+                {(event) => (
+                  <Labelled label={event.replaceAll("_", " ")} hint={AUTH_HOOK_NOTES[event]}>
+                    <TextInput
+                      mono
+                      list="auth-function-names"
+                      placeholder="function name"
+                      value={resource().auth?.hooks?.[event] ?? ""}
+                      onInput={(value) =>
+                        props.onEdit((draft) => {
+                          draft.auth = {
+                            identity_field: draft.auth?.identity_field ?? "email",
+                            password_field: draft.auth?.password_field ?? "password_hash",
+                            oauth_providers: draft.auth?.oauth_providers ?? [],
+                            hooks: { ...draft.auth?.hooks },
+                          };
+                          if (value) draft.auth.hooks[event] = value;
+                          else delete draft.auth.hooks[event];
+                        })
+                      }
+                    />
+                  </Labelled>
+                )}
+              </For>
+            </div>
           </div>
         </Card>
       </Show>

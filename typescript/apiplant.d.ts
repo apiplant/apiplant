@@ -242,11 +242,14 @@ declare module "apiplant" {
 
   /** Everything a lifecycle hook is told about the request it is running in. */
   export interface HookContext<T extends Row = Row> {
-    /** e.g. `"before_create"`. */
+    /** e.g. `"before_create"`, or `"before_login"` for an auth hook. */
     event: string;
-    /** `"create"`, `"read"`, `"update"`, `"delete"` or `"list"`. */
+    /**
+     * `"create"`, `"read"`, `"update"`, `"delete"` or `"list"` — or, for an
+     * auth hook, `"register"`, `"login"` or `"api_key"`.
+     */
     action: string;
-    /** `"before"` or `"after"`. */
+    /** `"before"` or `"after"` — and `"failed"` on `login_failed`. */
     phase: string;
     /** The resource the hook is attached to. */
     resource: string;

@@ -252,6 +252,7 @@ fn bearer(req: test::TestRequest, token: &str) -> test::TestRequest {
 }
 
 mod auth;
+mod auth_hooks;
 mod functions;
 mod hooks;
 mod permissions;

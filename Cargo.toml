@@ -39,6 +39,8 @@ apiplant-server = { path = "crates/apiplant-server" }
 abi_stable = "0.11"
 
 # Async runtime + web server
+# `full` is not our choice to trim: deno_core enables it, and cargo unifies
+# features across the graph, so narrowing this list changes nothing.
 tokio = { version = "1", features = ["full"] }
 ntex = { version = "2", features = ["tokio", "rustls"] }
 
@@ -122,4 +124,19 @@ crossbeam-channel = "0.5"
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+# Cross-crate inlining across the whole graph, in one codegen unit so LLVM sees
+# everything at once. Slow to build, but this is the profile we ship.
+lto = "fat"
+codegen-units = 1
+# Debug symbols are ~20MB of a binary nobody debugs from a release build.
+strip = "symbols"
+incremental = false
+panic = "unwind"
+
+# Functions are loaded as cdylibs over a C ABI, so they must be built with the
+# same settings — a `panic = "abort"` here would abort on a unwind that crosses
+# back from V8 or from a plugin.
+
+[profile.release.package."*"]
+opt-level = 3
+codegen-units = 1

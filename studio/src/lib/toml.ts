@@ -10,11 +10,13 @@
 import { parse as parseToml } from "smol-toml";
 import {
   ACTIONS,
+  AUTH_HOOK_EVENTS,
   FIELD_TYPES,
   HOOK_EVENTS,
   ON_DELETE,
   SCOPES,
   type Action,
+  type AuthHookEvent,
   type Field,
   type FieldType,
   type HookEvent,
@@ -165,10 +167,17 @@ export function parseResource(text: string): Resource {
 
   if (isTable(table.auth)) {
     const providers = table.auth.oauth_providers;
+    const authHooks: Partial<Record<AuthHookEvent, string>> = {};
+    const rawAuthHooks = isTable(table.auth.hooks) ? table.auth.hooks : {};
+    for (const event of AUTH_HOOK_EVENTS) {
+      const value = rawAuthHooks[event];
+      if (typeof value === "string" && value) authHooks[event] = value;
+    }
     resource.auth = {
       identity_field: asString(table.auth.identity_field, "email"),
       password_field: asString(table.auth.password_field, "password_hash"),
       oauth_providers: Array.isArray(providers) ? providers.filter((p): p is string => typeof p === "string") : [],
+      hooks: authHooks,
     };
   }
 
@@ -206,6 +215,13 @@ export function emitResource(resource: Resource): string {
       password_field: resource.auth.password_field,
     };
     if (resource.auth.oauth_providers.length) auth.oauth_providers = resource.auth.oauth_providers;
+    const authHooks: TomlTable = {};
+    for (const event of AUTH_HOOK_EVENTS) {
+      const value = resource.auth.hooks?.[event];
+      if (value) authHooks[event] = value;
+    }
+    // A sub-table has to come last, or the keys after it land inside it.
+    if (Object.keys(authHooks).length) auth.hooks = authHooks;
     out.auth = auth;
   }
 

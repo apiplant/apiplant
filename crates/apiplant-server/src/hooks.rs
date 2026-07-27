@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 
 use apiplant_auth::Principal;
-use apiplant_core::{HookEvent, Resource};
+use apiplant_core::{AuthEvent, HookEvent, Resource};
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -113,11 +113,60 @@ fn context_json(
         HookEvent::AfterList => "rows",
         _ => "row",
     };
+    describe(
+        &resource.meta.name,
+        event.as_str(),
+        event.action(),
+        event.phase(),
+        request,
+        slot,
+        payload,
+    )
+}
+
+/// Build the JSON context handed to an auth hook.
+///
+/// Same shape as a resource hook's context, so a function can be written once
+/// and bound to either: the submitted body arrives in `data`, a row the endpoint
+/// produced in `row`.
+fn auth_context_json(
+    resource: &Resource,
+    event: AuthEvent,
+    request: &HookRequest,
+    payload: &Value,
+) -> String {
+    let slot = if event.is_before() || event == AuthEvent::LoginFailed {
+        "data"
+    } else {
+        "row"
+    };
+    describe(
+        &resource.meta.name,
+        event.as_str(),
+        event.action(),
+        event.phase(),
+        request,
+        slot,
+        payload,
+    )
+}
+
+/// The context object shared by both hook families, with `payload` dropped into
+/// `slot`.
+fn describe(
+    resource: &str,
+    event: &str,
+    action: &str,
+    phase: &str,
+    request: &HookRequest,
+    slot: &str,
+    payload: &Value,
+) -> String {
     let mut context = json!({
-        "event": event.as_str(),
-        "action": event.action(),
-        "phase": event.phase(),
-        "resource": resource.meta.name,
+        "event": event,
+        "action": action,
+        "phase": phase,
+        "resource": resource,
         "url": request.url,
         "method": request.method,
         "query": request.query,
@@ -151,24 +200,78 @@ pub async fn run(
     let Some(name) = resource.hook(event) else {
         return Ok(None);
     };
+    let context = context_json(resource, event, request, &payload);
+    invoke(
+        state,
+        resource,
+        event.as_str(),
+        name,
+        request,
+        context,
+        payload,
+    )
+    .await
+}
+
+/// Run the auth hook bound to `event`, if the `user` resource declares one.
+///
+/// Same contract as [`run`]: `Ok(None)` carries on, `Ok(Some(value))` is a
+/// replacement, `Err(response)` aborts the request. `resource` is the resource
+/// the endpoint operates on — `user` for register/login, `api_key` for key
+/// issuance — but the hook is always looked up in the `user` model's
+/// `[auth.hooks]`, since that is where auth is configured.
+pub async fn run_auth(
+    state: &AppState,
+    resource: &Resource,
+    event: AuthEvent,
+    request: &HookRequest,
+    payload: Value,
+) -> Result<Option<Value>, HttpResponse> {
+    let Some(user) = state.app.resources.get("user") else {
+        return Ok(None);
+    };
+    let Some(name) = user.auth_hook(event) else {
+        return Ok(None);
+    };
+    let context = auth_context_json(resource, event, request, &payload);
+    invoke(
+        state,
+        resource,
+        event.as_str(),
+        name,
+        request,
+        context,
+        payload,
+    )
+    .await
+}
+
+/// Call `name` with `payload` and `context`, and interpret what comes back.
+async fn invoke(
+    state: &AppState,
+    resource: &Resource,
+    event: &str,
+    name: &str,
+    request: &HookRequest,
+    context: String,
+    payload: Value,
+) -> Result<Option<Value>, HttpResponse> {
     if state.functions.get(name).is_none() {
         tracing::error!(
             resource = %resource.meta.name,
-            hook = event.as_str(),
+            hook = event,
             function = name,
             "hook function is not loaded"
         );
         return Err(error(
             500,
             format!(
-                "`{}` declares a `{}` hook on a function `{name}` that is not loaded",
+                "`{}` declares a `{event}` hook on a function `{name}` that is not loaded",
                 resource.meta.name,
-                event.as_str()
             ),
         ));
     }
 
-    let context = context_json(resource, event, request, &payload);
     let input = payload.to_string();
     let principal_id = request.principal_id.clone().unwrap_or_default();
 

@@ -71,6 +71,12 @@ impl Resource {
         self.hooks.get(event)
     }
 
+    /// The function bound to an auth event, if any. Only the `user` resource
+    /// carries these; anywhere else the `[auth]` section is absent.
+    pub fn auth_hook(&self, event: AuthEvent) -> Option<&str> {
+        self.auth.as_ref().and_then(|a| a.hooks.get(event))
+    }
+
     /// Validate internal consistency (called after loading).
     pub fn validate(&self) -> crate::Result<()> {
         for (event, function) in self.hooks.iter() {
@@ -78,6 +84,14 @@ impl Resource {
                 return Err(crate::Error::Schema {
                     resource: self.meta.name.clone(),
                     message: format!("hook `{}` names an empty function", event.as_str()),
+                });
+            }
+        }
+        for (event, function) in self.auth.iter().flat_map(|a| a.hooks.iter()) {
+            if function.trim().is_empty() {
+                return Err(crate::Error::Schema {
+                    resource: self.meta.name.clone(),
+                    message: format!("auth hook `{}` names an empty function", event.as_str()),
                 });
             }
         }
@@ -825,6 +839,8 @@ pub struct AuthSpec {
     pub password_field: String,
     /// Enabled OAuth providers, e.g. `["google", "facebook"]`.
     pub oauth_providers: Vec<String>,
+    /// Functions bound to the built-in auth endpoints (`[auth.hooks]`).
+    pub hooks: AuthHooks,
 }
 
 impl Default for AuthSpec {
@@ -833,7 +849,123 @@ impl Default for AuthSpec {
             identity_field: "email".to_string(),
             password_field: "password_hash".to_string(),
             oauth_providers: Vec::new(),
+            hooks: AuthHooks::default(),
         }
+    }
+}
+
+/// One point in an auth endpoint's lifecycle at which a function may run.
+///
+/// These sit alongside the CRUD [`HookEvent`]s rather than replacing them:
+/// registration is still a `create` on `user`, so `before_create` /
+/// `after_create` fire there too. An auth hook is what you reach for when the
+/// behaviour belongs to the *door* — logins, key issuance — rather than to the
+/// table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AuthEvent {
+    BeforeRegister,
+    AfterRegister,
+    BeforeLogin,
+    AfterLogin,
+    /// Credentials were rejected: an unknown identity or a wrong password.
+    LoginFailed,
+    BeforeApiKey,
+    AfterApiKey,
+}
+
+impl AuthEvent {
+    /// Every event, in lifecycle order.
+    pub const ALL: [AuthEvent; 7] = [
+        AuthEvent::BeforeRegister,
+        AuthEvent::AfterRegister,
+        AuthEvent::BeforeLogin,
+        AuthEvent::AfterLogin,
+        AuthEvent::LoginFailed,
+        AuthEvent::BeforeApiKey,
+        AuthEvent::AfterApiKey,
+    ];
+
+    /// The TOML key / wire name, e.g. `"before_login"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AuthEvent::BeforeRegister => "before_register",
+            AuthEvent::AfterRegister => "after_register",
+            AuthEvent::BeforeLogin => "before_login",
+            AuthEvent::AfterLogin => "after_login",
+            AuthEvent::LoginFailed => "login_failed",
+            AuthEvent::BeforeApiKey => "before_api_key",
+            AuthEvent::AfterApiKey => "after_api_key",
+        }
+    }
+
+    /// The endpoint this event belongs to (`"register"`, `"login"`, `"api_key"`).
+    pub fn action(self) -> &'static str {
+        match self {
+            AuthEvent::BeforeRegister | AuthEvent::AfterRegister => "register",
+            AuthEvent::BeforeLogin | AuthEvent::AfterLogin | AuthEvent::LoginFailed => "login",
+            AuthEvent::BeforeApiKey | AuthEvent::AfterApiKey => "api_key",
+        }
+    }
+
+    /// `"before"` or `"after"`. A failed login is neither, and reports `"failed"`.
+    pub fn phase(self) -> &'static str {
+        match self {
+            AuthEvent::BeforeRegister | AuthEvent::BeforeLogin | AuthEvent::BeforeApiKey => {
+                "before"
+            }
+            AuthEvent::AfterRegister | AuthEvent::AfterLogin | AuthEvent::AfterApiKey => "after",
+            AuthEvent::LoginFailed => "failed",
+        }
+    }
+
+    /// Whether this event fires ahead of the work the endpoint does.
+    pub fn is_before(self) -> bool {
+        self.phase() == "before"
+    }
+}
+
+/// The `[auth.hooks]` section on the `user` resource: a function name per auth
+/// event.
+///
+/// Unknown keys are rejected, so a typo fails at load time rather than never
+/// firing.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuthHooks {
+    pub before_register: Option<String>,
+    pub after_register: Option<String>,
+    pub before_login: Option<String>,
+    pub after_login: Option<String>,
+    pub login_failed: Option<String>,
+    pub before_api_key: Option<String>,
+    pub after_api_key: Option<String>,
+}
+
+impl AuthHooks {
+    /// The function bound to an event, if any.
+    pub fn get(&self, event: AuthEvent) -> Option<&str> {
+        let slot = match event {
+            AuthEvent::BeforeRegister => &self.before_register,
+            AuthEvent::AfterRegister => &self.after_register,
+            AuthEvent::BeforeLogin => &self.before_login,
+            AuthEvent::AfterLogin => &self.after_login,
+            AuthEvent::LoginFailed => &self.login_failed,
+            AuthEvent::BeforeApiKey => &self.before_api_key,
+            AuthEvent::AfterApiKey => &self.after_api_key,
+        };
+        slot.as_deref()
+    }
+
+    /// Every declared `(event, function)` pair, in lifecycle order.
+    pub fn iter(&self) -> impl Iterator<Item = (AuthEvent, &str)> {
+        AuthEvent::ALL
+            .into_iter()
+            .filter_map(|event| self.get(event).map(|name| (event, name)))
+    }
+
+    /// Whether any auth hook at all is declared.
+    pub fn is_empty(&self) -> bool {
+        self.iter().next().is_none()
     }
 }
 
@@ -1043,6 +1175,53 @@ after_delete = "  "
 "#,
         )
         .unwrap();
+        assert!(empty.validate().is_err());
+    }
+
+    #[test]
+    fn auth_events_expose_wire_names_actions_and_phases() {
+        assert_eq!(AuthEvent::BeforeLogin.as_str(), "before_login");
+        assert_eq!(AuthEvent::BeforeLogin.action(), "login");
+        assert_eq!(AuthEvent::BeforeLogin.phase(), "before");
+        assert!(AuthEvent::BeforeLogin.is_before());
+
+        assert_eq!(AuthEvent::AfterApiKey.action(), "api_key");
+        assert_eq!(AuthEvent::AfterApiKey.phase(), "after");
+        assert!(!AuthEvent::AfterApiKey.is_before());
+
+        // A failed login is neither phase: nothing ran, so nothing follows it.
+        assert_eq!(AuthEvent::LoginFailed.phase(), "failed");
+        assert!(!AuthEvent::LoginFailed.is_before());
+
+        // Every event round-trips through `[auth.hooks]` under its own key.
+        for event in AuthEvent::ALL {
+            let resource = parse_resource(&format!(
+                "[resource]\nname = \"user\"\n\n[auth.hooks]\n{} = \"h\"\n",
+                event.as_str()
+            ));
+            assert_eq!(resource.auth_hook(event), Some("h"), "{}", event.as_str());
+            assert_eq!(resource.auth.as_ref().unwrap().hooks.iter().count(), 1);
+        }
+    }
+
+    #[test]
+    fn auth_hooks_are_absent_by_default_and_reject_typos_and_empty_names() {
+        // `[auth]` without hooks, and no `[auth]` at all, both mean no hooks.
+        let plain =
+            parse_resource("[resource]\nname = \"user\"\n\n[auth]\nidentity_field = \"email\"\n");
+        assert!(plain.auth.as_ref().unwrap().hooks.is_empty());
+        assert_eq!(plain.auth_hook(AuthEvent::BeforeLogin), None);
+        let none = parse_resource("[resource]\nname = \"post\"\n");
+        assert_eq!(none.auth_hook(AuthEvent::BeforeLogin), None);
+
+        let typo = toml::from_str::<Resource>(
+            "[resource]\nname = \"user\"\n\n[auth.hooks]\nbefore_signin = \"oops\"\n",
+        );
+        assert!(typo.is_err(), "unknown auth hook keys must not be ignored");
+
+        let empty: Resource =
+            toml::from_str("[resource]\nname = \"user\"\n\n[auth.hooks]\nafter_login = \"  \"\n")
+                .unwrap();
         assert!(empty.validate().is_err());
     }
 
