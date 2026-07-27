@@ -30,6 +30,20 @@ interface ConfigSection {
 /** Every key the framework reads, with the default it falls back to. */
 const SECTIONS: ConfigSection[] = [
   {
+    id: "app",
+    title: "App",
+    hint: "What the app calls itself, wherever it is named to a person.",
+    fields: [
+      {
+        key: "name",
+        label: "name",
+        placeholder: "the directory name",
+        kind: "text" as const,
+        hint: "Heads the admin dashboard as “<name> admin”. Unset uses the directory name.",
+      },
+    ],
+  },
+  {
     id: "server",
     title: "Server",
     hint: "Where the API binds and what it answers to.",
@@ -215,7 +229,15 @@ export function ConfigPage() {
                             mono
                             type={field.kind === "number" ? "number" : "text"}
                             value={String(configValue(section.id, field.key) ?? "")}
-                            placeholder={field.placeholder}
+                            // The app name falls back to the directory, and the
+                            // studio knows which directory this is — so the
+                            // placeholder can show the name that will be used
+                            // rather than describe it.
+                            placeholder={
+                              section.id === "app" && field.key === "name"
+                                ? (studio.project?.name ?? field.placeholder)
+                                : field.placeholder
+                            }
                             onInput={(value) => {
                               if (value === "") return setConfigValue(section.id, field.key, undefined);
                               if (field.kind === "number") {

@@ -594,6 +594,9 @@ export function scaffoldMainToml(appName: string): string {
   return `# apiplant configuration. Every key is optional — delete the file and the
 # server still boots with safe defaults.
 
+[app]
+name = "${appName}"
+
 [server]
 host = "127.0.0.1"
 port = 8099
