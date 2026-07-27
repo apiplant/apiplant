@@ -145,8 +145,10 @@ pub struct DocsConfig {
     pub enabled: bool,
     /// Path (under `base_path`) the Swagger UI is served at.
     pub path: String,
-    /// Title shown in the UI and the spec's `info.title`.
-    pub title: String,
+    /// Title shown in the UI and the spec's `info.title`. Unset falls back to
+    /// the app's name — see [`App::docs_title`](crate::App::docs_title) — so an
+    /// app that renames itself renames its docs too.
+    pub title: Option<String>,
 }
 
 impl Default for DocsConfig {
@@ -154,7 +156,7 @@ impl Default for DocsConfig {
         DocsConfig {
             enabled: true,
             path: "/docs".to_string(),
-            title: "apiplant API".to_string(),
+            title: None,
         }
     }
 }

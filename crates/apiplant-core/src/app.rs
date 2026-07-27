@@ -120,6 +120,43 @@ impl App {
         Some(TlsPaths { cert, key })
     }
 
+    /// What to call this app wherever it is named to a person — the admin
+    /// dashboard's header, the API docs, the CLI.
+    ///
+    /// `[app] name` when the app gives itself one; the directory it lives in
+    /// otherwise, which is a filing decision (`07-functions`, `backend`) rather
+    /// than a name anybody should have to read. A blank name is not a name: it
+    /// would render as a heading with nothing in it, so it falls back too.
+    pub fn display_name(&self) -> String {
+        self.config
+            .app
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                self.root
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("apiplant app")
+                    .to_string()
+            })
+    }
+
+    /// Title for the API docs: `[docs] title` when set, the app's name
+    /// otherwise — so an app that names itself once is named everywhere.
+    pub fn docs_title(&self) -> String {
+        self.config
+            .docs
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.display_name())
+    }
+
     /// Resource names in dependency order (referenced resources first), so a
     /// migrator can create tables without violating foreign keys.
     pub fn resources_in_dependency_order(&self) -> Vec<&Resource> {
@@ -171,6 +208,40 @@ mod tests {
         ));
         fs::create_dir_all(dir.join("models")).unwrap();
         dir
+    }
+
+    /// One name, given once: the dashboard header and the API docs both read
+    /// it, and an app that never names itself is called after its directory.
+    #[test]
+    fn display_name_and_docs_title_share_one_source() {
+        let dir = temp_app_dir("naming");
+        let directory = dir.file_name().unwrap().to_str().unwrap().to_string();
+
+        let unnamed = App::load(&dir).unwrap();
+        assert_eq!(unnamed.display_name(), directory);
+        assert_eq!(unnamed.docs_title(), directory);
+
+        fs::write(dir.join("main.toml"), "[app]\nname = \"Acme Logistics\"\n").unwrap();
+        let named = App::load(&dir).unwrap();
+        assert_eq!(named.display_name(), "Acme Logistics");
+        assert_eq!(named.docs_title(), "Acme Logistics");
+
+        // A blank name is not a name — it would render as an empty heading.
+        fs::write(dir.join("main.toml"), "[app]\nname = \"   \"\n").unwrap();
+        assert_eq!(App::load(&dir).unwrap().display_name(), directory);
+
+        // `[docs] title` still wins for the docs alone, for an app whose API is
+        // published under a different name than the app answers to.
+        fs::write(
+            dir.join("main.toml"),
+            "[app]\nname = \"Acme Logistics\"\n\n[docs]\ntitle = \"Acme Freight API\"\n",
+        )
+        .unwrap();
+        let split = App::load(&dir).unwrap();
+        assert_eq!(split.display_name(), "Acme Logistics");
+        assert_eq!(split.docs_title(), "Acme Freight API");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

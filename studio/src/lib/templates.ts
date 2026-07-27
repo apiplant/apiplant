@@ -613,6 +613,5 @@ allow_registration = true
 [docs]
 enabled = true
 path = "/docs"
-title = "${appName}"
 `;
 }

@@ -34,7 +34,7 @@ allow_registration = true         # enable POST /auth/register
 [docs]
 enabled = true               # serve OpenAPI spec + Swagger UI
 path    = "/docs"            # where Swagger UI mounts (under base_path)
-title   = "My API"          # spec info.title and UI title
+# title = "My API"           # only when the docs differ from [app] name
 
 [admin]
 enabled = true               # serve the built-in admin dashboard
@@ -61,7 +61,7 @@ prefix = "my-app:"
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `name` | the app directory's name | What the app is called wherever a person reads it: the [dashboard](admin.md) header and the browser title. The directory an app lives in is a filing decision — `07-functions`, `backend`, `api-v2` — and operators should not have to read it. |
+| `name` | the app directory's name | What the app is called wherever a person reads it: the [dashboard](admin.md) header (`<name> admin`), the browser title, and the [API docs](openapi.md). The directory an app lives in is a filing decision — `07-functions`, `backend`, `api-v2` — and operators should not have to read it. |
 
 ## `[server]`
 
@@ -101,7 +101,7 @@ See [Authentication](authentication.md) for the full auth model.
 |-----|---------|-------|
 | `enabled` | `true` | Serve `GET <base>/openapi.json` and the Swagger UI. |
 | `path` | `/docs` | UI mount path (under `base_path`). |
-| `title` | `apiplant API` | Shown in the UI and the spec. |
+| `title` | the app's `[app] name` | Shown in the UI and the spec's `info.title`. Set it only when the published API answers to a different name than the app does. |
 
 See [OpenAPI & Swagger UI](openapi.md).
 

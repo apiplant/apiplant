@@ -285,24 +285,7 @@ fn build_manifest(
     functions: &FunctionRegistry,
     api_base_url: String,
 ) -> Result<AdminManifest> {
-    // `[app] name` when the app gives itself one; the directory it lives in
-    // otherwise, which is a filing decision rather than a name a person should
-    // have to read.
-    let app_name = app
-        .config
-        .app
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            app.root
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("apiplant app")
-                .to_string()
-        });
+    let app_name = app.display_name();
     let user = app.resources.get("user");
     let identity_field = user
         .and_then(|resource| resource.auth.as_ref())

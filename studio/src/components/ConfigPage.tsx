@@ -120,10 +120,30 @@ const SECTIONS: ConfigSection[] = [
     hint: "Generated from your resources and functions; served with no configuration.",
     fields: [
       { key: "path", label: "ui path", placeholder: "/docs", kind: "text" as const },
-      { key: "title", label: "title", placeholder: "apiplant API", kind: "text" as const },
+      {
+        key: "title",
+        label: "title",
+        placeholder: "the app name",
+        kind: "text" as const,
+        hint: "Only when the published API answers to a different name than the app.",
+      },
     ],
   },
 ];
+
+/**
+ * What a field shows when it is empty: the value the server would actually use,
+ * where the studio knows it. The app's name falls back to the directory, and
+ * the docs title falls back to the app's name — so both can be shown rather
+ * than described.
+ */
+function fallbackPlaceholder(sectionId: string, field: ConfigField): string | undefined {
+  const directory = studio.project?.name;
+  const appName = (configValue("app", "name") as string | undefined)?.trim() || directory;
+  if (sectionId === "app" && field.key === "name") return directory ?? field.placeholder;
+  if (sectionId === "docs" && field.key === "title") return appName ?? field.placeholder;
+  return field.placeholder;
+}
 
 export function ConfigPage() {
   const [tab, setTab] = createSignal<TabId>("form");
@@ -233,11 +253,7 @@ export function ConfigPage() {
                             // studio knows which directory this is — so the
                             // placeholder can show the name that will be used
                             // rather than describe it.
-                            placeholder={
-                              section.id === "app" && field.key === "name"
-                                ? (studio.project?.name ?? field.placeholder)
-                                : field.placeholder
-                            }
+                            placeholder={fallbackPlaceholder(section.id, field)}
                             onInput={(value) => {
                               if (value === "") return setConfigValue(section.id, field.key, undefined);
                               if (field.kind === "number") {

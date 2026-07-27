@@ -474,7 +474,7 @@ pub async fn run(app: App) -> anyhow::Result<()> {
     let spec_url = format!("{base_path}/openapi.json");
     let spec = openapi::build(&app, &registry);
     let openapi_json = serde_json::to_string(&spec).unwrap_or_else(|_| "{}".to_string());
-    let docs_html = openapi::swagger_ui_html(&spec_url, &app.config.docs.title);
+    let docs_html = openapi::swagger_ui_html(&spec_url, &app.docs_title());
     if app.config.docs.enabled {
         tracing::info!(
             "  docs -> {base_path}{}  (spec: {spec_url})",

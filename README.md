@@ -195,7 +195,7 @@ Configure it in `main.toml`:
 [docs]
 enabled = true        # default
 path = "/docs"        # where Swagger UI mounts (under base_path)
-title = "My API"
+# title = "My API"    # defaults to [app] name — set it only if they differ
 ```
 
 ## Relationships
