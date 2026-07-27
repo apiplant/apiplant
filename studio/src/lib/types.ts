@@ -66,12 +66,12 @@ export interface Field {
   on_delete?: OnDelete;
 }
 
+/** Hook events on the built-in auth endpoints; only the `user` resource has them. */
 export const AUTH_HOOK_EVENTS = [
   "before_register",
   "after_register",
   "before_login",
   "after_login",
-  "login_failed",
   "before_api_key",
   "after_api_key",
 ] as const;
@@ -81,8 +81,6 @@ export interface AuthSpec {
   identity_field: string;
   password_field: string;
   oauth_providers: string[];
-  /** `[auth.hooks]` — functions bound to the built-in auth endpoints. */
-  hooks: Partial<Record<AuthHookEvent, string>>;
 }
 
 export interface Resource {
@@ -95,7 +93,7 @@ export interface Resource {
   permissions: Partial<Record<Action, string>>;
   /** Ordered for the file; the server sorts them anyway. */
   fields: Field[];
-  hooks: Partial<Record<HookEvent, string>>;
+  hooks: Partial<Record<HookEvent | AuthHookEvent, string>>;
   /** Only meaningful on the `user` resource. */
   auth?: AuthSpec;
   /** Anything the studio does not model, preserved verbatim on save. */

@@ -27,6 +27,7 @@ import { detectFunctions, extractExports } from "./functions";
 import { emitResource, emitTable, parseResource, parseTable } from "./toml";
 import { scaffoldFunction, scaffoldMainToml, type TemplateKind } from "./templates";
 import {
+  AUTH_HOOK_EVENTS,
   emptyResource,
   type FileState,
   type FunctionEntry,
@@ -689,6 +690,15 @@ export function validateResource(resource: Resource, knownResources: string[]): 
       if (!field.references) issues.push(`\`${field.name}\` is a reference with no target resource.`);
       else if (!knownResources.includes(field.references)) {
         issues.push(`\`${field.name}\` references \`${field.references}\`, which no resource defines.`);
+      }
+    }
+  }
+  // Only `user` owns the auth endpoints, so the same key elsewhere names a
+  // function nothing would ever call — the server refuses to load it.
+  if (resource.name !== "user") {
+    for (const event of AUTH_HOOK_EVENTS) {
+      if (resource.hooks[event]) {
+        issues.push(`\`${event}\` only exists on the \`user\` resource, which owns the auth endpoints.`);
       }
     }
   }

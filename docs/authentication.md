@@ -48,26 +48,28 @@ type = "string"
 Defaults if you don't provide `models/users.toml`: `identity_field = "email"`,
 `password_field = "password_hash"`, no OAuth providers, no hooks.
 
-### `[auth.hooks]`
+### Auth hooks
 
-The endpoints below are extension points, not fixed behaviour: an `[auth.hooks]`
-sub-section binds one of your functions to a point in each one's lifecycle.
+The endpoints below are extension points, not fixed behaviour: the `user`
+model's ordinary `[hooks]` section carries an event for each point in their
+lifecycle, alongside the resource's CRUD hooks.
 
 ```toml
-[auth.hooks]
-before_register = "invite_only"     # reject a signup without a valid invite
+[hooks]
+before_register = "invite_only"    # reject a signup without a valid invite
 after_register  = "send_welcome"
-before_login    = "check_lockout"   # 423 an account that failed too often
-after_login     = "record_session"  # and widen the login response
-login_failed    = "count_failure"
+before_login    = "check_lockout"  # 423 an account that failed too often
+after_login     = "record_attempt" # every attempt, successful or not
 before_api_key  = "stamp_expiry"
 after_api_key   = "audit_key"
 ```
 
 They follow the same protocol as [lifecycle hooks](hooks.md) — return
 `{"error": …}` to abort, `{"data": …}` to replace — and never see a plaintext
-password. See [Auth hooks](hooks.md#auth-hooks) for the payload each one
-receives and what a replacement does.
+password. `after_login` is the one to know about: it fires on failures as well
+as successes, carrying `success`, `identity` and a `reason`, which is what a
+lockout counts without needing a separate event. See
+[Auth hooks](hooks.md#auth-hooks) for the payload each one receives.
 
 ## Endpoints
 
@@ -176,7 +178,7 @@ Because `user` is a normal resource, you can:
 * change its permissions (who may list/read/update users),
 * switch the login identifier (`identity_field = "username"`),
 * relate it to other resources with `reference` fields,
-* hook the auth endpoints themselves with [`[auth.hooks]`](#authhooks).
+* hook the auth endpoints themselves with [auth hooks](#auth-hooks).
 
 Just create `models/users.toml`; it replaces the default while keeping auth
 wired up.

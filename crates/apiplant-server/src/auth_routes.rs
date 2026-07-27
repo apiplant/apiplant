@@ -4,14 +4,14 @@
 //! resources — but understand the `[auth]` section on the user model
 //! (configurable identity/password field names).
 //!
-//! Each endpoint is extensible through the `[auth.hooks]` section of that same
-//! model, which binds a function to a point in the endpoint's lifecycle:
+//! Each endpoint is extensible through the `user` model's ordinary `[hooks]`
+//! section, which carries these events alongside the CRUD ones:
 //!
 //! ```toml
-//! [auth.hooks]
-//! before_login = "check_lockout"
-//! after_login  = "record_session"
-//! login_failed = "count_failure"
+//! [hooks]
+//! after_create = "index_user"    # the table's own lifecycle
+//! before_login = "check_lockout" # and the endpoints in front of it
+//! after_login  = "record_attempt"
 //! ```
 //!
 //! They follow the same protocol as [resource hooks](crate::hooks) — a returned
@@ -22,8 +22,7 @@
 //! | `before_register` | the submitted body, password already hashed | replaces what is inserted |
 //! | `after_register` | the created row | replaces the response's `user` |
 //! | `before_login` | the identity being claimed, never the password | replaces the credentials looked up |
-//! | `after_login` | `{"user_id": …}` for the verified account | is merged into the response beside `token` |
-//! | `login_failed` | `{"identity": …, "reason": …}` | ignored; only an `error` has an effect |
+//! | `after_login` | the attempt's outcome — see [`login`] | is merged into the response beside `token` |
 //! | `before_api_key` | the submitted body | replaces the key's stored fields |
 //! | `after_api_key` | the created row | is merged into the response beside `api_key` |
 //!
@@ -202,10 +201,12 @@ pub async fn register(
 
 /// `POST <base>/auth/login` — verify credentials, return a session token.
 ///
-/// The `[auth.hooks]` events fire around the credential check: `before_login`
-/// sees the claimed identity (never the password) and can reject the attempt or
-/// rewrite the identity that is looked up; `login_failed` sees every rejection;
-/// `after_login` sees the verified account and can widen the response.
+/// Two hooks fire around the credential check. `before_login` sees the claimed
+/// identity (never the password) and can reject the attempt or rewrite the
+/// identity that is looked up. `after_login` sees the *outcome* — every attempt
+/// reaches it, successful or not, distinguished by `success` and `reason` — so
+/// one hook can both widen a successful response and count the failures that a
+/// lockout is built on.
 pub async fn login(
     req: HttpRequest,
     state: State<AppState>,
@@ -278,75 +279,80 @@ pub async fn login(
         Ok(v) => v,
         Err(e) => return db_error(e),
     };
-    let Some(row) = rows.as_array().and_then(|a| a.first()) else {
-        // Spend the argon2 time anyway: answering an unknown identity faster
-        // than a wrong password is enough to enumerate accounts.
-        let _ = state.auth.hash_password(&password);
-        return rejected(&state, user_r, &hook_req, &identity, "unknown_identity").await;
-    };
-    let stored = row
-        .get("password_hash")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if !state.auth.verify_password(&password, stored) {
-        return rejected(&state, user_r, &hook_req, &identity, "bad_password").await;
-    }
-    let user_id = row
-        .get("id")
-        .and_then(|v| v.as_str())
-        .and_then(|s| Uuid::parse_str(s).ok());
-    let Some(user_id) = user_id else {
-        return error(500, "user missing id");
-    };
-    let token = match state.auth.issue_token(user_id) {
-        Ok(token) => token,
-        Err(_) => return error(500, "failed to issue token"),
+    let verified = match rows.as_array().and_then(|a| a.first()) {
+        None => {
+            // Spend the argon2 time anyway: answering an unknown identity
+            // faster than a wrong password is enough to enumerate accounts.
+            let _ = state.auth.hash_password(&password);
+            None
+        }
+        Some(row) => {
+            let stored = row
+                .get("password_hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if state.auth.verify_password(&password, stored) {
+                match row
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                {
+                    Some(id) => Some(id),
+                    None => return error(500, "user missing id"),
+                }
+            } else {
+                None
+            }
+        }
     };
 
-    // `after_login` can widen the response — attaching the user row, their
-    // roles, whatever the client needs — but never rewrite the token it is
-    // being handed alongside.
-    let mut response = json!({ "token": token });
-    match hooks::run_auth(
-        &state,
-        user_r,
-        AuthEvent::AfterLogin,
-        &hook_req.with_record(user_id),
-        json!({ "user_id": user_id.to_string() }),
-    )
-    .await
-    {
-        Ok(Some(replacement)) => merge_beside(&mut response, replacement, "token"),
-        Ok(None) => {}
+    // The token is issued before the hook runs, so `after_login` can be told
+    // what actually happened — and a hook that aborts still costs the caller
+    // nothing, because a token nobody receives is a token nobody can use.
+    let token = match verified {
+        Some(user_id) => match state.auth.issue_token(user_id) {
+            Ok(token) => Some(token),
+            Err(_) => return error(500, "failed to issue token"),
+        },
+        None => None,
+    };
+
+    let outcome = json!({
+        "success": verified.is_some(),
+        "user_id": verified.map(|id| id.to_string()),
+        "identity": identity,
+        // What the caller is never told apart, a hook is: an address nobody
+        // holds and a password nobody guessed are different problems.
+        "reason": match (verified.is_some(), rows.as_array().is_some_and(|a| a.is_empty())) {
+            (true, _) => Value::Null,
+            (false, true) => json!("unknown_identity"),
+            (false, false) => json!("bad_password"),
+        },
+    });
+    let hook_req = match verified {
+        Some(user_id) => hook_req.with_record(user_id),
+        None => hook_req,
+    };
+
+    // On the way out, `after_login` can widen the response — the user row,
+    // their roles, whatever the client needs — but never rewrite the token it
+    // is being handed alongside. On a failure there is nothing to widen: only
+    // an `{"error": …}` matters, and it is how a lockout answers 429 where the
+    // endpoint would have answered 401.
+    let mut response = match &token {
+        Some(token) => json!({ "token": token }),
+        None => Value::Null,
+    };
+    match hooks::run_auth(&state, user_r, AuthEvent::AfterLogin, &hook_req, outcome).await {
+        Ok(Some(replacement)) if token.is_some() => {
+            merge_beside(&mut response, replacement, "token")
+        }
+        Ok(_) => {}
         Err(resp) => return resp,
     }
-    HttpResponse::Ok().json(&response)
-}
-
-/// Report a rejected login, giving `login_failed` its say first.
-///
-/// The hook's return value is ignored — there is nothing to replace — except an
-/// `{"error": …}`, which lets a lockout hook answer `429` where the endpoint
-/// would have answered `401`. The caller is told no more than "invalid
-/// credentials" either way.
-async fn rejected(
-    state: &AppState,
-    user_r: &apiplant_core::Resource,
-    hook_req: &HookRequest,
-    identity: &str,
-    reason: &str,
-) -> HttpResponse {
-    match hooks::run_auth(
-        state,
-        user_r,
-        AuthEvent::LoginFailed,
-        hook_req,
-        json!({ "identity": identity, "reason": reason }),
-    )
-    .await
-    {
-        Ok(_) => error(401, "invalid credentials"),
-        Err(resp) => resp,
+    match token {
+        Some(_) => HttpResponse::Ok().json(&response),
+        None => error(401, "invalid credentials"),
     }
 }
 

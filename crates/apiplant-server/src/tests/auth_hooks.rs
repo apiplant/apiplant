@@ -1,4 +1,5 @@
-//! `[auth.hooks]`: the extension points on the built-in auth endpoints.
+//! Auth hooks: the extension points on the built-in auth endpoints, declared
+//! in the `user` model's `[hooks]` section next to its CRUD hooks.
 
 use super::*;
 
@@ -66,33 +67,33 @@ fn login_guard(
     Ok(json!({ "data": data }).to_string())
 }
 
-/// `after_login`: widens the response, and cannot touch the issued token.
-fn login_stamp(
-    _host: &HostApi_TO<'_, RBox<()>>,
-    hook: &str,
-    input: &str,
-) -> Result<String, String> {
+/// `after_login`: sees every attempt. It records the failures, answers `429` to
+/// an unknown address, and widens the response of a success without being able
+/// to touch the token that success issued.
+fn login_stamp(host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
     let context: Value = serde_json::from_str(hook).map_err(|e| e.to_string())?;
     let payload: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    if context["record_id"] != payload["user_id"] {
-        return Err("record_id should name the account that logged in".to_string());
+    // The outcome arrives in `data`; there is no row to speak of, and on a
+    // failure there is no account either.
+    if context["data"]["success"] != payload["success"] || !context["row"].is_null() {
+        return Err("the outcome should arrive in `data`".to_string());
     }
-    Ok(json!({ "data": {
-        "user_id": payload["user_id"],
-        "greeting": "welcome back",
-        "token": "forged",
-    }})
-    .to_string())
-}
 
-/// `login_failed`: an unknown address is answered `429`, a wrong password is
-/// merely counted and left to the endpoint's own `401`.
-fn login_failure(
-    host: &HostApi_TO<'_, RBox<()>>,
-    _hook: &str,
-    input: &str,
-) -> Result<String, String> {
-    let payload: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
+    if payload["success"] == json!(true) {
+        if context["record_id"] != payload["user_id"] || !payload["reason"].is_null() {
+            return Err("a success names the account and has no reason".to_string());
+        }
+        return Ok(json!({ "data": {
+            "user_id": payload["user_id"],
+            "greeting": "welcome back",
+            "token": "forged",
+        }})
+        .to_string());
+    }
+
+    if !payload["user_id"].is_null() || !context["record_id"].is_null() {
+        return Err("a failed attempt names no account".to_string());
+    }
     let request = json!({
         "sql": "INSERT INTO apiplant_audit (event, detail) VALUES ($1, $2)",
         "params": [payload["reason"], payload["identity"]],
@@ -150,12 +151,11 @@ delete = "private"
 identity_field = "email"
 password_field = "password_hash"
 
-[auth.hooks]
+[hooks]
 before_register = "signup_guard"
 after_register = "signup_welcome"
 before_login = "login_guard"
 after_login = "login_stamp"
-login_failed = "login_failure"
 before_api_key = "key_guard"
 after_api_key = "key_stamp"
 
@@ -215,7 +215,6 @@ async fn auth_hooks_shape_registration_login_and_key_issuance() {
             test_function("signup_welcome", Visibility::Private, signup_welcome),
             test_function("login_guard", Visibility::Private, login_guard),
             test_function("login_stamp", Visibility::Private, login_stamp),
-            test_function("login_failure", Visibility::Private, login_failure),
             test_function("key_guard", Visibility::Private, key_guard),
             test_function("key_stamp", Visibility::Private, key_stamp),
         ],
@@ -287,8 +286,8 @@ async fn auth_hooks_shape_registration_login_and_key_issuance() {
     assert_eq!(locked.status().as_u16(), 423);
     assert_eq!(read_json(locked).await["error"], "account locked");
 
-    // A wrong password: `login_failed` sees it, records it and lets the flat
-    // 401 stand.
+    // A wrong password: `after_login` sees the failed attempt, records it, and
+    // lets the flat 401 stand.
     let wrong = test::call_service(
         &app,
         req_json(

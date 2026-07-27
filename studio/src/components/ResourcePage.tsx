@@ -70,15 +70,7 @@ const ACTION_ENDPOINT: Record<Action, string> = {
 
 const SCALAR_DEFAULTABLE: FieldType[] = ["string", "text", "integer", "big_int", "float", "boolean"];
 
-const AUTH_HOOK_NOTES: Record<AuthHookEvent, string> = {
-  before_register: "the submitted body, password already hashed; a replacement is what gets inserted",
-  after_register: "the created account; a replacement becomes the response's user",
-  before_login: "the claimed identity, never the password; can reject or rewrite it",
-  after_login: "the verified account; a replacement is merged in beside the token",
-  login_failed: "identity and reason; only an error has an effect, e.g. a lockout 429",
-  before_api_key: "the key about to be stored; a replacement is what gets written",
-  after_api_key: "the issued key's row; a replacement is merged in beside the plaintext key",
-};
+
 
 export function ResourcePage(props: { entry: ResourceEntry }) {
   const [tab, setTab] = createSignal<TabId>("fields");
@@ -597,12 +589,22 @@ function PermissionsTab(props: {
 
 // ---- hooks ------------------------------------------------------------------
 
-const HOOK_GROUPS: { action: string; note: string; events: HookEvent[] }[] = [
+type HookGroup = { action: string; note: string; events: (HookEvent | AuthHookEvent)[] };
+
+const HOOK_GROUPS: HookGroup[] = [
   { action: "list", note: "before sees nothing; after receives the rows and can replace the body", events: ["before_list", "after_list"] },
   { action: "read", note: "after receives the fetched row", events: ["before_read", "after_read"] },
   { action: "create", note: "before can validate, rewrite or abort; after sees the created row", events: ["before_create", "after_create"] },
   { action: "update", note: "before receives the submitted body, after the updated row", events: ["before_update", "after_update"] },
   { action: "delete", note: "both receive the row; declaring either costs one extra read", events: ["before_delete", "after_delete"] },
+];
+
+// The auth endpoints are the user table's other door, so their hooks live in
+// the same section — but only `user` has them, and the server says so too.
+const AUTH_HOOK_GROUPS: HookGroup[] = [
+  { action: "register", note: "runs around POST /auth/register, outside the create hooks above", events: ["before_register", "after_register"] },
+  { action: "login", note: "before sees the claimed identity, never the password; after sees every attempt, successful or not", events: ["before_login", "after_login"] },
+  { action: "api key", note: "before writes the key row; after can widen the response, but never reaches the plaintext key", events: ["before_api_key", "after_api_key"] },
 ];
 
 function HooksTab(props: { resource: Resource; onEdit: (update: (draft: Resource) => void) => void }) {
@@ -618,7 +620,7 @@ function HooksTab(props: { resource: Resource; onEdit: (update: (draft: Resource
         <For each={names()}>{(name) => <option value={name} />}</For>
       </datalist>
       <div class="divide-y divide-line">
-        <For each={HOOK_GROUPS}>
+        <For each={[...HOOK_GROUPS, ...(props.resource.name === "user" ? AUTH_HOOK_GROUPS : [])]}>
           {(group) => (
             <div class="px-4 py-3">
               <div class="mb-2 flex items-baseline gap-2">
@@ -628,7 +630,7 @@ function HooksTab(props: { resource: Resource; onEdit: (update: (draft: Resource
               <div class="grid gap-3 sm:grid-cols-2">
                 <For each={group.events}>
                   {(event) => (
-                    <Labelled label={event.replace("_", " ")}>
+                    <Labelled label={event.replaceAll("_", " ")}>
                       <TextInput
                         mono
                         list="function-names"
@@ -649,7 +651,11 @@ function HooksTab(props: { resource: Resource; onEdit: (update: (draft: Resource
           )}
         </For>
       </div>
-      <Show when={HOOK_EVENTS.some((event) => props.resource.hooks[event] && !names().includes(props.resource.hooks[event]!))}>
+      <Show
+        when={[...HOOK_EVENTS, ...AUTH_HOOK_EVENTS].some(
+          (event) => props.resource.hooks[event] && !names().includes(props.resource.hooks[event]!),
+        )}
+      >
         <div class="border-t border-line px-4 py-3 text-xs leading-relaxed text-warn">
           A hook names a function no library in <Mono>functions/</Mono> exports. Requests on that operation
           fail closed with a 500 until the library is built and dropped in.
@@ -761,7 +767,6 @@ function SettingsTab(props: {
                       identity_field: value,
                       password_field: draft.auth?.password_field ?? "password_hash",
                       oauth_providers: draft.auth?.oauth_providers ?? [],
-                      hooks: draft.auth?.hooks ?? {},
                     };
                   })
                 }
@@ -777,7 +782,6 @@ function SettingsTab(props: {
                       identity_field: draft.auth?.identity_field ?? "email",
                       password_field: value,
                       oauth_providers: draft.auth?.oauth_providers ?? [],
-                      hooks: draft.auth?.hooks ?? {},
                     };
                   })
                 }
@@ -801,50 +805,11 @@ function SettingsTab(props: {
                         .split(",")
                         .map((provider) => provider.trim())
                         .filter(Boolean),
-                      hooks: draft.auth?.hooks ?? {},
                     };
                   })
                 }
               />
             </Labelled>
-          </div>
-          <div class="border-t border-line px-4 py-4">
-            <datalist id="auth-function-names">
-              <For each={allFunctionNames()}>{(name) => <option value={name} />}</For>
-            </datalist>
-            <div class="mb-2 flex items-baseline gap-2">
-              <h4 class="text-[0.8125rem] font-medium text-ink">Auth hooks</h4>
-              <p class="text-[0.6875rem] text-faint">
-                One function per event on the built-in endpoints, alongside the resource's own
-                create hooks.
-              </p>
-            </div>
-            <div class="grid gap-3 sm:grid-cols-2">
-              <For each={AUTH_HOOK_EVENTS}>
-                {(event) => (
-                  <Labelled label={event.replaceAll("_", " ")} hint={AUTH_HOOK_NOTES[event]}>
-                    <TextInput
-                      mono
-                      list="auth-function-names"
-                      placeholder="function name"
-                      value={resource().auth?.hooks?.[event] ?? ""}
-                      onInput={(value) =>
-                        props.onEdit((draft) => {
-                          draft.auth = {
-                            identity_field: draft.auth?.identity_field ?? "email",
-                            password_field: draft.auth?.password_field ?? "password_hash",
-                            oauth_providers: draft.auth?.oauth_providers ?? [],
-                            hooks: { ...draft.auth?.hooks },
-                          };
-                          if (value) draft.auth.hooks[event] = value;
-                          else delete draft.auth.hooks[event];
-                        })
-                      }
-                    />
-                  </Labelled>
-                )}
-              </For>
-            </div>
           </div>
         </Card>
       </Show>

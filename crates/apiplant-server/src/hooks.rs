@@ -127,18 +127,19 @@ fn context_json(
 /// Build the JSON context handed to an auth hook.
 ///
 /// Same shape as a resource hook's context, so a function can be written once
-/// and bound to either: the submitted body arrives in `data`, a row the endpoint
-/// produced in `row`.
+/// and bound to either: a row the endpoint produced arrives in `row`, and
+/// anything else — a submitted body, a login's outcome — in `data`.
 fn auth_context_json(
     resource: &Resource,
     event: AuthEvent,
     request: &HookRequest,
     payload: &Value,
 ) -> String {
-    let slot = if event.is_before() || event == AuthEvent::LoginFailed {
-        "data"
-    } else {
-        "row"
+    let slot = match event {
+        // `after_login` reports on an attempt rather than handing back a row,
+        // and a failed attempt has no row to hand back at all.
+        AuthEvent::AfterRegister | AuthEvent::AfterApiKey => "row",
+        _ => "data",
     };
     describe(
         &resource.meta.name,
@@ -218,8 +219,8 @@ pub async fn run(
 /// Same contract as [`run`]: `Ok(None)` carries on, `Ok(Some(value))` is a
 /// replacement, `Err(response)` aborts the request. `resource` is the resource
 /// the endpoint operates on — `user` for register/login, `api_key` for key
-/// issuance — but the hook is always looked up in the `user` model's
-/// `[auth.hooks]`, since that is where auth is configured.
+/// issuance — but the hook is always looked up on the `user` model, which is
+/// the resource the auth endpoints belong to.
 pub async fn run_auth(
     state: &AppState,
     resource: &Resource,

@@ -17,6 +17,6 @@ pub use config::{CacheConfig, Config, EmailConfig, SmtpConfig};
 pub use env::{expand_document, parse_toml};
 pub use error::{Error, Result};
 pub use schema::{
-    relation_name, Access, AuthEvent, AuthHooks, Field, FieldType, HookEvent, Hooks, OnDelete,
-    Permissions, Reference, Resource, Scope,
+    relation_name, Access, AuthEvent, Field, FieldType, HookEvent, Hooks, OnDelete, Permissions,
+    Reference, Resource, Scope,
 };

@@ -90,27 +90,29 @@ new account straight into the organisation that owns its email domain.
 
 The create hooks above fire on *both* doors into the `user` table, which is the
 point of them — and the reason they are the wrong place for anything that
-belongs only to signing up, or that has no `create` at all, like a login. Those
-live in `[auth.hooks]` on the `user` model:
+belongs only to signing up, or that has no `create` at all, like a login. The
+`user` model's `[hooks]` section carries six more events for exactly that, next
+to its CRUD ones:
 
 ```toml
 # models/users.toml
-[auth.hooks]
-before_login = "check_lockout"
-after_login  = "record_session"
-login_failed = "count_failure"
+[hooks]
+after_create = "index_user"     # the table's own lifecycle
+before_login = "check_lockout"  # and the endpoints in front of it
+after_login  = "record_attempt"
 ```
 
-Seven events, following the same protocol as the events above — a returned
-`{"error": …}` aborts, a returned `{"data": …}` replaces:
+They are only meaningful on `user`, which is the resource the auth endpoints
+belong to; the same key on any other model fails to load, since nothing would
+ever fire it. The protocol is the one above — a returned `{"error": …}` aborts,
+a returned `{"data": …}` replaces:
 
 | Event | Fires | Payload the hook receives | A returned `data` |
 |-------|-------|---------------------------|-------------------|
 | `before_register` | before `before_create` | the submitted body, password already hashed | replaces the body to insert |
 | `after_register` | after `after_create` | the created account | replaces the response's `user` |
 | `before_login` | before the credential lookup | `{ "<identity_field>": … }` | replaces the credentials looked up |
-| `after_login` | after the token is issued | `{ "user_id": … }` | merged into the response beside `token` |
-| `login_failed` | on an unknown identity or a wrong password | `{ "identity": …, "reason": … }` | ignored — only an `error` has an effect |
+| `after_login` | after **every** attempt | the outcome (below) | merged into the response beside `token` |
 | `before_api_key` | before the key row is written | the key's fields | replaces what is written |
 | `after_api_key` | after the key row is written | the created row | merged into the response beside `api_key` |
 
@@ -119,13 +121,23 @@ reject an attempt does it on the identity alone. `after_login` and
 `after_api_key` cannot overwrite the secret they run alongside — a `token` or
 `api_key` key in their replacement is dropped, not honoured.
 
-`reason` on `login_failed` is `"unknown_identity"` or `"bad_password"`; the
-caller is told neither. Returning an error there is how a lockout answers `429`
-where the endpoint would have answered `401`.
+`after_login` runs on failed attempts too, which is what makes a lockout
+possible without a separate event. It receives:
 
-In the hook context, `action` is `"register"`, `"login"` or `"api_key"`, and
-`phase` is `"failed"` on `login_failed`. Register and login run anonymously
-(`authenticated` is `false`); key issuance runs as the caller.
+```json
+{ "success": false, "user_id": null, "identity": "ana@acme.test", "reason": "bad_password" }
+```
+
+`reason` is `null` on a success, and `"unknown_identity"` or `"bad_password"` on
+a failure — a distinction the caller never gets, since both are answered
+`401 invalid credentials`. Returning an error from a failed attempt is how a
+lockout answers `429` instead; on a failure nothing else you return is used,
+because there is no response body to widen.
+
+In the hook context, `action` is `"register"`, `"login"` or `"api_key"`. The
+payload lands in `row` for `after_register` and `after_api_key`, which hand back
+an actual record, and in `data` everywhere else. Register and login run
+anonymously (`authenticated` is `false`); key issuance runs as the caller.
 
 ## Writing a hook
 

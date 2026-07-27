@@ -147,9 +147,11 @@ export function parseResource(text: string): Resource {
     fields.push(field);
   }
 
-  const hooks: Partial<Record<HookEvent, string>> = {};
+  // Auth events live in the same section as the CRUD ones, and only mean
+  // anything on `user` — the server rejects them anywhere else.
+  const hooks: Partial<Record<HookEvent | AuthHookEvent, string>> = {};
   const rawHooks = isTable(table.hooks) ? table.hooks : {};
-  for (const event of HOOK_EVENTS) {
+  for (const event of [...HOOK_EVENTS, ...AUTH_HOOK_EVENTS]) {
     const value = rawHooks[event];
     if (typeof value === "string" && value) hooks[event] = value;
   }
@@ -167,17 +169,10 @@ export function parseResource(text: string): Resource {
 
   if (isTable(table.auth)) {
     const providers = table.auth.oauth_providers;
-    const authHooks: Partial<Record<AuthHookEvent, string>> = {};
-    const rawAuthHooks = isTable(table.auth.hooks) ? table.auth.hooks : {};
-    for (const event of AUTH_HOOK_EVENTS) {
-      const value = rawAuthHooks[event];
-      if (typeof value === "string" && value) authHooks[event] = value;
-    }
     resource.auth = {
       identity_field: asString(table.auth.identity_field, "email"),
       password_field: asString(table.auth.password_field, "password_hash"),
       oauth_providers: Array.isArray(providers) ? providers.filter((p): p is string => typeof p === "string") : [],
-      hooks: authHooks,
     };
   }
 
@@ -215,13 +210,6 @@ export function emitResource(resource: Resource): string {
       password_field: resource.auth.password_field,
     };
     if (resource.auth.oauth_providers.length) auth.oauth_providers = resource.auth.oauth_providers;
-    const authHooks: TomlTable = {};
-    for (const event of AUTH_HOOK_EVENTS) {
-      const value = resource.auth.hooks?.[event];
-      if (value) authHooks[event] = value;
-    }
-    // A sub-table has to come last, or the keys after it land inside it.
-    if (Object.keys(authHooks).length) auth.hooks = authHooks;
     out.auth = auth;
   }
 
@@ -243,7 +231,7 @@ export function emitResource(resource: Resource): string {
   }
 
   const hooks: TomlTable = {};
-  for (const event of HOOK_EVENTS) {
+  for (const event of [...HOOK_EVENTS, ...AUTH_HOOK_EVENTS]) {
     const value = resource.hooks[event];
     if (value) hooks[event] = value;
   }

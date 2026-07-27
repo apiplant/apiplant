@@ -249,7 +249,7 @@ declare module "apiplant" {
      * auth hook, `"register"`, `"login"` or `"api_key"`.
      */
     action: string;
-    /** `"before"` or `"after"` — and `"failed"` on `login_failed`. */
+    /** `"before"` or `"after"`. */
     phase: string;
     /** The resource the hook is attached to. */
     resource: string;
