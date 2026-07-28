@@ -29,7 +29,7 @@ python3 -m aiosmtpd -n -l 127.0.0.1:1025   # prints messages to the terminal
 ```
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_email
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_email
 cargo run -p apiplant -- build examples/15-email   # needs cargo on PATH
 cargo run -p apiplant -- run examples/15-email
 ```

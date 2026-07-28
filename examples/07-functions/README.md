@@ -20,7 +20,7 @@ they ship independently and never require recompiling the server.
 ## Run it
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_functions
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_functions
 cargo run -p apiplant -- build examples/07-functions   # needs cargo on PATH
 cargo run -p apiplant -- run examples/07-functions
 ```

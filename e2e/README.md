@@ -44,7 +44,7 @@ the binary and the app's functions, and runs the server. Playwright waits on
 
 ⚠️ The database named in the example's `main.toml` is destroyed on every run.
 For `examples/07-functions` that is `apiplant_functions` on the local
-development cluster (`127.0.0.1:55432`).
+development cluster (`127.0.0.1:5432`).
 
 ## Another example
 

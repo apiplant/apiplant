@@ -23,7 +23,7 @@ module and runs `go build -buildmode=c-shared`.
 ## Running it
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_go_functions
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_go_functions
 
 cargo run -p apiplant -- build examples/11-go-functions   # go build -buildmode=c-shared
 cargo run -p apiplant -- run examples/11-go-functions

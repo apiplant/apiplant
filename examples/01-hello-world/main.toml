@@ -7,12 +7,11 @@
 name = "01 · Hello world"
 
 [server]
-host = "127.0.0.1"
 port = 8099
 base_path = "/api"          # the API is mounted under /api
 
 [database]
-url = "postgres://postgres@127.0.0.1:55432/apiplant_hello"
+url = "postgres://postgres@127.0.0.1:5432/apiplant_hello"
 auto_migrate = true         # reconcile the database with your models on boot
 
 [auth]

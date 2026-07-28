@@ -63,7 +63,7 @@ granted any, which is why Ana below never needs a second role.
 ## Run it
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_real_world
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_real_world
 cargo run -p apiplant -- run examples/13-real-world
 ```
 

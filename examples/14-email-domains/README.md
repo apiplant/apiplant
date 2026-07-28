@@ -24,7 +24,7 @@ so a hook can create one — and registration is the moment to do it.
 ## Run it
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_domains
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_domains
 cargo run -p apiplant -- build examples/14-email-domains   # needs cargo on PATH
 cargo run -p apiplant -- run examples/14-email-domains
 ```

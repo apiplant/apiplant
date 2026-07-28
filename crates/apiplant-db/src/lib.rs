@@ -514,9 +514,9 @@ mod connect_tests {
     #[test]
     fn swaps_the_database_name() {
         assert_eq!(
-            maintenance_url("postgres://user:pw@127.0.0.1:55432/apiplant"),
+            maintenance_url("postgres://user:pw@127.0.0.1:5432/apiplant"),
             Some((
-                "postgres://user:pw@127.0.0.1:55432/postgres".into(),
+                "postgres://user:pw@127.0.0.1:5432/postgres".into(),
                 "apiplant".into()
             ))
         );

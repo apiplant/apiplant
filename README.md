@@ -436,17 +436,17 @@ See [Sending email](docs/email.md), [Caching](docs/caching.md),
 # 1. Start Postgres on the port the examples expect.
 docker run -d --name apiplant-postgres \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
-  -p 55432:5432 \
+  -p 5432:5432 \
   postgres:16
 # (stop & remove later with: docker rm -f apiplant-postgres)
 #
 #    No Docker? Run a throwaway local cluster in ./pgdata instead:
 #      initdb -D ./pgdata --username=postgres --auth=trust
-#      pg_ctl -D ./pgdata -o "-p 55432 -k /tmp" -l ./pgdata/log.txt start
+#      pg_ctl -D ./pgdata -o "-p 5432 -k /tmp" -l ./pgdata/log.txt start
 #    (stop later with: pg_ctl -D ./pgdata stop)
 
 # 2. Start with the smallest example: config only, no models.
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hello
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_hello
 cargo run -p apiplant -- run examples/01-hello-world
 
 curl -s localhost:8099/api/_health
@@ -455,7 +455,7 @@ curl -s -XPOST localhost:8099/api/auth/register \
   -d '{"email":"a@b.com","password":"pw"}'          # → { "token": ... }
 
 # 3. Then work up through the others — each adds one idea.
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_functions
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_functions
 cargo run -p apiplant -- build examples/07-functions   # compiles functions/*.rs
 cargo run -p apiplant -- run examples/07-functions
 

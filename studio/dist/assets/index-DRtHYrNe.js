@@ -692,12 +692,11 @@ greeting = "Hello"
 name = "${e}"
 
 [server]
-host = "127.0.0.1"
 port = 8099
 base_path = "/api"
 
 [database]
-url = "postgres://postgres@127.0.0.1:55432/${e.replace(/[^a-zA-Z0-9_]/g,`_`)}"
+url = "postgres://postgres@127.0.0.1:5432/${e.replace(/[^a-zA-Z0-9_]/g,`_`)}"
 auto_migrate = true
 
 [auth]

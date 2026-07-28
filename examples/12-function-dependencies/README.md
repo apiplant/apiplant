@@ -74,7 +74,7 @@ here that needs the network. It is skipped on later builds: `node_modules` being
 there is what says the dependencies are installed.
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_function_deps
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_function_deps
 
 cargo run -p apiplant -- build --release examples/12-function-dependencies
 cargo run -p apiplant -- run examples/12-function-dependencies

@@ -25,7 +25,7 @@ use super::functions::FunctionRegistry;
 use super::openapi;
 use super::state::AppState;
 
-const ADMIN_DB_URL: &str = "postgres://postgres@127.0.0.1:55432/postgres";
+const ADMIN_DB_URL: &str = "postgres://postgres@127.0.0.1:5432/postgres";
 
 macro_rules! init_http_app {
     ($state:expr) => {
@@ -72,7 +72,7 @@ impl TempDatabase {
             .await
             .unwrap();
 
-        let url = format!("postgres://postgres@127.0.0.1:55432/{name}");
+        let url = format!("postgres://postgres@127.0.0.1:5432/{name}");
         let db = Db::connect(&url, 4).await.unwrap();
         db.raw_json("CREATE EXTENSION IF NOT EXISTS pgcrypto", &[])
             .await

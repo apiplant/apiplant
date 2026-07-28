@@ -26,7 +26,7 @@ the query.
 ## Run it
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_tenancy
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_tenancy
 cargo run -p apiplant -- run examples/04-multitenancy
 ```
 

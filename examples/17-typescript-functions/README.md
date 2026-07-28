@@ -28,7 +28,7 @@ No toolchain. `apiplant build` transpiles TypeScript itself, so unlike the C, Zi
 and Go examples there is nothing to install first — no node, no deno, no bun.
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_typescript_functions
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_typescript_functions
 
 cargo run -p apiplant -- build examples/17-typescript-functions   # hello.ts → hello.js
 cargo run -p apiplant -- run examples/17-typescript-functions

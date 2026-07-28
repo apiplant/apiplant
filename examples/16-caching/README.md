@@ -19,7 +19,7 @@ Postgres on every single request, exactly as they would with no cache at all.
 
 ```bash
 redis-server --port 6379        # or: docker run -p 6379:6379 redis
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_caching
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_caching
 cargo run -p apiplant -- build examples/16-caching   # needs cargo on PATH
 cargo run -p apiplant -- run examples/16-caching
 ```

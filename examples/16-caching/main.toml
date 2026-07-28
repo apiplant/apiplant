@@ -5,7 +5,6 @@
 name = "16 · Caching"
 
 [server]
-host = "127.0.0.1"
 port = 8099
 base_path = "/api"          # the API is mounted under /api
 
@@ -13,7 +12,7 @@ base_path = "/api"          # the API is mounted under /api
 # Any string in any of an app's TOML files may reference the environment:
 # `$VAR`, `${VAR}`, or `${VAR:-default}` as here — so this line works
 # unchanged locally and against a managed database in production.
-url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:55432/apiplant_caching}"
+url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:5432/apiplant_caching}"
 auto_migrate = true
 
 [auth]

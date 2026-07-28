@@ -23,7 +23,7 @@ so they run around the generated CRUD endpoints — that's a **hook**.
 ## Run it
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hooks
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_hooks
 cargo run -p apiplant -- build examples/08-hooks   # needs cargo on PATH
 cargo run -p apiplant -- run examples/08-hooks
 ```

@@ -2,12 +2,11 @@
 name = "05 · Authentication"
 
 [server]
-host = "127.0.0.1"
 port = 8099
 base_path = "/api"
 
 [database]
-url = "postgres://postgres@127.0.0.1:55432/apiplant_auth"
+url = "postgres://postgres@127.0.0.1:5432/apiplant_auth"
 auto_migrate = true
 
 [auth]

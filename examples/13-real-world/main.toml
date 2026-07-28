@@ -2,12 +2,11 @@
 name = "13 · Real-world app"
 
 [server]
-host = "127.0.0.1"
 port = 8099
 base_path = "/api"
 
 [database]
-url = "postgres://postgres@127.0.0.1:55432/apiplant_real_world"
+url = "postgres://postgres@127.0.0.1:5432/apiplant_real_world"
 auto_migrate = true
 
 [auth]

@@ -43,15 +43,36 @@ pub struct AppConfig {
     pub name: Option<String>,
 }
 
+/// Accepts either a bare string or a list of them, so a config that names one
+/// domain doesn't have to be written as a one-element list.
+fn one_or_many<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match OneOrMany::deserialize(de)? {
+        OneOrMany::One(s) => vec![s],
+        OneOrMany::Many(v) => v,
+    })
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ServerConfig {
-    /// Interface to bind, e.g. `0.0.0.0`.
+    /// Interface to bind, e.g. `0.0.0.0`. Empty or `*` means every interface
+    /// and is normalised to `0.0.0.0` on load.
     pub host: String,
     /// TCP port.
     pub port: u16,
-    /// Only answer requests for this `Host:` header. `None` = answer any host.
-    pub domain: Option<String>,
+    /// Only answer requests whose `Host:` header is one of these. Written as a
+    /// single string (`domain = "api.example.com"`) or a list
+    /// (`domain = ["api.example.com", "www.example.com"]`). Unset — or the
+    /// catch-all spellings `""`, `*` and `_` (nginx's `server_name _`) —
+    /// answers any host, and all of them normalise to an empty list on load.
+    #[serde(deserialize_with = "one_or_many")]
+    pub domain: Vec<String>,
     /// Sub-path the API is mounted under, e.g. `/api`. Always starts with `/`
     /// and never ends with one (normalised on load).
     pub base_path: String,
@@ -64,7 +85,7 @@ impl Default for ServerConfig {
         ServerConfig {
             host: "0.0.0.0".to_string(),
             port: 8080,
-            domain: None,
+            domain: Vec::new(),
             base_path: "/".to_string(),
             workers: None,
         }
@@ -379,6 +400,32 @@ impl Config {
     }
 
     fn normalise(&mut self) {
+        // "bind everywhere" has three spellings people arrive with: leaving it
+        // out, the wildcard, and the address itself. They all mean 0.0.0.0.
+        let host = self.server.host.trim();
+        if host.is_empty() || host == "*" {
+            self.server.host = "0.0.0.0".to_string();
+        } else {
+            self.server.host = host.to_string();
+        }
+
+        // Same idea for the vhost filter: an empty or wildcard `domain` is a
+        // request for no filter at all, not a filter for the empty host. `_` is
+        // there because nginx spells its catch-all `server_name _`. A wildcard
+        // anywhere in the list wins — it already answers every host, so the
+        // named entries beside it can't narrow anything.
+        let domains = std::mem::take(&mut self.server.domain);
+        let mut wildcard = false;
+        for d in domains {
+            match d.trim() {
+                "" | "*" | "_" | "0.0.0.0" => wildcard = true,
+                d => self.server.domain.push(d.to_string()),
+            }
+        }
+        if wildcard {
+            self.server.domain.clear();
+        }
+
         let bp = self.server.base_path.trim_end_matches('/');
         self.server.base_path = if bp.is_empty() {
             String::new()
@@ -536,7 +583,7 @@ from = "no-reply@example.com"
         assert_eq!(config.auth.jwt_secret, "from-env-jwt");
         assert_eq!(config.email.api_key, "from-env-key");
         // An unset variable falls back to the default written beside it.
-        assert_eq!(config.server.domain.as_deref(), Some("api.example.com"));
+        assert_eq!(config.server.domain, ["api.example.com"]);
 
         for name in [
             "APIPLANT_TEST_JWT",
@@ -546,6 +593,48 @@ from = "no-reply@example.com"
         ] {
             std::env::remove_var(name);
         }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn load_treats_wildcard_host_and_domain_as_everything() {
+        for (host, domain) in [
+            ("", "\"\""),
+            ("*", "\"*\""),
+            (" 0.0.0.0 ", "\"_\""),
+            ("*", "[]"),
+            // A wildcard beside named hosts still means "answer any host".
+            ("*", "[\"api.example.com\", \"*\"]"),
+        ] {
+            let dir = temp_dir("wildcards");
+            fs::write(
+                dir.join("main.toml"),
+                format!("[server]\nhost = \"{host}\"\ndomain = {domain}\n"),
+            )
+            .unwrap();
+
+            let config = Config::load(&dir).unwrap();
+
+            assert_eq!(config.server.host, "0.0.0.0", "host {host:?}");
+            assert!(config.server.domain.is_empty(), "domain {domain}");
+            fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+
+    /// `domain` takes a list as readily as a single string, and each entry is
+    /// trimmed the same way.
+    #[test]
+    fn load_accepts_a_list_of_domains() {
+        let dir = temp_dir("domains");
+        fs::write(
+            dir.join("main.toml"),
+            "[server]\ndomain = [\"api.example.com\", \" www.example.com \"]\n",
+        )
+        .unwrap();
+
+        let config = Config::load(&dir).unwrap();
+
+        assert_eq!(config.server.domain, ["api.example.com", "www.example.com"]);
         fs::remove_dir_all(dir).unwrap();
     }
 

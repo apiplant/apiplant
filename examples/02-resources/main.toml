@@ -2,12 +2,11 @@
 name = "02 · Resources"
 
 [server]
-host = "127.0.0.1"
 port = 8099
 base_path = "/api"
 
 [database]
-url = "postgres://postgres@127.0.0.1:55432/apiplant_resources"
+url = "postgres://postgres@127.0.0.1:5432/apiplant_resources"
 auto_migrate = true
 
 [auth]

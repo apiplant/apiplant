@@ -18,7 +18,7 @@ for login, ownership, API keys and organisation membership.
 ## Run it
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_auth
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_auth
 cargo run -p apiplant -- run examples/05-auth
 ```
 

@@ -5,12 +5,11 @@
 name = "14 · Email domains"
 
 [server]
-host = "127.0.0.1"
 port = 8099
 base_path = "/api"          # the API is mounted under /api
 
 [database]
-url = "postgres://postgres@127.0.0.1:55432/apiplant_domains"
+url = "postgres://postgres@127.0.0.1:5432/apiplant_domains"
 auto_migrate = true
 
 [auth]

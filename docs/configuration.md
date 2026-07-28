@@ -9,9 +9,10 @@ that is *inferred* rather than declared is TLS (see [HTTPS](#https)).
 name = "Acme Logistics"      # what people are shown; default: the directory name
 
 [server]
-host      = "0.0.0.0"        # interface to bind
+host      = "0.0.0.0"        # optional: interface to bind; unset = every interface
 port      = 8080             # TCP port
 domain    = "api.example.com" # optional: only answer this Host header
+                              # (or a list: ["api.example.com", "www.example.com"])
 base_path = "/api"          # mount the whole API under a sub-path
 workers   = 8               # worker threads (default: one per CPU)
 
@@ -67,9 +68,9 @@ prefix = "my-app:"
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `host` | `0.0.0.0` | Bind address. |
+| `host` | `0.0.0.0` | Bind address. Leave it out to listen on every interface — unset, `""` and `*` all normalise to `0.0.0.0`. Set it only to *narrow* the bind, e.g. `127.0.0.1` for localhost-only. |
 | `port` | `8080` | TCP port. |
-| `domain` | *(none)* | When set, requests with a different `Host` header get no match (404). Useful for virtual-hosting. |
+| `domain` | *(none)* | When set, requests whose `Host` header matches none of these get no match (404). Useful for virtual-hosting. Takes one string or a list of them. Unset, `[]`, `""`, `*` and `_` all mean "answer any host" — a wildcard anywhere in a list makes the whole list one. |
 | `base_path` | `/` (empty) | Sub-path prefix for **all** routes. Normalised to start with `/` and not end with one. `/api` ⇒ endpoints live at `/api/...`. |
 | `workers` | one per CPU | Number of OS worker threads. |
 

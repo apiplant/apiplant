@@ -28,7 +28,7 @@ is a complete app: point the binary at it and it runs.
 Each example owns its database, so create that once, then run:
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_resources
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_resources
 cargo run -p apiplant -- run examples/02-resources
 ```
 
@@ -39,7 +39,7 @@ TypeScript *directory* in example 12 is an npm project, so that one needs node
 and `pnpm`. Example 12 needs the lot:
 
 ```bash
-createdb -h 127.0.0.1 -p 55432 -U postgres apiplant_hooks
+createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_hooks
 cargo run -p apiplant -- build examples/08-hooks
 cargo run -p apiplant -- run examples/08-hooks
 ```
@@ -83,7 +83,7 @@ email-based one. Create them all at once:
 
 ```bash
 for db in hello resources relationships tenancy auth permissions functions hooks; do
-  createdb -h 127.0.0.1 -p 55432 -U postgres "apiplant_$db"
+  createdb -h 127.0.0.1 -p 5432 -U postgres "apiplant_$db"
 done
 ```
 

@@ -36,8 +36,8 @@ macro_rules! build_app {
             path => path,
         };
         let mut scope = $crate::ntex_web::scope(base_path);
-        if let Some(d) = &domain {
-            scope = scope.guard($crate::ntex_guard::Host(d.clone()));
+        if let Some(g) = $crate::host_guard(&domain) {
+            scope = scope.guard(g);
         }
         // Docs routes (literal segments) are registered before the generic
         // `/{resource}` routes so they win.
@@ -107,8 +107,8 @@ macro_rules! build_app {
         macro_rules! guarded {
             ($path:expr) => {{
                 let resource = $crate::ntex_web::resource($path);
-                match &domain {
-                    Some(d) => resource.guard($crate::ntex_guard::Host(d.clone())),
+                match $crate::host_guard(&domain) {
+                    Some(g) => resource.guard(g),
                     None => resource,
                 }
             }};
@@ -144,6 +144,20 @@ macro_rules! build_app {
         }
         app
     }};
+}
+
+/// A `Host:` guard matching any of the configured domains, or `None` when no
+/// domains are configured and every host should be answered.
+pub(crate) fn host_guard(domains: &[String]) -> Option<ntex_guard::AnyGuard> {
+    if domains.is_empty() {
+        return None;
+    }
+    Some(ntex_guard::AnyGuard(
+        domains
+            .iter()
+            .map(|d| Box::new(ntex_guard::Host(d.clone())) as Box<dyn ntex_guard::Guard>)
+            .collect(),
+    ))
 }
 
 pub mod admin;
