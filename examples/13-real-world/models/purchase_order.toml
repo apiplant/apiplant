@@ -1,0 +1,46 @@
+# Restocking: from one supplier, into one warehouse.
+
+[resource]
+name = "purchase_order"
+
+[admin]
+group = "Procurement"
+order = 2
+columns = ["reference", "supplier_id", "status"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"
+delete = "role:admin"
+
+[fields.reference]
+type     = "string"
+required = true
+
+[fields.supplier_id]
+type       = "reference"
+references = "supplier"
+required   = true
+on_delete  = "restrict"
+
+[fields.warehouse_id]
+type       = "reference"
+references = "warehouse"
+required   = true
+on_delete  = "restrict"
+
+[fields.status]
+type    = "string"
+default = "draft"          # draft | sent | received | cancelled
+
+[fields.expected_at]
+type = "timestamp"
+
+[fields.received_at]
+type = "timestamp"
+
+[fields.status.admin]
+widget = "select"
+options = ["draft", "sent", "received", "cancelled"]

@@ -1,0 +1,19 @@
+# Config for the `user_after_create` hook, read at boot — change a value and
+# restart, no rebuild needed.
+
+# The role auto-joined members get. Matching a domain proves an address, not
+# authority, so this is never "admin".
+role = "member"
+
+# Domains nobody may claim. An organisation that sets `domain = "gmail.com"`
+# would otherwise adopt every Gmail user who ever signs up.
+public_domains = [
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "yahoo.com",
+  "icloud.com",
+  "proton.me",
+  "protonmail.com",
+]

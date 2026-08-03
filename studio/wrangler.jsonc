@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "apiplant-studio",
+  "compatibility_date": "2026-08-03",
+  // The build output is tracked, not generated at deploy time: vite writes it
+  // into the crate that embeds it, so there is no studio/dist to point at.
+  "assets": {
+    "directory": "../crates/apiplant-assets/assets/studio",
+    // Studio routes are real paths (/resources/note, /config/auth, ...) that
+    // only exist client-side. Serve the shell for them instead of a 404, with
+    // the URL intact so nav.ts can still parse it.
+    "not_found_handling": "single-page-application"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

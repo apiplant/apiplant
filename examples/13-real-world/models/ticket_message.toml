@@ -1,0 +1,44 @@
+# `owner_field = "author_id"` does double duty: the author is stamped from the
+# caller (nobody can post as someone else) and `update = "owner"` then lets you
+# edit only your own messages. `internal` marks staff-only notes — a hook, or a
+# separate resource, would be the way to keep those from customers.
+
+[resource]
+name        = "ticket_message"
+owner_field = "author_id"
+
+[admin]
+visible = false
+group = "Support"
+order = 2
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "owner"           # edit your own messages only
+delete = "role:admin"
+
+[fields.ticket_id]
+type       = "reference"
+references = "support_ticket"
+required   = true
+on_delete  = "cascade"
+
+[fields.author_id]
+type       = "reference"
+references = "user"
+on_delete  = "set_null"
+
+[fields.body]
+type     = "text"
+required = true
+
+[fields.body.admin]
+# The other format: replies arrive as HTML from the mail gateway, so the
+# dashboard colours the tags and previews the message rather than showing markup.
+format = "html"
+
+[fields.internal]
+type    = "boolean"
+default = false

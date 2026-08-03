@@ -1,0 +1,34 @@
+[package]
+name = "apiplant"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "The apiplant server executable: point it at an app directory and it serves an API"
+
+[[bin]]
+name = "apiplant"
+path = "src/main.rs"
+
+[dependencies]
+apiplant-abi.workspace = true
+apiplant-assets.workspace = true
+apiplant-core.workspace = true
+apiplant-db.workspace = true
+apiplant-server.workspace = true
+apiplant-js = { workspace = true, features = ["transpile"] }
+ntex.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

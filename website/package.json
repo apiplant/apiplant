@@ -1,0 +1,30 @@
+{
+  "name": "apiplant-website",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The apiplant marketing site and rendered documentation.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@shikijs/markdown-it": "^1.29.2",
+    "@solidjs/router": "^0.15.3",
+    "markdown-it": "^14.1.0",
+    "markdown-it-anchor": "^9.2.0",
+    "shiki": "^1.29.2",
+    "solid-js": "^1.9.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/markdown-it": "^14.1.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5",
+    "vite-plugin-solid": "^2.11.13",
+    "wrangler": "^4.118.0"
+  }
+}

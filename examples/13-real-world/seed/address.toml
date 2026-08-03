@@ -1,0 +1,49 @@
+[[row]]
+id = "addr-northwind-hq"
+organization_id = "acme"
+customer_id = "cust-northwind"
+label = "HQ"
+line1 = "Weena 505"
+city = "Rotterdam"
+postal_code = "3013 AL"
+country_id = "nl"
+
+[[row]]
+id = "addr-northwind-dc"
+organization_id = "acme"
+customer_id = "cust-northwind"
+label = "Distribution centre"
+line1 = "Havenstraat 12"
+line2 = "Unit 4"
+city = "Rotterdam"
+postal_code = "3024 SG"
+country_id = "nl"
+
+[[row]]
+id = "addr-lumen"
+organization_id = "acme"
+customer_id = "cust-lumen"
+label = "Studio"
+line1 = "Via Tortona 27"
+city = "Milan"
+postal_code = "20144"
+country_id = "it"
+
+[[row]]
+id = "addr-halberd"
+organization_id = "acme"
+customer_id = "cust-halberd"
+label = "Shop"
+line1 = "14 Bridge Street"
+city = "Manchester"
+postal_code = "M3 3BZ"
+country_id = "gb"
+
+[[row]]
+id = "addr-private"
+organization_id = "acme"
+customer_id = "cust-private"
+line1 = "Kastanienallee 8"
+city = "Berlin"
+postal_code = "10435"
+country_id = "de"

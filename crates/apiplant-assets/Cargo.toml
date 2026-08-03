@@ -1,0 +1,13 @@
+[package]
+name = "apiplant-assets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "The admin and studio front-end builds, embedded in the apiplant binary"
+# `assets/` is where `pnpm build` in admin/ and studio/ writes, and it is tracked.
+include = ["src/**/*", "build.rs", "assets/**/*", "Cargo.toml"]
+
+[dependencies]

@@ -1,0 +1,26 @@
+# Two references to the same resource — `reviewer_id` and `endorsed_by_id` both
+# point at an author — which is exactly the case `?expand=` exists for:
+#
+#     GET /api/reviews?expand=book,reviewer,endorsed_by
+
+[[row]]
+id = "review-left-hand"
+body = "A thought experiment that never stops being a novel."
+stars = 5
+book_id = "left-hand"
+reviewer_id = "calvino"
+endorsed_by_id = "borges"
+
+[[row]]
+id = "review-ficciones"
+body = "Short enough to read in an evening, long enough to argue about for years."
+stars = 5
+book_id = "ficciones"
+reviewer_id = "ursula"
+
+[[row]]
+id = "review-invisible-cities"
+body = "Barely a plot, and it does not need one."
+stars = 4
+book_id = "invisible-cities"
+reviewer_id = "borges"

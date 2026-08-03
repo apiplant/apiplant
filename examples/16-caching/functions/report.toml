@@ -1,0 +1,9 @@
+# Config for the `report` function, read at boot.
+
+# How long a computed report stays fresh. Short enough that new readings show
+# up quickly, long enough that a burst of requests costs one aggregate.
+#
+# Every cached key should have a TTL — either its own, like this one, or the
+# app-wide `[cache] default_ttl_secs`. A cache whose entries never expire is a
+# database with no schema and no backups.
+ttl_secs = 60

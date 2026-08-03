@@ -1,0 +1,29 @@
+# CSV, because this is a hundred flat rows and a header line says it
+# better than a hundred `[[row]]` headers. The columns are the resource's
+# fields; the ids are left out, so each row is given a stable one derived
+# from its position — re-running the seed still inserts nothing twice.
+sensor,value
+kitchen,19.4
+kitchen,19.6
+kitchen,20.1
+kitchen,20.4
+kitchen,20.2
+kitchen,19.9
+kitchen,19.7
+kitchen,19.5
+garage,8.1
+garage,8.0
+garage,7.6
+garage,7.2
+garage,6.9
+garage,7.1
+garage,7.8
+garage,8.4
+greenhouse,24.9
+greenhouse,26.3
+greenhouse,28.1
+greenhouse,29.4
+greenhouse,28.8
+greenhouse,27.2
+greenhouse,25.6
+greenhouse,24.1

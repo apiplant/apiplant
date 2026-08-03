@@ -1,0 +1,35 @@
+# `gateway_reference` is unique — that is what makes a replayed capture answer
+# 409 instead of taking the money twice — and `gateway_payload` is the
+# provider's own response, kept as JSON.
+
+[[row]]
+id = "pay-1001"
+organization_id = "acme"
+order_id = "ord-1001"
+amount_cents = 498000
+method = "transfer"
+status = "captured"
+gateway_reference = "seed-txn-1001"
+gateway_payload = { provider = "bank", reference = "NL91ABNA0417164300", cleared = true }
+captured_at = 2024-02-06T09:00:00Z
+
+[[row]]
+id = "pay-1002"
+organization_id = "acme"
+order_id = "ord-1002"
+amount_cents = 33700
+method = "card"
+status = "captured"
+gateway_reference = "seed-txn-1002"
+gateway_payload = { provider = "card", brand = "visa", last4 = "4242" }
+captured_at = 2024-02-11T14:41:00Z
+
+[[row]]
+id = "pay-1004"
+organization_id = "acme"
+order_id = "ord-1004"
+amount_cents = 24900
+method = "card"
+status = "failed"
+gateway_reference = "seed-txn-1004"
+gateway_payload = { provider = "card", brand = "visa", last4 = "0002", decline_code = "do_not_honor" }

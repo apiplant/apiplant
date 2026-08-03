@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>apiplant framework — ship one executable, point it at a directory</title>
+    <meta
+      name="description"
+      content="apiplant is a Rust framework where your API is configuration plus compiled plugins: declare resources, permissions and relationships in TOML and run one binary against the directory."
+    />
+    <link rel="canonical" href="https://framework.apiplant.com/" />
+    <meta property="og:title" content="apiplant framework" />
+    <meta
+      property="og:description"
+      content="Ship one executable. Point it at a directory. Get a database-backed REST API."
+    />
+    <meta property="og:url" content="https://framework.apiplant.com/" />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#171a21" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f2f5fa" media="(prefers-color-scheme: light)" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2327282f'/%3E%3Ctext x='2' y='23.5' font-family='Helvetica,Arial,sans-serif' font-size='17' font-weight='700' fill='%23ffffff'%3EA%3C/text%3E%3Ctext x='15' y='23.5' font-family='Helvetica,Arial,sans-serif' font-size='17' font-weight='700' fill='%234b9dff'%3EP%3C/text%3E%3C/svg%3E"
+    />
+    <script>
+      // Set the theme before first paint so the page never flashes the wrong one.
+      // The key is shared with studio.apiplant.com in name only — different
+      // origin, different storage — but keeping it identical means one habit.
+      (function () {
+        try {
+          var stored = localStorage.getItem("apiplant-theme");
+          var light =
+            stored === "light" ||
+            (!stored && window.matchMedia("(prefers-color-scheme: light)").matches);
+          if (light) document.documentElement.classList.add("light");
+          document.documentElement.style.colorScheme = light ? "light" : "dark";
+        } catch (_) {
+          /* private mode: dark is the default anyway */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>

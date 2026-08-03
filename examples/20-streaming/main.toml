@@ -1,0 +1,27 @@
+# apiplant demo app configuration. Every key here is optional; delete the file
+# entirely and the framework still boots with safe defaults.
+
+[app]
+name = "20 · Streaming functions"
+
+[server]
+port = 8103
+base_path = "/api"          # the API is mounted under /api
+
+[database]
+url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:5432/apiplant_streaming}"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "20 · Streaming functions"
+
+# No `[ai]` section, on purpose. Streaming is not an AI feature: any function
+# that produces its answer in pieces — a long report, a batch job's progress, a
+# slow third-party call — streams the same way, and example 19 is the same
+# machinery with a model behind it.

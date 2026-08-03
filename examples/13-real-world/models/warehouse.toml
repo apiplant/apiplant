@@ -1,0 +1,37 @@
+# Where stock lives. Org-scoped, but sited in a shared `country`.
+
+[resource]
+name = "warehouse"
+
+[admin]
+group = "Operations"
+order = 1
+columns = ["name", "code", "country_id"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"
+delete = "role:admin"
+
+[fields.code]
+type     = "string"
+required = true
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.country_id]
+type       = "reference"
+references = "country"
+required   = true
+on_delete  = "restrict"
+
+[fields.city]
+type = "string"
+
+[fields.active]
+type    = "boolean"
+default = true

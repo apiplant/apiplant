@@ -1,0 +1,23 @@
+# Something for the `notes` function to count. See example 02 for the resource
+# model itself.
+
+[resource]
+name = "note"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "public"
+delete = "public"
+
+[hooks]
+before_create = "noteBeforeCreate"
+
+[fields.title]
+type     = "string"
+required = true
+
+[fields.body]
+type = "text"

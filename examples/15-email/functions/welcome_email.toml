@@ -1,0 +1,9 @@
+# Config for the `welcome_email` hook, read at boot — change a value and
+# restart, no rebuild needed.
+#
+# Wording lives here rather than in the source for exactly that reason: the
+# subject line is the thing most likely to change, and it shouldn't need a
+# compiler.
+
+subject = "Welcome to Example"
+sign_in_url = "http://127.0.0.1:8099/api/docs"

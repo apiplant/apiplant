@@ -1,0 +1,17 @@
+# The parents. Books and reviews below point at these by alias, which is the
+# whole trick: nobody has to know what UUID `ursula` became.
+
+[[row]]
+id = "ursula"
+name = "Ursula K. Le Guin"
+country = "United States"
+
+[[row]]
+id = "borges"
+name = "Jorge Luis Borges"
+country = "Argentina"
+
+[[row]]
+id = "calvino"
+name = "Italo Calvino"
+country = "Italy"

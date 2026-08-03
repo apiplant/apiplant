@@ -1,0 +1,5 @@
+id,code,name,tracking_url_template,active
+dhl,DHL,DHL Express,https://track.example.com/dhl/{code},true
+ups,UPS,UPS,https://track.example.com/ups/{code},true
+poste,PI,Poste Italiane,https://track.example.com/poste/{code},true
+oldco,OLD,Nightflight Couriers,,false

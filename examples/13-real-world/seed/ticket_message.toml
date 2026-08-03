@@ -1,0 +1,38 @@
+# `internal = true` is the note the customer never sees — worth having in a
+# fixture, because it is the row that shows the column matters.
+
+[[row]]
+id = "msg-3001-a"
+organization_id = "acme"
+ticket_id = "tkt-3001"
+author_id = "editor"
+body = "One of the four speakers arrived with a cracked grille. Photos attached."
+
+[[row]]
+id = "msg-3001-b"
+organization_id = "acme"
+ticket_id = "tkt-3001"
+author_id = "admin"
+internal = true
+body = "Refunding the one unit rather than replacing it — Rotterdam is out of stock until the next purchase order lands."
+
+[[row]]
+id = "msg-3001-c"
+organization_id = "acme"
+ticket_id = "tkt-3001"
+author_id = "admin"
+body = "Sorry about that. We have refunded the damaged unit; you should see it within a few days."
+
+[[row]]
+id = "msg-3002-a"
+organization_id = "acme"
+ticket_id = "tkt-3002"
+author_id = "editor"
+body = "We can ship as soon as you send over a PO number."
+
+[[row]]
+id = "msg-3003-a"
+organization_id = "acme"
+ticket_id = "tkt-3003"
+author_id = "member"
+body = "It does — there is a 3.5mm socket on the left cup, and the cable is in the box."

@@ -1,0 +1,3 @@
+# Per-deployment configuration for the `slug` function, keyed by the directory
+# name exactly as it is for every other language. This one takes none; the file
+# is here to show that a directory function is configured no differently.

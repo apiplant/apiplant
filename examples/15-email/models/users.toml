@@ -1,0 +1,33 @@
+[resource]
+name = "user"
+scope = "global"
+
+[permissions]
+list = "member"
+read = "member"
+create = "public"
+update = "owner"
+delete = "private"
+
+[auth]
+identity_field = "email"
+password_field = "password_hash"
+
+[fields.email]
+type = "string"
+required = true
+unique = true
+max_length = 320
+
+[fields.password_hash]
+type = "string"
+hidden = true
+
+[fields.email_verified_at]
+type = "timestamp"
+
+[fields.display_name]
+type = "string"
+
+[hooks]
+after_create = "welcome_email"

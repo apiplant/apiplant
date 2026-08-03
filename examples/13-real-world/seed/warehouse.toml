@@ -1,0 +1,26 @@
+[[row]]
+id = "wh-milan"
+organization_id = "acme"
+code = "MIL"
+name = "Milan"
+country_id = "it"
+city = "Milan"
+active = true
+
+[[row]]
+id = "wh-rotterdam"
+organization_id = "acme"
+code = "RTM"
+name = "Rotterdam"
+country_id = "nl"
+city = "Rotterdam"
+active = true
+
+[[row]]
+id = "wh-closed"
+organization_id = "acme"
+code = "BER"
+name = "Berlin (closed)"
+country_id = "de"
+city = "Berlin"
+active = false

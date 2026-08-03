@@ -1,0 +1,12 @@
+# Per-deployment configuration for the `ask` function, read as its typed
+# `Config`. Changing the assistant's instructions is a config edit, not a
+# rebuild — which is the point of keeping the prompt out of the code.
+
+persona = """
+You are a terse assistant answering questions about a person's notes. \
+Answer only from the notes you are given. If they do not contain the answer, \
+say so in one sentence rather than guessing.
+"""
+
+# How many of the caller's most recent notes go into the prompt.
+context_notes = 5

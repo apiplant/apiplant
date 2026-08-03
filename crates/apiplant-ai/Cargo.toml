@@ -1,0 +1,23 @@
+[package]
+name = "apiplant-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Chat completions for apiplant: one streaming interface over OpenAI, Anthropic and any OpenAI-compatible endpoint"
+
+[dependencies]
+apiplant-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+futures-util.workspace = true
+reqwest = { workspace = true }
+tokio = { workspace = true }
+
+[[bin]]
+name = "summarize"
+path = "src/bin/summarize.rs"

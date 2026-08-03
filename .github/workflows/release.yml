@@ -1,0 +1,266 @@
+name: release
+
+# Tag a version to cut a release:
+#
+#   git tag v0.4.0 && git push origin v0.4.0
+#
+# That builds the `apiplant` binary for every supported platform, publishes a
+# multi-arch image to ghcr.io/apiplant/apiplant, and attaches the archives and
+# their checksums to the GitHub release.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (dry run: no release is published)"
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # A release build is LTO + one codegen unit; the extra debug info earlier
+  # stages emit is stripped anyway.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  binaries:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    # Uncomment together with the signing steps below. Job level, not step
+    # level, so those steps can test for it in their `if:` — a secret cannot be
+    # read from an expression directly.
+    # env:
+    #   APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --bin apiplant --target ${{ matrix.target }}
+
+      # The macOS binaries ship unsigned until there is a Developer ID
+      # certificate to sign them with. Enrolling in the Apple Developer Program
+      # is the only thing missing: uncomment the two steps below and the
+      # `APPLE_CERTIFICATE` job env above, then set the six repository secrets
+      # they read. Both steps are already guarded on the certificate secret
+      # being present, so a fork without it still builds a full set of
+      # archives.
+      #
+      # `--options runtime` (the hardened runtime) is what notarisation
+      # requires, and `--timestamp` is what keeps the signature valid after the
+      # certificate expires. Watch the first signed run: V8 JITs, so if
+      # notarisation is rejected for it, the fix is an entitlements plist with
+      # `com.apple.security.cs.allow-jit` passed via `--entitlements`.
+      #
+      # Notarisation is submitted as a zip because `notarytool` reads zip, dmg
+      # and pkg only. A bare executable has nowhere to staple a ticket to, so
+      # none is stapled: Gatekeeper looks the binary up online instead. That
+      # only matters for a binary that arrives quarantined (a browser
+      # download) — one fetched with curl never is.
+      #
+      # - name: Import Developer ID certificate
+      #   if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+      #   uses: apple-actions/import-codesign-certs@v3
+      #   with:
+      #     p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+      #     p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      #
+      # - name: Sign and notarise
+      #   if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+      #   env:
+      #     IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      #     APPLE_ID: ${{ secrets.APPLE_ID }}
+      #     TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      #     PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      #   run: |
+      #     binary="target/${{ matrix.target }}/release/apiplant"
+      #     codesign --force --sign "$IDENTITY" --options runtime --timestamp "$binary"
+      #     codesign --verify --strict --verbose=2 "$binary"
+      #
+      #     ditto -c -k "$binary" notarize.zip
+      #     xcrun notarytool submit notarize.zip \
+      #       --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$PASSWORD" \
+      #       --wait --timeout 30m
+      #     rm notarize.zip
+
+      # One archive per target, named after it, holding the binary and the
+      # README — enough to unpack anywhere and run.
+      - name: Package
+        shell: bash
+        run: |
+          name="apiplant-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/apiplant" "$name/"
+          cp README.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: |
+            apiplant-*.tar.gz
+            apiplant-*.tar.gz.sha256
+          if-no-files-found: error
+
+  # Each architecture is built on a runner of that architecture: emulating the
+  # other one under QEMU turns a long V8 link into an unusable one.
+  image:
+    name: image (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            os: ubuntu-22.04
+          - platform: linux/arm64
+            os: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest only; the tags are attached to the manifest list below,
+      # once both architectures exist.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.platform }},mode=max
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    name: image manifest
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
+            type=sha,enable=${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+      # `imagetools create` fails outright with no `-t`, so a tag list that came
+      # back empty is a workflow bug rather than something to push past.
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          tags=$(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          if [ -z "$tags" ]; then
+            echo "::error::docker/metadata-action produced no tags for ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+          args=()
+          for tag in $tags; do args+=(-t "$tag"); done
+
+          docker buildx imagetools create "${args[@]}" \
+            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+
+  release:
+    name: publish release
+    needs: [binaries, manifest]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: binary-*
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Container image
+
+            ```
+            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ```
+
+            ## Binaries
+
+            | platform | archive |
+            | --- | --- |
+            | Linux x86_64 | `apiplant-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux aarch64 | `apiplant-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz` |
+            | macOS Apple silicon | `apiplant-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz` |
+
+            Each archive has a matching `.sha256` file. The macOS binaries are
+            not yet signed — if you download one through a browser rather than
+            with `curl`, clear the quarantine flag before running it:
+            `xattr -d com.apple.quarantine ./apiplant`.

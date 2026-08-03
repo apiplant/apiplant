@@ -1,0 +1,31 @@
+# One published post and one draft, because `after_list` hides other members'
+# drafts: sign in as Ada and then as Mo, and the same `GET /posts` answers
+# differently.
+#
+# Seeding inserts directly, so the `before_create` hook that trims and
+# validates a title does not run over these rows — a fixture is written as it
+# should end up, not as a request that has to be cleaned.
+
+[[row]]
+id = "post-launch"
+organization_id = "acme"
+owner_id = "admin"
+title = "We shipped it"
+body = "The hooks example, hooked up."
+published = true
+
+[[row]]
+id = "post-draft-admin"
+organization_id = "acme"
+owner_id = "admin"
+title = "Notes towards a second post"
+body = "Unfinished, and visible only to Ada."
+published = false
+
+[[row]]
+id = "post-draft-member"
+organization_id = "acme"
+owner_id = "member"
+title = "Mo's draft"
+body = "Also unfinished, and visible only to Mo."
+published = false

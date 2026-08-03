@@ -1,0 +1,56 @@
+# Four orders in four states, so every filter in the dashboard has something to
+# find and the back-office function has a shipped order and a pending one to
+# tell apart.
+
+[[row]]
+id = "ord-1001"
+organization_id = "acme"
+number = "SO-1001"
+customer_id = "cust-northwind"
+billing_address_id = "addr-northwind-hq"
+shipping_address_id = "addr-northwind-dc"
+owner_id = "admin"
+status = "shipped"
+currency = "EUR"
+total_cents = 498000
+placed_at = 2024-02-05T10:12:00Z
+
+[[row]]
+id = "ord-1002"
+organization_id = "acme"
+number = "SO-1002"
+customer_id = "cust-lumen"
+billing_address_id = "addr-lumen"
+shipping_address_id = "addr-lumen"
+owner_id = "editor"
+status = "confirmed"
+currency = "EUR"
+total_cents = 33700
+placed_at = 2024-02-11T14:40:00Z
+
+[[row]]
+id = "ord-1003"
+organization_id = "acme"
+number = "SO-1003"
+customer_id = "cust-halberd"
+billing_address_id = "addr-halberd"
+shipping_address_id = "addr-halberd"
+owner_id = "editor"
+status = "pending"
+currency = "EUR"
+total_cents = 15800
+placed_at = 2024-02-18T08:05:00Z
+notes = "Waiting on a purchase order number from the customer."
+
+[[row]]
+id = "ord-1004"
+organization_id = "acme"
+number = "SO-1004"
+customer_id = "cust-private"
+billing_address_id = "addr-private"
+shipping_address_id = "addr-private"
+status = "cancelled"
+currency = "EUR"
+total_cents = 24900
+placed_at = 2024-02-19T19:22:00Z
+notes = "Cancelled by the customer an hour after ordering."

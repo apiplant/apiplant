@@ -1,0 +1,581 @@
+@import "tailwindcss";
+
+/*
+ * The apiplant.com palette, both themes.
+ *
+ * The names are semantic (canvas/surface/line/ink) so components never mention
+ * a theme; `:root.light` swaps the values underneath and every Tailwind utility
+ * follows, because v4 emits `var(--color-*)` rather than literals.
+ */
+@theme {
+  /* dark — the site's default */
+  --color-canvas: #171a21;
+  --color-surface: #1e2129;
+  --color-surface-2: #262a33;
+  --color-surface-3: #2f343f;
+  --color-line: #30363d;
+  --color-line-strong: #3d444d;
+  --color-ink: #ffffff;
+  --color-muted: #c9d1d9;
+  --color-faint: #8b949e;
+  --color-accent: #4a9eff;
+  --color-accent-dim: #2b7de9;
+  --color-on-accent: #08182c;
+  --color-accent-soft: #16273c;
+  --color-accent-line: #274d75;
+  --color-danger: #f87171;
+  --color-danger-soft: #2a1a1c;
+  --color-danger-line: #4c2b2e;
+  --color-warn: #facc15;
+  --color-warn-soft: #2a2413;
+  --color-warn-line: #4c421f;
+  --color-success: #4ade80;
+
+  /* syntax — GitHub's two themes, which is where the neutrals come from */
+  --color-syn-keyword: #ff7b72;
+  --color-syn-string: #a5d6ff;
+  --color-syn-number: #79c0ff;
+  --color-syn-comment: #8b949e;
+  --color-syn-type: #ffa657;
+  --color-syn-func: #d2a8ff;
+  --color-syn-name: #c9d1d9;
+  --color-editor-bg: #12151b;
+  --color-editor-gutter: #6e7681;
+  --color-editor-active: #ffffff08;
+  --color-editor-select: #2b5b8f66;
+
+  --font-sans: "Open Sans", Helvetica, Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* The one typo-proof way to keep the two palettes in sync is to list them
+   together; anything not repeated here is shared. */
+:root.light {
+  --color-canvas: #f2f5fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #e8ecf1;
+  --color-surface-3: #dde3ea;
+  --color-line: #d0d7de;
+  --color-line-strong: #b7c0ca;
+  --color-ink: #1f2328;
+  --color-muted: #424a53;
+  --color-faint: #57606a;
+  --color-accent: #2b7de9;
+  --color-accent-dim: #1c62be;
+  --color-on-accent: #ffffff;
+  --color-accent-soft: #e3eefc;
+  --color-accent-line: #b6d3f7;
+  --color-danger: #cf222e;
+  --color-danger-soft: #fdeced;
+  --color-danger-line: #f3c5c9;
+  --color-warn: #9a6700;
+  --color-warn-soft: #fdf5e3;
+  --color-warn-line: #eddcb0;
+  --color-success: #1a7f37;
+
+  --color-syn-keyword: #cf222e;
+  --color-syn-string: #0a3069;
+  --color-syn-number: #0550ae;
+  --color-syn-comment: #6e7781;
+  --color-syn-type: #953800;
+  --color-syn-func: #8250df;
+  --color-syn-name: #1f2328;
+  --color-editor-bg: #ffffff;
+  --color-editor-gutter: #8c959f;
+  --color-editor-active: #1f232808;
+  --color-editor-select: #b6d3f799;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    min-height: 100vh;
+  }
+
+  /* A soft blue light source from the top, matching the site's hero. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(70rem 40rem at 12% -10%, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 60%),
+      radial-gradient(50rem 30rem at 95% 0%, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 55%);
+    z-index: 0;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 52%, transparent);
+    color: var(--color-ink);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-faint);
+    background-clip: content-box;
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+    outline-offset: 2px;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+  }
+}
+
+@layer components {
+  /*
+   * The dark mark is a monochrome mask; the light mark is a full rendered PNG.
+   */
+  .logo-head {
+    display: inline-block;
+    aspect-ratio: 238 / 320;
+    background-color: currentColor;
+    background-image: none;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+    -webkit-mask-image: url("/head.png");
+    mask-image: url("/head.png");
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+  }
+
+  :root.light .logo-head {
+    aspect-ratio: 724 / 985;
+    background-color: transparent;
+    background-image: url("/head-inverted.png");
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: 0.875rem;
+  }
+
+  .field-label {
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+    margin-bottom: 0.375rem;
+  }
+
+  .input {
+    width: 100%;
+    background-color: var(--color-surface-2);
+    border: 1px solid var(--color-line);
+    border-radius: 0.5rem;
+    padding: 0.4375rem 0.625rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink);
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease;
+  }
+  .input::placeholder {
+    color: var(--color-faint);
+  }
+  .input:hover {
+    border-color: var(--color-line-strong);
+  }
+  .input:focus {
+    border-color: color-mix(in srgb, var(--color-accent) 60%, var(--color-line-strong));
+    outline: none;
+    background-color: var(--color-surface);
+  }
+  .input:disabled {
+    opacity: 0.55;
+  }
+
+  select.input {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238b949e' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 0.75rem;
+    padding-right: 1.75rem;
+  }
+
+  .code {
+    font-family: var(--font-mono);
+    font-size: 0.78125rem;
+    line-height: 1.7;
+    tab-size: 4;
+  }
+}
+
+/* ---- CodeMirror ------------------------------------------------------------
+ * Structure only; every colour comes from the variables above, so the editor
+ * follows the theme switch without being rebuilt. */
+.cm-editor {
+  height: 100%;
+  background-color: var(--color-editor-bg);
+  font-family: var(--font-mono);
+  font-size: 0.78125rem;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+.cm-scroller {
+  font-family: inherit;
+  line-height: 1.7;
+}
+
+.cm-gutters {
+  background-color: color-mix(in srgb, var(--color-editor-bg) 92%, var(--color-canvas));
+  border-right: 1px solid var(--color-line);
+  color: var(--color-editor-gutter);
+}
+
+.cm-panels {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  border-color: var(--color-line) !important;
+}
+
+.cm-panel input,
+.cm-panel button {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-rise {
+  animation: rise 180ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* ---- markup fields ---------------------------------------------------------
+ * A `text` field with `format = "markdown"` or `"html"` is edited with syntax
+ * colouring and a live preview. The colouring is a <pre> behind a textarea
+ * whose own text is transparent, so every metric below that affects layout —
+ * font, size, line height, padding, wrapping — must stay identical between
+ * `.markup-input` and `.markup-layer`, or the caret drifts off the letters. */
+.markup {
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background-color: var(--color-surface-2);
+}
+
+.markup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3125rem 0.5rem;
+  border-bottom: 1px solid var(--color-line);
+  background-color: var(--color-surface);
+}
+
+.markup-format {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+.markup-tabs {
+  display: flex;
+  gap: 0.125rem;
+  padding: 0.125rem;
+  border-radius: 0.375rem;
+  background-color: var(--color-surface-2);
+}
+
+.markup-tab {
+  padding: 0.1875rem 0.5rem;
+  border-radius: 0.3125rem;
+  font-size: 0.75rem;
+  color: var(--color-faint);
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+.markup-tab:hover {
+  color: var(--color-muted);
+}
+.markup-tab.is-active {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.markup-body {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+.markup-body.is-split {
+  grid-template-columns: 1fr 1fr;
+}
+.markup-body.is-split .markup-preview {
+  border-left: 1px solid var(--color-line);
+}
+
+.markup-editor {
+  position: relative;
+  min-height: 14rem;
+  background-color: var(--color-editor-bg);
+}
+
+.markup-input,
+.markup-layer {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  width: 100%;
+  height: 100%;
+  min-height: 14rem;
+  font-family: var(--font-mono);
+  font-size: 0.78125rem;
+  line-height: 1.7;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  border: 0;
+}
+
+.markup-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+
+.markup-input {
+  position: relative;
+  background-color: transparent;
+  color: transparent;
+  caret-color: var(--color-ink);
+  resize: vertical;
+  outline: none;
+}
+.markup-input::selection {
+  background-color: var(--color-editor-select);
+}
+.markup-input::placeholder {
+  color: var(--color-faint);
+}
+
+.markup-preview {
+  padding: 0.625rem 0.875rem;
+  max-height: 32rem;
+  overflow: auto;
+  background-color: var(--color-surface);
+}
+
+.markup-empty {
+  font-size: 0.75rem;
+  color: var(--color-faint);
+}
+
+/* markup tokens */
+.tok-head {
+  color: var(--color-syn-func);
+  font-weight: 600;
+}
+.tok-strong {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.tok-em {
+  color: var(--color-ink);
+  font-style: italic;
+}
+.tok-code {
+  color: var(--color-syn-string);
+}
+.tok-quote {
+  color: var(--color-syn-comment);
+  font-style: italic;
+}
+.tok-mark {
+  color: var(--color-syn-keyword);
+}
+.tok-link {
+  color: var(--color-accent);
+}
+.tok-url {
+  color: var(--color-syn-string);
+}
+.tok-tag {
+  color: var(--color-syn-keyword);
+}
+.tok-attr {
+  color: var(--color-syn-type);
+}
+.tok-str {
+  color: var(--color-syn-string);
+}
+.tok-num {
+  color: var(--color-syn-number);
+}
+.tok-bool,
+.tok-null {
+  color: var(--color-syn-keyword);
+}
+.tok-punct {
+  color: var(--color-faint);
+}
+.tok-comment {
+  color: var(--color-syn-comment);
+  font-style: italic;
+}
+
+/* ---- rendered markup -------------------------------------------------------
+ * Deliberately modest: this previews an operator's copy, it is not a theme for
+ * the site that will eventually render it. */
+.prose {
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: var(--color-muted);
+  overflow-wrap: break-word;
+}
+.prose > :first-child {
+  margin-top: 0;
+}
+.prose > :last-child {
+  margin-bottom: 0;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  color: var(--color-ink);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.25em 0 0.5em;
+}
+.prose h1 {
+  font-size: 1.375em;
+}
+.prose h2 {
+  font-size: 1.2em;
+}
+.prose h3 {
+  font-size: 1.05em;
+}
+.prose p,
+.prose ul,
+.prose ol,
+.prose pre,
+.prose blockquote,
+.prose table {
+  margin: 0.6em 0;
+}
+.prose ul,
+.prose ol {
+  padding-left: 1.25em;
+}
+.prose ul {
+  list-style: disc;
+}
+.prose ol {
+  list-style: decimal;
+}
+.prose li {
+  margin: 0.2em 0;
+}
+.prose a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+.prose strong {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.prose em {
+  font-style: italic;
+}
+.prose del {
+  text-decoration: line-through;
+  color: var(--color-faint);
+}
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background-color: var(--color-surface-2);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+}
+.prose pre {
+  background-color: var(--color-editor-bg);
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  overflow-x: auto;
+}
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+}
+.prose blockquote {
+  border-left: 2px solid var(--color-line-strong);
+  padding-left: 0.75em;
+  color: var(--color-faint);
+}
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--color-line);
+  margin: 1em 0;
+}
+.prose img {
+  max-width: 100%;
+  border-radius: 0.375rem;
+}
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--color-line);
+  padding: 0.3em 0.5em;
+  text-align: left;
+}

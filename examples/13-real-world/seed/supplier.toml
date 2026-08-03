@@ -1,0 +1,26 @@
+[[row]]
+id = "sup-tonewood"
+organization_id = "acme"
+name = "Tonewood Components"
+contact_email = "sales@tonewood.example"
+country_id = "de"
+lead_time_days = 21
+active = true
+
+[[row]]
+id = "sup-cablecraft"
+organization_id = "acme"
+name = "Cablecraft"
+contact_email = "orders@cablecraft.example"
+country_id = "it"
+lead_time_days = 7
+active = true
+
+[[row]]
+id = "sup-dormant"
+organization_id = "acme"
+name = "Pacific Drivers"
+contact_email = "hello@pacificdrivers.example"
+country_id = "jp"
+lead_time_days = 45
+active = false

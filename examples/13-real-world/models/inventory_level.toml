@@ -1,0 +1,46 @@
+# A join row: how much of one variant sits in one warehouse. Two references,
+# two nested collections:
+#   GET /api/variant/{id}/inventory_level     → this SKU, everywhere
+#   GET /api/warehouse/{id}/inventory_level   → everything in this warehouse
+# and `?expand=variant,warehouse` inlines both sides in one request.
+
+[resource]
+name = "inventory_level"
+
+[admin]
+label = "Stock level"
+plural = "Stock levels"
+group = "Operations"
+order = 2
+columns = ["variant_id", "warehouse_id", "on_hand", "reserved"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"    # stock counts move constantly
+delete = "role:admin"
+
+[fields.variant_id]
+type       = "reference"
+references = "variant"
+required   = true
+on_delete  = "cascade"     # no variant, no stock row
+
+[fields.warehouse_id]
+type       = "reference"
+references = "warehouse"
+required   = true
+on_delete  = "cascade"
+
+[fields.on_hand]
+type    = "integer"
+default = 0
+
+[fields.reserved]
+type    = "integer"
+default = 0
+
+[fields.reorder_point]
+type    = "integer"
+default = 0

@@ -1,0 +1,166 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/apiplant-abi",
+    "crates/apiplant-assets",
+    "crates/apiplant-function",
+    "crates/apiplant-core",
+    "crates/apiplant-db",
+    "crates/apiplant-auth",
+    "crates/apiplant-email",
+    "crates/apiplant-cache",
+    "crates/apiplant-payments",
+    "crates/apiplant-ai",
+    "crates/apiplant-js",
+    "crates/apiplant-server",
+    "crates/apiplant",
+]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+authors = ["Federico Rampazzo <federico@apiplant.com>"]
+repository = "https://github.com/apiplant/apiplant"
+
+[workspace.dependencies]
+# Internal crates
+apiplant-abi = { path = "crates/apiplant-abi", version = "0.4.0" }
+apiplant-assets = { path = "crates/apiplant-assets", version = "0.4.0" }
+apiplant-function = { path = "crates/apiplant-function", version = "0.4.0" }
+apiplant-core = { path = "crates/apiplant-core", version = "0.4.0" }
+apiplant-db = { path = "crates/apiplant-db", version = "0.4.0" }
+apiplant-auth = { path = "crates/apiplant-auth", version = "0.4.0" }
+apiplant-email = { path = "crates/apiplant-email", version = "0.4.0" }
+apiplant-cache = { path = "crates/apiplant-cache", version = "0.4.0" }
+apiplant-payments = { path = "crates/apiplant-payments", version = "0.4.0" }
+apiplant-ai = { path = "crates/apiplant-ai", version = "0.4.0" }
+apiplant-js = { path = "crates/apiplant-js", version = "0.4.0" }
+apiplant-server = { path = "crates/apiplant-server", version = "0.4.0" }
+
+# Stable ABI for dynamically loaded functions
+abi_stable = "0.11"
+
+# Async runtime + web server
+# `full` is not our choice to trim: deno_core enables it, and cargo unifies
+# features across the graph, so narrowing this list changes nothing.
+tokio = { version = "1", features = ["full"] }
+ntex = { version = "2", features = ["tokio", "rustls"] }
+
+# Database (sea-query for dynamic schema/queries, sea-orm for the pool + executor)
+sea-orm = { version = "1.1", default-features = false, features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+    "with-uuid",
+    "with-chrono",
+    "with-json",
+    "macros",
+] }
+sea-query = { version = "0.32", features = ["backend-postgres", "with-uuid", "with-chrono", "with-json"] }
+
+# Serialization / config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "0.8"
+toml = "0.8"
+
+# Auth
+argon2 = "0.5"
+jsonwebtoken = "9"
+
+# Outbound email (HTTP APIs + SMTP) — rustls everywhere, no OpenSSL
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "charset",
+    "http2",
+    # `stream` is what makes a token-by-token AI reply possible: without it the
+    # body is only readable once it has finished arriving, which for a chat
+    # completion is the whole answer at once.
+    "stream",
+] }
+lettre = { version = "0.11", default-features = false, features = [
+    "builder",
+    "hostname",
+    "smtp-transport",
+    "tokio1",
+    "tokio1-rustls-tls",
+    "ring",
+    "webpki-roots",
+] }
+
+# AWS SigV4 request signing (SES)
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+# Streams (SSE in, SSE out)
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+# Cache
+redis ={ version = "0.27", default-features = false, features = [
+    "tokio-rustls-comp",
+    "connection-manager",
+] }
+
+# Payments (Stripe). `webpki` roots rather than the platform store, to match
+# the rest of the graph: rustls everywhere, no OpenSSL, nothing read from /etc.
+async-stripe = { version = "0.40", default-features = false, features = [
+    "runtime-tokio-hyper-rustls-webpki",
+    # `webhook-events` deserialises every event type Stripe can deliver, and
+    # its enum names types from every product group — so it needs `full`. The
+    # alternative is not deserialising webhooks, which is the one part of a
+    # payments integration that cannot be skipped.
+    "full",
+    "webhook-events",
+    "chrono",
+] }
+
+# TLS
+rustls = "0.23"
+rustls-pemfile = "2"
+
+# Terminal user interface (the `apiplant cli` console)
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Utilities
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+libloading = "0.8"
+
+# TypeScript/JavaScript functions: V8 isolates at runtime, oxc to strip types at build time
+deno_core = "0.409"
+deno_error = "0.7"
+oxc_allocator = "0.141"
+oxc_ast = "0.141"
+oxc_codegen = "0.141"
+oxc_parser = "0.141"
+oxc_semantic = "0.141"
+oxc_span = "0.141"
+oxc_transformer = "0.141"
+crossbeam-channel = "0.5"
+
+[profile.release]
+opt-level = 3
+# Cross-crate inlining across the whole graph, in one codegen unit so LLVM sees
+# everything at once. Slow to build, but this is the profile we ship.
+lto = "fat"
+codegen-units = 1
+# Debug symbols are ~20MB of a binary nobody debugs from a release build.
+strip = "symbols"
+incremental = false
+panic = "unwind"
+
+# Functions are loaded as cdylibs over a C ABI, so they must be built with the
+# same settings — a `panic = "abort"` here would abort on a unwind that crosses
+# back from V8 or from a plugin.
+
+[profile.release.package."*"]
+opt-level = 3
+codegen-units = 1

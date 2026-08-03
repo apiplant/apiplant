@@ -1,0 +1,9 @@
+# A membership's *primary* role is on the membership itself; these rows are the
+# rest of the set. This is what makes `create = "role:editor"` on
+# `announcement` pass for Mo, who is otherwise an ordinary member.
+
+[[row]]
+id = "member-editor-at-acme"
+organization_id = "acme"
+membership_id = "member-at-acme"
+role = "editor"

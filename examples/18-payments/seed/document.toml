@@ -1,0 +1,16 @@
+# What a subscriber is paying for. The billing tables themselves
+# (`billing_product`, `billing_price`, …) are deliberately *not* seeded: those
+# rows mirror the payment provider's own, and inventing them here would mean
+# describing a subscription nobody sold.
+
+[[row]]
+id = "doc-handbook"
+organization_id = "acme"
+title = "The company handbook"
+body = "Everything Acme knows, in the order it learned it."
+
+[[row]]
+id = "doc-runbook"
+organization_id = "acme"
+title = "Incident runbook"
+body = "What to do at three in the morning, written at a more reasonable hour."

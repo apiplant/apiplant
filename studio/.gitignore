@@ -1,0 +1,6 @@
+# There is no `dist/` here: `pnpm build` writes straight into
+# crates/apiplant-assets/assets/studio, which is tracked, because the Rust build
+# embeds it and a checkout has to build without running pnpm first.
+node_modules
+.vite
+*.local

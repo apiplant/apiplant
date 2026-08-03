@@ -1,0 +1,37 @@
+[package]
+name = "apiplant-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "apiplant HTTP server: CRUD routing, function endpoints and TLS on ntex"
+
+[dependencies]
+apiplant-core.workspace = true
+apiplant-db.workspace = true
+apiplant-auth.workspace = true
+apiplant-email.workspace = true
+apiplant-payments.workspace = true
+apiplant-ai.workspace = true
+futures-util.workspace = true
+apiplant-cache.workspace = true
+apiplant-abi = { workspace = true, features = ["manifest-json"] }
+apiplant-assets.workspace = true
+apiplant-js.workspace = true
+abi_stable.workspace = true
+libloading.workspace = true
+ntex.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded = "0.7"
+toml.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true

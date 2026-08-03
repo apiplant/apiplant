@@ -1,0 +1,4 @@
+# Per-deployment configuration for the `hello` function. The host converts this
+# to JSON and hands it over via the C ABI's `config` callback — the equivalent of
+# `ctx.config()` in Rust.
+greeting = "Ciao"

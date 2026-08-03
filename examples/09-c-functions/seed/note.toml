@@ -1,0 +1,16 @@
+# Something for the functions in this example to have an opinion about.
+
+[[row]]
+id = "note-hello"
+title = "Hello"
+body = "The first note. Call a function against it and watch what comes back."
+
+[[row]]
+id = "note-groceries"
+title = "Groceries"
+body = "Bread, olive oil, a jar of the good capers."
+
+[[row]]
+id = "note-long"
+title = "A longer one"
+body = "Long enough that a summarising, counting or truncating function has something to do with it: the point of a fixture is that the interesting case is already there when you first press the button."

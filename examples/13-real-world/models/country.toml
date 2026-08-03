@@ -1,0 +1,35 @@
+# Shared reference data: the same list for every tenant, so `global`.
+# Six other resources point at it, and none of them may delete a country out
+# from under a live address — hence `restrict` on every incoming reference.
+
+[resource]
+name  = "country"
+scope = "global"
+
+[admin]
+plural = "Countries"
+group = "Reference data"
+roles = ["admin"]
+order = 2
+columns = ["code", "name", "eu"]
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "authenticated"   # a real deployment seeds this and sets `private`;
+update = "authenticated"   # left writable so the example is runnable end to end
+delete = "authenticated"
+
+[fields.code]
+type       = "string"
+required   = true
+unique     = true
+max_length = 2             # ISO 3166-1 alpha-2
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.eu]
+type    = "boolean"
+default = false

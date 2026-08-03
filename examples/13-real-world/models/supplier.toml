@@ -1,0 +1,45 @@
+# The procurement side of the graph. Stock arrives from a supplier and leaves
+# on an order, and both paths converge on the same `variant`.
+
+[resource]
+name = "supplier"
+
+[admin]
+group = "Procurement"
+order = 1
+columns = ["name", "contact_email", "country_id"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"
+delete = "role:admin"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.contact_email]
+type = "string"
+
+[fields.notes]
+type = "text"
+
+[fields.notes.admin]
+format = "markdown"
+label  = "Description"
+help   = "Who they are, how they invoice, who to call."
+
+[fields.country_id]
+type       = "reference"
+references = "country"
+on_delete  = "restrict"
+
+[fields.lead_time_days]
+type    = "integer"
+default = 14
+
+[fields.active]
+type    = "boolean"
+default = true

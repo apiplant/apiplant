@@ -1,0 +1,40 @@
+[agent]
+name = "coach"
+description = "A persisted assistant that keeps one thread per caller conversation."
+system = "You are a friendly assistant answering questions for user {{user_id}}.\nWhen the caller asks about their notes, use the `current_user_notes` tool rather than guessing.\nIf the user has no notes, say that plainly.\n"
+
+[agent.storage]
+enabled = true
+summary_after_characters = 1000
+
+[permissions]
+chat = "authenticated"
+history = "owner"
+
+[[tools]]
+name = "current_user_notes"
+description = "Fetch every note owned by the authenticated user chatting with this agent."
+function = "current_user_notes"
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties]
+
+[tools.output_schema]
+type = "object"
+
+[tools.output_schema.properties.notes]
+type = "array"
+
+[tools.output_schema.properties.notes.items]
+type = "object"
+
+[tools.output_schema.properties.notes.items.properties.id]
+type = "string"
+
+[tools.output_schema.properties.notes.items.properties.body]
+type = "string"
+
+[tools.output_schema.properties.notes.items.properties.created_at]
+type = "string"

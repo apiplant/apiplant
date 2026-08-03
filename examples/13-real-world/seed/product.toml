@@ -1,0 +1,40 @@
+# `attributes` is a `json` column, so it takes a TOML table — written inline
+# here to keep a row to a row.
+
+[[row]]
+id = "prod-orbit"
+organization_id = "acme"
+name = "Orbit Over-Ear"
+slug = "orbit-over-ear"
+category_id = "cat-headphones"
+status = "active"
+description = "Closed-back headphones for people who share an office."
+attributes = { driver_mm = 40, impedance_ohm = 32, wireless = true, colours = ["black", "sand"] }
+
+[[row]]
+id = "prod-pebble"
+organization_id = "acme"
+name = "Pebble Portable Speaker"
+slug = "pebble-portable-speaker"
+category_id = "cat-speakers"
+status = "active"
+description = "Loud for its size, waterproof for its price."
+attributes = { power_w = 12, battery_hours = 14, waterproof = "IPX7" }
+
+[[row]]
+id = "prod-cable"
+organization_id = "acme"
+name = "Braided Cable, 1.5m"
+slug = "braided-cable-1-5m"
+category_id = "cat-accessories"
+status = "active"
+attributes = { length_cm = 150, connector = "USB-C" }
+
+[[row]]
+id = "prod-legacy"
+organization_id = "acme"
+name = "Orbit Mk I"
+slug = "orbit-mk-i"
+category_id = "cat-headphones"
+status = "discontinued"
+description = "Superseded, and kept only so the old orders still make sense."

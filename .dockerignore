@@ -1,0 +1,17 @@
+# The image builds the Rust workspace and nothing else. The front-end sources
+# (`admin/`, `studio/`, `website/`) are not needed: their `pnpm build` output is
+# tracked under `crates/apiplant-assets/assets`, which is what the binary
+# embeds. Neither is `examples/` — several carry a `.apiplant-build/target`
+# worth hundreds of megabytes each.
+#
+# Written as deny-everything then allow-what-is-needed, so a new top-level
+# directory stays out of the build context until someone opts it in.
+*
+
+!Cargo.toml
+!Cargo.lock
+!crates
+
+# Build output that lives inside the allowed tree.
+crates/**/target
+crates/**/node_modules

@@ -1,0 +1,459 @@
+//! Shared server state, caller-identity resolution, and active-organisation
+//! resolution.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use apiplant_ai::Ai;
+use apiplant_auth::{Authenticator, OrgMembership, Principal};
+use apiplant_cache::Cache;
+use apiplant_core::App;
+use apiplant_db::Db;
+use apiplant_email::Mailer;
+use apiplant_payments::Payments;
+use ntex::web::HttpRequest;
+use uuid::Uuid;
+
+use crate::functions::FunctionRegistry;
+
+/// Immutable state shared across every worker and request.
+#[derive(Clone)]
+pub struct AppState {
+    pub app: Arc<App>,
+    pub db: Db,
+    pub auth: Authenticator,
+    pub functions: Arc<FunctionRegistry>,
+    /// The app's email provider, when `[email]` names one. Functions reach it
+    /// through `send_email`; nothing else in the server sends mail.
+    pub mailer: Option<Mailer>,
+    /// The app's Redis cache, when `[cache]` names one. Functions reach it
+    /// through `cache`; no framework path caches through it.
+    pub cache: Option<Cache>,
+    /// The app's payment provider, when `[payments]` names one. Behind the
+    /// `/billing` endpoints, the `billing_*` hooks and a function's
+    /// `payments` call; nothing else in the server takes money.
+    pub payments: Option<Payments>,
+    /// The app's AI assistant, when `[ai]` names a provider. Behind the
+    /// `/ai/chat` endpoint and a function's `chat` call; nothing else in the
+    /// server talks to a model.
+    pub ai: Option<Ai>,
+    /// Per-agent AI assistants whose config overrides the app-wide `[ai]`.
+    pub agent_ais: Arc<HashMap<String, Ai>>,
+    /// Everything served alongside the API: the dashboard and the public site.
+    pub statics: Arc<Statics>,
+    /// The admin manifest for this app, built on boot.
+    pub admin_manifest: Arc<String>,
+    /// Pre-rendered OpenAPI document (JSON).
+    pub openapi_json: Arc<String>,
+    /// Pre-rendered Swagger UI page.
+    pub docs_html: Arc<String>,
+}
+
+/// What the server serves besides the API: the admin dashboard, the app's
+/// `public/` directory, and the page for requests that match nothing.
+///
+/// Resolved once, on boot, so every worker registers the same routes — and so
+/// the route table is decided in one place rather than at request time.
+#[derive(Debug, Default, Clone)]
+pub struct Statics {
+    /// Path the dashboard is mounted at, or `None` when it's switched off.
+    pub admin_path: Option<String>,
+    /// Static site root (`public/`) when the app has one.
+    pub public_dir: Option<PathBuf>,
+    /// Route patterns for the files in it, one entry per URL they answer on.
+    pub public_routes: Vec<String>,
+    /// Page to answer unmatched requests with.
+    pub not_found_page: Option<PathBuf>,
+}
+
+impl Statics {
+    /// Work out what a loaded app serves statically.
+    pub fn resolve(app: &App) -> Statics {
+        let admin_path = app
+            .config
+            .admin
+            .enabled
+            .then(|| app.config.admin.path.clone());
+        let public_dir = app.root.join(&app.config.public.dir);
+        let public_dir = (app.config.public.enabled && public_dir.is_dir()).then_some(public_dir);
+
+        let mut public_routes = Vec::new();
+        let mut not_found_page = None;
+        if let Some(root) = &public_dir {
+            let mut files = Vec::new();
+            crate::walk_public(root, "", &mut files);
+            files.sort();
+            public_routes = files.iter().flat_map(|f| crate::public_routes(f)).collect();
+
+            // A 404 page is opt-out, not opt-in: `404.html` is what people
+            // already call the file, so finding one is enough to use it.
+            let candidate = app.config.public.not_found.as_deref().unwrap_or("404.html");
+            let page = root.join(candidate);
+            if page.is_file() {
+                not_found_page = Some(page);
+            } else if app.config.public.not_found.is_some() {
+                tracing::warn!(
+                    path = %page.display(),
+                    "public.not_found points at a file that doesn't exist"
+                );
+            }
+        }
+
+        Statics {
+            admin_path,
+            public_dir,
+            public_routes,
+            not_found_page,
+        }
+    }
+}
+
+impl AppState {
+    /// Resolve the caller (identity + organisation memberships) from the request.
+    ///
+    /// Identity comes from `Authorization: Bearer <jwt>`, `Authorization: ApiKey
+    /// <key>`, or `X-Api-Key: <key>`. Memberships (and the caller's role in each
+    /// organisation) are loaded fresh from the database so changes take effect
+    /// immediately. Anonymous callers resolve to `None`.
+    pub async fn resolve_principal(&self, req: &HttpRequest) -> Option<Principal> {
+        let user_id = self.resolve_user_id(req).await?;
+        let organizations = self.load_memberships(user_id).await;
+        Some(Principal {
+            user_id,
+            organizations,
+        })
+    }
+
+    async fn resolve_user_id(&self, req: &HttpRequest) -> Option<Uuid> {
+        if let Some(key) = req.headers().get("x-api-key").and_then(|v| v.to_str().ok()) {
+            if !key.is_empty() {
+                return self.user_id_from_api_key(key.trim()).await;
+            }
+        }
+        let header = req.headers().get("authorization")?.to_str().ok()?;
+        if let Some(token) = header.strip_prefix("Bearer ") {
+            return self.auth.verify_token(token.trim()).ok();
+        }
+        if let Some(key) = header.strip_prefix("ApiKey ") {
+            return self.user_id_from_api_key(key.trim()).await;
+        }
+        None
+    }
+
+    async fn user_id_from_api_key(&self, key: &str) -> Option<Uuid> {
+        let hash = Authenticator::hash_api_key(key);
+        let api_key_tbl = self.table("api_key")?;
+        let sql = format!(
+            "SELECT owner_id::text AS uid FROM {api_key_tbl} WHERE token_hash = $1 LIMIT 1"
+        );
+        let rows = self
+            .db
+            .raw_json(&sql, &[serde_json::Value::String(hash)])
+            .await
+            .ok()?;
+        let row = rows.as_array()?.first()?;
+        Uuid::parse_str(row.get("uid")?.as_str()?).ok()
+    }
+
+    /// Load the caller's organisation memberships, with every role they hold
+    /// in each.
+    ///
+    /// Roles come from two places — the membership's own primary `role` column
+    /// and its `membership_role` rows — and both are read here, once per
+    /// request, so a role granted or revoked takes effect on the next call
+    /// rather than whenever a token happens to expire.
+    async fn load_memberships(&self, user_id: Uuid) -> Vec<OrgMembership> {
+        let Some(membership_tbl) = self.table("membership") else {
+            return Vec::new();
+        };
+
+        // An app is free to drop the built-in `membership_role` resource, in
+        // which case the primary role is all there is.
+        let sql = match self.table("membership_role") {
+            Some(role_tbl) => format!(
+                "SELECT m.organization_id::text AS org, m.role AS role, r.role AS extra \
+                 FROM {membership_tbl} m \
+                 LEFT JOIN {role_tbl} r ON r.membership_id = m.id \
+                 WHERE m.user_id = $1::uuid"
+            ),
+            None => format!(
+                "SELECT organization_id::text AS org, role, NULL AS extra \
+                 FROM {membership_tbl} WHERE user_id = $1::uuid"
+            ),
+        };
+
+        let rows = match self
+            .db
+            .raw_json(&sql, &[serde_json::Value::String(user_id.to_string())])
+            .await
+        {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+
+        // The join returns one row per role, so the organisations have to be
+        // folded back together — in first-seen order, so the result does not
+        // reshuffle between requests.
+        let mut order: Vec<Uuid> = Vec::new();
+        let mut primary: HashMap<Uuid, Option<String>> = HashMap::new();
+        let mut extras: HashMap<Uuid, Vec<String>> = HashMap::new();
+
+        for row in rows.as_array().map(Vec::as_slice).unwrap_or_default() {
+            let Some(org) = row
+                .get("org")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+            else {
+                continue;
+            };
+            // The primary role repeats on every joined row; the first one is
+            // the one, and it also fixes the organisation's place in the order.
+            if let std::collections::hash_map::Entry::Vacant(slot) = primary.entry(org) {
+                order.push(org);
+                slot.insert(
+                    row.get("role")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                        .filter(|role| !role.is_empty()),
+                );
+            }
+            if let Some(extra) = row.get("extra").and_then(|v| v.as_str()) {
+                if !extra.is_empty() {
+                    extras.entry(org).or_default().push(extra.to_string());
+                }
+            }
+        }
+
+        order
+            .into_iter()
+            .map(|org| {
+                OrgMembership::new(
+                    org,
+                    primary.get(&org).cloned().flatten(),
+                    extras.remove(&org).unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    /// Every user who shares at least one organisation with `principal`
+    /// (including the caller themselves).
+    ///
+    /// This is what `member` means on the global `user` resource: colleagues are
+    /// visible to each other, strangers are not. Resolved per request from the
+    /// membership table, like the memberships themselves, so a user removed from
+    /// an organisation stops being visible immediately.
+    pub async fn co_member_user_ids(&self, principal: &Principal) -> Vec<Uuid> {
+        let orgs = principal.org_ids();
+        let mut ids = vec![principal.user_id];
+        if orgs.is_empty() {
+            return ids;
+        }
+        let Some(membership_tbl) = self.table("membership") else {
+            return ids;
+        };
+        let placeholders = (1..=orgs.len())
+            .map(|i| format!("${i}::uuid"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT DISTINCT user_id::text AS uid FROM {membership_tbl} \
+             WHERE organization_id IN ({placeholders})"
+        );
+        let params: Vec<serde_json::Value> = orgs
+            .iter()
+            .map(|id| serde_json::Value::String(id.to_string()))
+            .collect();
+        let rows = match self.db.raw_json(&sql, &params).await {
+            Ok(v) => v,
+            Err(_) => return ids,
+        };
+        if let Some(arr) = rows.as_array() {
+            for row in arr {
+                if let Some(id) = row
+                    .get("uid")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    /// Every user who belongs to a specific organisation.
+    pub async fn organization_user_ids(&self, org: Uuid) -> Vec<Uuid> {
+        let Some(membership_tbl) = self.table("membership") else {
+            return Vec::new();
+        };
+        let sql = format!(
+            "SELECT DISTINCT user_id::text AS uid FROM {membership_tbl} \
+             WHERE organization_id = $1::uuid"
+        );
+        let rows = match self
+            .db
+            .raw_json(&sql, &[serde_json::Value::String(org.to_string())])
+            .await
+        {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        let mut ids = Vec::new();
+        if let Some(arr) = rows.as_array() {
+            for row in arr {
+                if let Some(id) = row
+                    .get("uid")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    /// Resolve the caller's active organisation for this request: the
+    /// `X-Organization` header, if it names an org the caller belongs to.
+    ///
+    /// There is no fallback. Every account has at least its personal
+    /// organisation and may have any number beside it, so "the one you are in"
+    /// is never a safe guess — a request that does not say which organisation
+    /// it means is answered as one that has none.
+    pub fn active_org(&self, req: &HttpRequest, principal: &Option<Principal>) -> Option<Uuid> {
+        resolve_active_org(req, principal)
+    }
+
+    // --- what this deployment can do with a mailbox -----------------------
+    //
+    // Three features exist only if the app can send mail, and the `[auth]`
+    // flags that govern them each default to following `[email]`. Asking the
+    // question through these four methods — rather than reading the flags —
+    // keeps "is it configured" and "is it switched on" in one place, so no
+    // caller can accidentally offer a door that cannot open.
+
+    /// Whether this app can send email at all.
+    pub fn email_enabled(&self) -> bool {
+        self.mailer.is_some()
+    }
+
+    /// Whether a new account must confirm its address before it can sign in.
+    pub fn requires_email_verification(&self) -> bool {
+        self.app
+            .config
+            .auth
+            .requires_email_verification(self.email_enabled())
+    }
+
+    /// Whether an admin may invite somebody who has no account yet.
+    pub fn invitations_enabled(&self) -> bool {
+        self.app
+            .config
+            .auth
+            .invitations_enabled(self.email_enabled())
+    }
+
+    /// Whether this app can take money at all.
+    ///
+    /// The `/billing` routes are mounted on this, the `billing_*` resources
+    /// exist on it, and the dashboard hides its billing screens without it —
+    /// so no interface offers a checkout that would land on a 404.
+    pub fn payments_enabled(&self) -> bool {
+        self.payments.is_some()
+    }
+
+    /// Whether this app has an assistant at all.
+    ///
+    /// The `/ai` routes are mounted on this and a function's `chat` call fails
+    /// without it, so no interface offers a chat box that would land on a 404.
+    pub fn ai_enabled(&self) -> bool {
+        self.ai.is_some()
+    }
+
+    /// Whether a forgotten password can be reset from a link.
+    pub fn password_reset_enabled(&self) -> bool {
+        self.app
+            .config
+            .auth
+            .password_reset_enabled(self.email_enabled())
+    }
+
+    /// Quoted-safe physical table name for a resource by logical name.
+    pub(crate) fn table(&self, resource: &str) -> Option<String> {
+        self.app
+            .resources
+            .get(resource)
+            .map(|r| format!("\"{}\"", r.table_name()))
+    }
+}
+
+fn resolve_active_org(req: &HttpRequest, principal: &Option<Principal>) -> Option<Uuid> {
+    let principal = principal.as_ref()?;
+    if let Some(raw) = req
+        .headers()
+        .get("x-organization")
+        .and_then(|v| v.to_str().ok())
+    {
+        let org = Uuid::parse_str(raw.trim()).ok()?;
+        return principal.is_member(org).then_some(org);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ntex::web::test;
+
+    fn principal(orgs: &[(Uuid, Option<&str>)]) -> Principal {
+        Principal {
+            user_id: Uuid::new_v4(),
+            organizations: orgs
+                .iter()
+                .map(|(org_id, role)| OrgMembership::new(*org_id, role.map(str::to_string), []))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn active_org_prefers_valid_header() {
+        let wanted = Uuid::new_v4();
+        let req = test::TestRequest::default()
+            .header("x-organization", wanted.to_string())
+            .to_http_request();
+        let caller = Some(principal(&[
+            (wanted, Some("admin")),
+            (Uuid::new_v4(), Some("member")),
+        ]));
+
+        assert_eq!(resolve_active_org(&req, &caller), Some(wanted));
+    }
+
+    #[test]
+    fn an_organization_is_never_guessed_at() {
+        let only = Uuid::new_v4();
+        let req = test::TestRequest::default().to_http_request();
+
+        // Even a caller with exactly one organisation has to name it: the next
+        // one they create would otherwise silently change what their existing
+        // requests mean.
+        let one_org = Some(principal(&[(only, Some("member"))]));
+        assert_eq!(resolve_active_org(&req, &one_org), None);
+        assert_eq!(resolve_active_org(&req, &None), None);
+    }
+
+    #[test]
+    fn a_header_naming_an_organization_you_are_not_in_is_refused() {
+        let req = test::TestRequest::default()
+            .header("x-organization", Uuid::new_v4().to_string())
+            .to_http_request();
+        let caller = Some(principal(&[(Uuid::new_v4(), Some("admin"))]));
+        assert_eq!(resolve_active_org(&req, &caller), None);
+    }
+}

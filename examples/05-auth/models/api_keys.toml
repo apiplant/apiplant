@@ -1,0 +1,29 @@
+# The built-in `api_key` resource, extended with a label so keys can be told
+# apart. `token_hash` stays hidden — the plaintext key is shown exactly once,
+# when it is issued.
+
+[resource]
+name = "api_key"
+scope = "global"
+
+[permissions]
+list   = "owner"
+read   = "owner"
+create = "authenticated"
+update = "private"
+delete = "owner"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.token_hash]
+type   = "string"
+hidden = true
+
+[fields.owner_id]
+type       = "reference"
+references = "user"
+
+[fields.last_used_at]
+type = "timestamp"

@@ -1,0 +1,22 @@
+# Nothing here is C-specific. A function's language is invisible to the rest of
+# the app: it gets mounted, authenticated and documented the same either way.
+
+[app]
+name = "11 · Functions in Go"
+
+[server]
+port = 8099
+base_path = "/api"
+
+[database]
+url = "postgres://postgres@127.0.0.1:5432/apiplant_go_functions"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "11 · Functions in Go"

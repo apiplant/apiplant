@@ -1,0 +1,12 @@
+# `slug` is unique, and the function in this example generates one from the
+# title — so these are the rows a generated slug has to avoid colliding with.
+
+[[row]]
+id = "article-first"
+title = "A first article"
+slug = "a-first-article"
+
+[[row]]
+id = "article-second"
+title = "Something else entirely"
+slug = "something-else-entirely"

@@ -1,0 +1,38 @@
+# A review points at `author` TWICE — once for who wrote it, once for who
+# endorsed it. When a child references the same parent more than once, the
+# nested endpoint can't guess which link you mean, so it asks for ?via=:
+#   GET /api/author/{id}/review?via=reviewer_id
+
+[resource]
+name = "review"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "public"
+delete = "public"
+
+[fields.body]
+type     = "text"
+required = true
+
+[fields.stars]
+type = "integer"
+
+[fields.book_id]
+type       = "reference"
+references = "book"
+required   = true
+on_delete  = "cascade"
+
+[fields.reviewer_id]
+type       = "reference"
+references = "author"
+on_delete  = "set_null"    # keep the review, forget who wrote it
+
+[fields.endorsed_by_id]
+type       = "reference"
+references = "author"
+on_delete  = "set_null"

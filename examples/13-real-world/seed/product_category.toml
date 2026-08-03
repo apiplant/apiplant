@@ -1,0 +1,27 @@
+# A self-referencing tree: `parent_id` points at another row in this same file,
+# which works because a row only needs its parent to exist by the time the
+# *insert* happens, and rows are inserted in file order.
+
+[[row]]
+id = "cat-audio"
+name = "Audio"
+slug = "audio"
+description = "Everything that makes a noise on purpose."
+
+[[row]]
+id = "cat-headphones"
+name = "Headphones"
+slug = "headphones"
+parent_id = "cat-audio"
+
+[[row]]
+id = "cat-speakers"
+name = "Speakers"
+slug = "speakers"
+parent_id = "cat-audio"
+
+[[row]]
+id = "cat-accessories"
+name = "Accessories"
+slug = "accessories"
+description = "Cables, cases, and the adapters everyone loses."

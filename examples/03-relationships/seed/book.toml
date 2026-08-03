@@ -1,0 +1,27 @@
+# `author_id` is a reference, so it takes the alias its author was seeded with.
+# Seeding runs parents first, so the row is always there by the time this file
+# is read.
+
+[[row]]
+id = "left-hand"
+title = "The Left Hand of Darkness"
+author_id = "ursula"
+published_year = 1969
+
+[[row]]
+id = "dispossessed"
+title = "The Dispossessed"
+author_id = "ursula"
+published_year = 1974
+
+[[row]]
+id = "ficciones"
+title = "Ficciones"
+author_id = "borges"
+published_year = 1944
+
+[[row]]
+id = "invisible-cities"
+title = "Invisible Cities"
+author_id = "calvino"
+published_year = 1972

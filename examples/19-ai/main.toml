@@ -1,0 +1,32 @@
+[app]
+name = "19 · AI"
+
+[server]
+port = 8102
+base_path = "/api"
+
+[database]
+url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:5432/apiplant_ai}"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "19 · AI"
+
+[ai]
+provider = "custom"
+endpoint = "${AI_ENDPOINT:-http://localhost:8080}"
+model = "${AI_MODEL:-local}"
+system = "You are a terse assistant inside a demo API. Answer in at most three sentences."
+max_tokens = 2048
+access = "public"
+timeout_secs = 300
+reasoning = true
+
+[admin.ai_assistance]
+enabled = true

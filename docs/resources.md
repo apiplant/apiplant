@@ -1,0 +1,203 @@
+# Resources
+
+A **resource** is one `models/<name>.toml` file. apiplant turns it into a
+Postgres table and a set of RESTful CRUD endpoints. Everything about the table
+and its API is declared in that file; there are no migrations or handlers to
+write.
+
+```toml
+# models/post.toml
+[resource]
+name       = "post"          # required; also the URL segment (/api/post)
+# table    = "posts"         # optional physical table name (default apiplant_post)
+# timestamps = true          # add created_at / updated_at (default true)
+# owner_field = "owner_id"   # column used for `owner` permissions (default owner_id)
+
+[permissions]                # see permissions.md; omitted keys use safe defaults
+list   = "public"
+read   = "public"
+create = "authenticated"
+update = "owner"
+delete = "role:admin"
+
+[fields.title]
+type       = "string"
+required   = true
+max_length = 200
+
+[fields.body]
+type = "text"
+
+[fields.published]
+type    = "boolean"
+default = false
+
+[fields.owner_id]
+type       = "reference"
+references = "user"
+
+[hooks]                      # see hooks.md; optional custom logic per operation
+before_create = "post_before_create"
+```
+
+This publishes:
+
+| Method | Path | Action |
+|--------|------|--------|
+| GET | `/api/post` | list |
+| POST | `/api/post` | create |
+| GET | `/api/post/{id}` | read |
+| PATCH / PUT | `/api/post/{id}` | update |
+| DELETE | `/api/post/{id}` | delete |
+
+## `[resource]`
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `name` | *(required)* | Logical name and URL segment. Use `snake_case`. |
+| `table` | `apiplant_<name>` | Physical Postgres table name. |
+| `timestamps` | `true` | Adds `created_at` and `updated_at` (`timestamptz`, default `now()`, `updated_at` bumped on every update). |
+| `owner_field` | `owner_id` | Column that identifies the owner for `owner` permissions. See [Permissions](permissions.md#ownership). |
+
+## Automatic columns
+
+Every resource always gets:
+
+* `id`: a `uuid` primary key, defaulted with `gen_random_uuid()`.
+* `created_at` and `updated_at`, unless `timestamps = false`.
+
+A field named `id` cannot be declared; the name is reserved.
+
+## Fields
+
+Each `[fields.<name>]` table declares one column.
+
+### Field types
+
+| `type` | Postgres type | JSON in/out |
+|--------|---------------|-------------|
+| `string` | `varchar` (or `varchar(N)` with `max_length`) | string |
+| `text` | `text` | string |
+| `integer` | `integer` | number |
+| `big_int` | `bigint` | number |
+| `float` | `double precision` | number |
+| `boolean` | `boolean` | boolean |
+| `uuid` | `uuid` | string |
+| `timestamp` | `timestamptz` | RFC 3339 string |
+| `json` | `jsonb` | any JSON |
+| `reference` | `uuid` + foreign key | string (uuid); see [Relationships](relationships.md) |
+
+### Field options
+
+| Option | Applies to | Effect |
+|--------|-----------|--------|
+| `required` | any | `NOT NULL`. |
+| `unique` | any | `UNIQUE` constraint. A conflict returns **409**. |
+| `hidden` | any | Column is **stripped from every API response**, for example password hashes. It remains writable. |
+| `max_length` | `string` | Emits `varchar(N)`. |
+| `default` | scalar (bool/number/string) | Column `DEFAULT`. |
+| `references` | `reference` | Target resource name (required for references). |
+| `on_delete` | `reference` | Referential action: `restrict` (default), `set_null`, `cascade`, `no_action`. |
+
+A field may also carry a `[fields.<name>.admin]` sub-table describing how it is
+*presented* in the generated dashboard: a label, help text, a widget, or a set
+of choices. See [Admin dashboard](admin.md#admin-on-a-field).
+
+Example with several options:
+
+```toml
+[fields.email]
+type       = "string"
+required   = true
+unique     = true
+max_length = 320
+
+[fields.password_hash]
+type   = "string"
+hidden = true          # never returned to clients
+
+[fields.status]
+type    = "string"
+default = "draft"
+```
+
+## `[hooks]`
+
+An optional section binding a [function](functions.md) to points in the
+resource's request lifecycle, so you can validate, rewrite or observe each
+operation:
+
+```toml
+[hooks]
+before_create = "post_before_create"    # validate/normalise, or reject the request
+after_create  = "post_after_create"    # record it, or reshape the response
+after_list    = "post_after_list"
+```
+
+Available keys are `before_`/`after_` × `list`, `read`, `create`, `update`,
+`delete`. Unknown keys are rejected at load time. Full details, including the
+data each hook receives and what it can return, are in
+[Lifecycle hooks](hooks.md).
+
+## `[admin]`
+
+An optional section controlling how the resource appears in the generated
+[admin dashboard](admin.md): its label, its position in the navigation, the
+columns its table shows, and which roles can see it:
+
+```toml
+[admin]
+label   = "Product"
+plural  = "Products"
+group   = "Catalogue"
+roles   = ["manager"]        # who sees it; empty means anyone who may list it
+columns = ["name", "status", "category_id"]
+```
+
+This is **presentation only**. Hiding a resource here does not close its
+endpoints; that is the role of `[permissions]`, and the two are intentionally
+independent. Every key is optional, and without the section a resource still
+appears, with labels and columns inferred from its fields.
+
+Full reference: [Admin dashboard](admin.md#admin-on-a-resource).
+
+## Migrations
+
+There are **no migration files**. Your resource definitions are the desired
+state; on every boot (`auto_migrate = true`) apiplant reconciles the database in
+three idempotent, additive passes:
+
+1. **Create** missing tables (with all current columns).
+2. **Add** missing columns to existing tables (`ALTER TABLE ADD COLUMN IF NOT
+   EXISTS`), applying declared defaults.
+3. **Add** missing foreign keys for `reference` fields.
+
+This is safe to run repeatedly. It does **not**:
+
+* drop or rename columns or tables,
+* change a column's type,
+* add `NOT NULL` to a new column on a populated table without a default.
+
+Destructive or type-changing migrations remain your responsibility: run the SQL
+directly, or disable `auto_migrate`.
+
+## Built-in resources
+
+`organization`, `membership`, `user`, `api_key`, and `oauth_connection` exist in
+every app with sensible defaults. Add a `models/<name>.toml` with the same
+`name` to **replace** the default, adding fields or changing permissions; the
+framework continues to use it for auth, ownership, organisation resolution and
+key lookup. See [Authentication](authentication.md).
+
+## Validation
+
+A resource fails to load (and the server refuses to start) if:
+
+* a field is named `id`,
+* a `reference` field has no `references` target,
+* `[hooks]` contains an unknown key or an empty function name,
+* `[admin]` names a field that does not exist (in `columns`, `display_field`
+  or `search_field`), or carries an unrecognised key.
+
+Invalid SQL identifiers (table or column names outside
+`[A-Za-z_][A-Za-z0-9_]*`) are rejected at query build time.
