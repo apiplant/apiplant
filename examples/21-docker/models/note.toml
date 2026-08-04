@@ -1,0 +1,24 @@
+# One resource, so there is something to curl once the container is up.
+
+[resource]
+name = "note"
+scope = "organization"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "public"
+delete = "public"
+
+[fields.title]
+type       = "string"
+required   = true
+max_length = 200
+
+[fields.body]
+type = "text"
+
+[fields.pinned]
+type    = "boolean"
+default = false

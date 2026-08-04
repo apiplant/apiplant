@@ -1,0 +1,29 @@
+# Nothing here is Docker-specific — this is an ordinary app. What makes it
+# deployable is that every value the deployment decides is read from the
+# environment, so the same image runs on a laptop, in CI and in production
+# with nothing but different variables.
+#
+# `${VAR:-default}` keeps the app runnable with no environment at all: the
+# defaults below are what `docker compose up` provides.
+
+[app]
+name = "21 · Docker"
+
+[server]
+host = "0.0.0.0"                     # not 127.0.0.1: the port is published out
+port = 8080                          # numeric keys are literal, not `$VAR`
+base_path = "/api"
+
+[database]
+url = "${DATABASE_URL:-postgres://postgres:postgres@db:5432/apiplant_docker}"
+auto_migrate = true                  # the container migrates itself on boot
+
+[auth]
+# In production this comes from a secret, never from the image. The default is
+# here so `docker compose up` works; the compose file overrides it.
+jwt_secret = "${JWT_SECRET:-docker-example-secret-change-me}"
+
+[docs]
+enabled = true
+path = "/docs"
+title = "21 · Docker"

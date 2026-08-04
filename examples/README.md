@@ -1,6 +1,6 @@
 # Examples
 
-Twenty self-contained apps, each adding one idea to the last. Every directory
+Twenty-one self-contained apps, each adding one idea to the last. Every directory
 is a complete app: point the binary at it and it runs.
 
 | # | Example | Adds |
@@ -25,6 +25,7 @@ is a complete app: point the binary at it and it runs.
 | 18 | [payments](18-payments) | taking money: `[payments]`, a catalogue as resources, a paywall as a hook |
 | 19 | [ai](19-ai) | an assistant: one `[ai]` provider, configured `agents/`, a chat endpoint that streams, a function in front of the model, live tokens in the admin action |
 | 20 | [streaming](20-streaming) | any function's second endpoint: `/stream`, sending the answer as it is produced and into the admin action view |
+| 21 | [docker](21-docker) | shipping it: the app inside `ghcr.io/apiplant/apiplant`, a compose file, config from the environment |
 
 ## Running one
 
@@ -39,7 +40,7 @@ cargo run -p apiplant -- run --seed examples/02-resources
 in** below. Leave it off and the app runs against an empty database, which is
 what you want the second time.
 
-Examples 07–12, 14–17 and 19–20 have functions, so build them first. Rust functions need
+Examples 07–12, 14–17 and 19–21 have functions, so build them first. Rust functions need
 `cargo` on PATH; C, Zig and Go need their own toolchain (`cc`, `zig`, `go`). A
 single `.ts` file needs nothing — `apiplant build` transpiles it itself — but the
 TypeScript *directory* in example 12 is an npm project, so that one needs node
@@ -54,6 +55,9 @@ cargo run -p apiplant -- run --seed examples/08-hooks
 A function can be a single source file or a whole directory (a crate, a Go
 module, an npm project, a set of C or Zig files) — example 12 shows the directory
 form, which is how a function pulls in dependencies.
+
+Example 21 is the exception to all of the above: it brings its own Postgres and
+its own port, so `docker compose up --build` in `21-docker` is the whole thing.
 
 Each example serves on `127.0.0.1:8099` under `/api`, with Swagger UI at
 <http://127.0.0.1:8099/api/docs>. Run one at a time.
@@ -113,6 +117,7 @@ loads a fixture without starting a server. See [Seed data](../docs/seed.md).
 | 18-payments | `apiplant_payments` |
 | 19-ai | `apiplant_ai` |
 | 20-streaming | `apiplant_streaming` |
+| 21-docker | `apiplant_docker` (in its own container) |
 
 Separate databases keep the examples genuinely independent: example 05 redefines
 `user` to log in by username, which cannot share a table with the built-in
