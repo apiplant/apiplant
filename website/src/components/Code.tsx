@@ -43,8 +43,15 @@ export function Code(props: { code: string; lang: string; class?: string; filena
   );
 }
 
-/** A one-line install command with a copy button. */
-export function CopyLine(props: { command: string }) {
+/**
+ * A one-line install command with a copy button.
+ *
+ * By default the box hugs its command from `sm` up, which suits the hero's row
+ * of short commands. `block` keeps it full-width at every size instead, for a
+ * command long enough to overflow its container — the text then scrolls inside
+ * the box rather than pushing the box past the edge of the card holding it.
+ */
+export function CopyLine(props: { command: string; block?: boolean }) {
   const [copied, setCopied] = createSignal(false);
 
   const copy = async () => {
@@ -58,8 +65,16 @@ export function CopyLine(props: { command: string }) {
   };
 
   return (
-    <div class="flex w-full min-w-0 items-center gap-3 rounded-xl border border-line bg-surface px-4 py-2.5 sm:inline-flex sm:w-auto">
-      <code class="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[0.8125rem] text-muted sm:flex-none">
+    <div
+      class={`flex w-full min-w-0 items-center gap-3 rounded-xl border border-line bg-surface px-4 py-2.5 ${
+        props.block ? "" : "sm:inline-flex sm:w-auto"
+      }`}
+    >
+      <code
+        class={`min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[0.8125rem] text-muted ${
+          props.block ? "" : "sm:flex-none"
+        }`}
+      >
         <span class="select-none text-faint">$ </span>
         {props.command}
       </code>

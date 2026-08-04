@@ -41,8 +41,11 @@ sudo mv apiplant /usr/local/bin/
 Or run the container image, which is published to the GitHub registry for
 `linux/amd64` and `linux/arm64`:
 
+The image tags carry no `v` prefix — `0.4.0`, `0.4`, or `latest`:
+
 ```bash
-docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant run /app
+docker pull ghcr.io/apiplant/apiplant:0.4.0   # or :0.4, or :latest
+docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 
 The image carries the server only. Compiling `functions/*` needs the toolchain

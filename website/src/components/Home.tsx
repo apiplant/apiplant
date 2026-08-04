@@ -1,8 +1,17 @@
-import { For, createSignal } from "solid-js";
+import { For, Show, createResource, createSignal } from "solid-js";
 import { A } from "@solidjs/router";
 import { Badge, LinkButton } from "./ui";
 import { Code, CopyLine } from "./Code";
-import { GITHUB_URL, STUDIO_URL } from "../lib/links";
+import { GITHUB_URL, STUDIO_URL, CRATE_URL } from "../lib/links";
+import {
+  LATEST_RELEASE_URL,
+  PLATFORMS,
+  RELEASES_URL,
+  TAG,
+  assetName,
+  detectPlatform,
+  downloadUrl,
+} from "../lib/release";
 import { DOC_GROUPS } from "../lib/docs";
 
 /* The hero's tabs: an app is these three files, so the landing page shows all
@@ -211,8 +220,14 @@ function Hero() {
             </LinkButton>
           </div>
 
-          <div class="mt-6 flex flex-wrap gap-2">
-            <CopyLine command="cargo install apiplant" />
+          <div class="mt-6 flex flex-wrap items-center gap-3">
+            <DownloadButton />
+            <a href="#install" class="text-sm font-medium text-accent hover:text-accent-dim">
+              Other ways to install
+            </a>
+          </div>
+
+          <div class="mt-4 flex flex-wrap gap-2">
             <CopyLine command="apiplant init my-app" />
           </div>
         </div>
@@ -327,6 +342,171 @@ function Features() {
             </A>
           )}
         </For>
+      </div>
+    </section>
+  );
+}
+
+/* The release asset for the machine the page is being read on. Detection is
+   asynchronous and can fail — on Windows, on an Intel Mac, on a phone — so the
+   releases page is the fallback rather than a broken link to an archive that
+   was never built. */
+function DownloadButton(props: { class?: string }) {
+  const [platform] = createResource(detectPlatform);
+
+  return (
+    <Show
+      when={platform()}
+      fallback={
+        <LinkButton href={LATEST_RELEASE_URL} variant="primary" size="lg" class={props.class}>
+          Download {TAG}
+        </LinkButton>
+      }
+    >
+      {(detected) => (
+        <LinkButton
+          href={downloadUrl(detected())}
+          variant="primary"
+          size="lg"
+          class={props.class}
+          /* A cross-origin download of a binary: let the browser navigate to
+             the asset rather than opening a tab that immediately closes. */
+          target="_self"
+        >
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0 0 4-4m-4 4-4-4M4 19h16" />
+          </svg>
+          Download for {detected().short}
+        </LinkButton>
+      )}
+    </Show>
+  );
+}
+
+function Install() {
+  return (
+    <section id="install" class="mx-auto w-full max-w-6xl px-5 py-12 sm:py-16">
+      <h2 class="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Install</h2>
+      <p class="mt-3 max-w-2xl leading-relaxed text-muted">
+        A release is one executable with no runtime to install beside it. Take the prebuilt
+        binary, or run the image — building from source is the slowest of the three.
+      </p>
+
+      {/* Three cards, but two columns at md would leave the third orphaned, so
+          it spans the row there and only breaks into thirds at lg. `min-w-0` on
+          every card because a grid item defaults to `min-width: auto` — without
+          it a long command sets the column's width instead of scrolling. */}
+      <div class="mt-8 grid gap-4 sm:mt-10 md:grid-cols-2 lg:grid-cols-3">
+        <div class="flex min-w-0 flex-col rounded-2xl border border-accent-line bg-surface p-5 sm:p-6">
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-xs text-accent">01</span>
+            <Badge tone="accent">Recommended</Badge>
+          </div>
+          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">
+            Download the binary
+          </h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">
+            Unpack it anywhere on your <code class="font-mono text-[0.9em]">PATH</code> and run it.
+            Every archive ships with a matching{" "}
+            <code class="font-mono text-[0.9em]">.sha256</code>.
+          </p>
+
+          <div class="mt-5">
+            <DownloadButton class="w-full sm:w-auto" />
+          </div>
+
+          {/* The whole row is the link. The label never shrinks and the asset
+              name absorbs what is left, ellipsised when the column is narrow —
+              the full name is in the tooltip and in the URL. */}
+          <ul class="mt-5 space-y-1 border-t border-line pt-4">
+            <For each={PLATFORMS}>
+              {(platform) => (
+                <li class="min-w-0">
+                  <a
+                    href={downloadUrl(platform)}
+                    title={assetName(platform)}
+                    class="flex min-w-0 items-baseline justify-between gap-3 rounded-md py-1 text-muted transition-colors hover:text-ink"
+                  >
+                    <span class="shrink-0 text-sm">{platform.label}</span>
+                    <span class="min-w-0 truncate font-mono text-xs text-accent">
+                      {assetName(platform)}
+                    </span>
+                  </a>
+                </li>
+              )}
+            </For>
+          </ul>
+
+          <a
+            href={RELEASES_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+            class="mt-4 text-sm font-medium text-accent hover:text-accent-dim"
+          >
+            All releases and checksums
+          </a>
+        </div>
+
+        <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6">
+          <span class="font-mono text-xs text-accent">02</span>
+          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Run the image</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">
+            Multi-arch (amd64 and arm64) on the GitHub registry. Mount your app directory at{" "}
+            <code class="font-mono text-[0.9em]">/app</code> and the server picks it up.
+          </p>
+
+          <div class="mt-5 flex min-w-0 flex-col gap-2">
+            <CopyLine block command={`docker pull ghcr.io/apiplant/apiplant:latest`} />
+            <CopyLine
+              block
+              command={'docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant'}
+            />
+          </div>
+
+          <p class="mt-4 text-sm leading-relaxed text-muted">
+            The image carries no Rust toolchain, so Rust functions have to be built with{" "}
+            <code class="font-mono text-[0.9em]">apiplant build</code> beforehand. TypeScript
+            functions run in-process and need nothing.
+          </p>
+        </div>
+
+        <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6 md:col-span-2 lg:col-span-1">
+          <span class="font-mono text-xs text-faint">03</span>
+          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Build from source</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">
+            The last resort: this compiles the whole dependency tree. Worth it only if
+            you want a target nothing is published for, or your own patches.
+          </p>
+
+          <div class="mt-5 min-w-0">
+            <CopyLine block command="cargo install apiplant" />
+          </div>
+
+          <a
+            href={CRATE_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+            class="mt-auto inline-flex items-center gap-2 pt-4 text-sm font-medium text-accent hover:text-accent-dim"
+          >
+            {/* The crates.io mark: a crate in three-quarter view. Drawn rather
+                than fetched, since the site inlines every icon. */}
+            <svg
+              viewBox="0 0 24 24"
+              class="h-4 w-4 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 2.75 3.75 7v10L12 21.25 20.25 17V7L12 2.75Z" />
+              <path d="M3.75 7 12 11.25 20.25 7" />
+              <path d="M12 11.25v10" />
+            </svg>
+            apiplant on crates.io
+          </a>
+        </div>
       </div>
     </section>
   );
@@ -452,6 +632,7 @@ export function Home() {
       <Hero />
       <Anatomy />
       <Features />
+      <Install />
       <Steps />
       <StudioCallout />
       <DocsIndex />

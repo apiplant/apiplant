@@ -1,10 +1,25 @@
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+/* The download links name a release asset, and every asset name carries the
+   version — so the site has to know it. Read from the workspace manifest, the
+   same string `cargo build` stamps into the binary, rather than a copy here
+   that would quietly go stale one release later. */
+function workspaceVersion(): string {
+  const manifest = readFileSync(fileURLToPath(new URL("../Cargo.toml", import.meta.url)), "utf8");
+  const match = /^\s*version\s*=\s*"([^"]+)"/m.exec(
+    manifest.slice(manifest.indexOf("[workspace.package]")),
+  );
+  if (!match) throw new Error("no [workspace.package] version in ../Cargo.toml");
+  return match[1];
+}
 
 export default defineConfig({
   plugins: [solid(), tailwindcss()],
+  define: { __APIPLANT_VERSION__: JSON.stringify(workspaceVersion()) },
   // The guides are the repository's own docs/, one directory up. The alias is
   // what `import.meta.glob("@docs/*.md")` resolves against.
   resolve: {

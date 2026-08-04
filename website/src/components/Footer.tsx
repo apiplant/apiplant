@@ -27,7 +27,6 @@ const COLUMNS = [
       { label: "GitHub", href: GITHUB_URL },
       { label: "crates.io", href: CRATE_URL },
       { label: "Issues", href: `${GITHUB_URL}/issues` },
-      { label: "apiplant.com", href: COMPANY_URL },
     ],
   },
 ];
@@ -92,7 +91,7 @@ export function Footer() {
       <div class="border-t border-line">
         <div class="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-2 px-5 py-5 text-xs text-faint">
           <span>© {new Date().getFullYear()} apiplant</span>
-          <span>framework.apiplant.com</span>
+          <span> <FooterLink href={COMPANY_URL} label={"API Plant"} /></span>
         </div>
       </div>
     </footer>

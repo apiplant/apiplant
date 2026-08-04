@@ -30,10 +30,44 @@ lifecycle hooks, introducing one concept at a time.
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](openapi.md) | the generated spec and interactive docs |
 
-## Starting an app
+## Install
+
+Prebuilt binaries for Linux (x86_64, aarch64) and macOS (Apple silicon) are
+attached to every [release](https://github.com/apiplant/apiplant/releases), each
+with a `.sha256` next to it:
+
+```bash
+# Linux x86_64 — swap the target triple for yours.
+curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.4.0-x86_64-unknown-linux-gnu.tar.gz \
+  | tar xz --strip-components=1
+sudo mv apiplant /usr/local/bin/
+```
+
+Or run the container image, published to the GitHub registry for `linux/amd64`
+and `linux/arm64`. The image tags carry no `v` prefix — `0.4.0`, `0.4`, or
+`latest`:
+
+```bash
+docker pull ghcr.io/apiplant/apiplant:0.4.0   # or :0.4, or :latest
+docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
+```
+
+The image carries the server only. Compiling `functions/*` needs the toolchain
+for whichever language you wrote them in, so run `apiplant build` before
+mounting the directory — TypeScript functions need nothing, they are transpiled
+and run in-process.
+
+Or from crates.io, or from source:
 
 ```bash
 cargo install apiplant
+# or
+cargo build --release --bin apiplant
+```
+
+## Starting an app
+
+```bash
 apiplant init my-app     # a sample app: one resource, seed rows, one function
 apiplant seed my-app     # create the tables, load seed/
 apiplant run  my-app     # serve it on http://127.0.0.1:8099/api
