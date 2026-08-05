@@ -88,6 +88,9 @@ fn column_type(field: &Field) -> String {
             Some(n) => format!("varchar({n})"),
             None => "varchar".to_string(),
         },
+        // A file field holds the URL it is served from — long enough for a
+        // signed CDN link, short enough to stay indexable.
+        FieldType::File => format!("varchar({})", field.max_length.unwrap_or(1024)),
         FieldType::Text => "text".to_string(),
         FieldType::Integer => "integer".to_string(),
         FieldType::BigInt => "bigint".to_string(),

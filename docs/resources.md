@@ -85,6 +85,7 @@ Each `[fields.<name>]` table declares one column.
 | `uuid` | `uuid` | string |
 | `timestamp` | `timestamptz` | RFC 3339 string |
 | `json` | `jsonb` | any JSON |
+| `file` | `varchar(1024)` | string — the URL the file is served from; see [File storage](storage.md) |
 | `reference` | `uuid` + foreign key | string (uuid); see [Relationships](relationships.md) |
 
 ### Field options
@@ -94,7 +95,7 @@ Each `[fields.<name>]` table declares one column.
 | `required` | any | `NOT NULL`. |
 | `unique` | any | `UNIQUE` constraint. A conflict returns **409**. |
 | `hidden` | any | Column is **stripped from every API response**, for example password hashes. It remains writable. |
-| `max_length` | `string` | Emits `varchar(N)`. |
+| `max_length` | `string`, `file` | Emits `varchar(N)`. A `file` defaults to `varchar(1024)`. |
 | `default` | scalar (bool/number/string) | Column `DEFAULT`. |
 | `references` | `reference` | Target resource name (required for references). |
 | `on_delete` | `reference` | Referential action: `restrict` (default), `set_null`, `cascade`, `no_action`. |

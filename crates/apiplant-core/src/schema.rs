@@ -548,6 +548,8 @@ pub enum Widget {
     DateTime,
     Json,
     Switch,
+    /// Upload a file, or paste the URL of one that already exists.
+    File,
 }
 
 impl Widget {
@@ -565,6 +567,7 @@ impl Widget {
             Widget::DateTime => "date_time",
             Widget::Json => "json",
             Widget::Switch => "switch",
+            Widget::File => "file",
         }
     }
 }
@@ -610,6 +613,15 @@ pub enum FieldType {
     Uuid,
     Timestamp,
     Json,
+    /// A stored file, held as the URL it is served from.
+    ///
+    /// The column is an ordinary `varchar` and the value an ordinary string, so
+    /// nothing downstream — filtering, search, an API client — has to know this
+    /// type exists. What it buys is the dashboard: a `file` field is edited by
+    /// dropping a file on it, which uploads to `[storage]` and writes back the
+    /// relative link, with the raw URL still editable underneath for a file
+    /// that lives somewhere else already.
+    File,
     /// Foreign key; see [`Field::references`].
     Reference,
 }

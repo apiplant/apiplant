@@ -215,6 +215,7 @@ fn input_schema_name(r: &Resource) -> String {
 fn field_schema(f: &Field) -> Value {
     let mut base = match f.ty {
         FieldType::String | FieldType::Text => json!({ "type": "string" }),
+        FieldType::File => json!({ "type": "string", "format": "uri-reference" }),
         FieldType::Integer | FieldType::BigInt => json!({ "type": "integer" }),
         FieldType::Float => json!({ "type": "number" }),
         FieldType::Boolean => json!({ "type": "boolean" }),

@@ -22,6 +22,7 @@ lifecycle hooks, introducing one concept at a time.
 | [Lifecycle hooks](hooks.md) | running functions before/after every CRUD operation |
 | [Sending email](email.md) | one `[email]` provider: SMTP, SES, SendGrid, Brevo, Mailjet and others |
 | [Caching](caching.md) | the optional `[cache]` Redis a function can reach |
+| [File storage](storage.md) | the `file` field type, `[storage]` on a directory or an S3-compatible bucket |
 | [Payments](payments.md) | one `[payments]` provider: catalogue, subscriptions, checkout, tax |
 | [AI](ai.md) | one `[ai]` provider: a streaming chat endpoint, configured `agents/`, `ctx.chat`, streaming functions, live admin action output |
 | [Admin dashboard](admin.md) | the built-in operator UI, `[admin]` config, action forms |

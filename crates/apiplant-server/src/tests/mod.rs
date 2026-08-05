@@ -249,6 +249,10 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         crate::admin::manifest_json(&app, &functions, String::new(), mailer.is_some())
             .expect("build the admin manifest");
     let statics = crate::state::Statics::resolve(&app);
+    // Real, and rooted in the test app's own temporary directory: a test that
+    // uploads writes into a directory that is deleted with the rest of it.
+    let storage = apiplant_storage::Storage::connect(&app.config.storage, &app.root)
+        .expect("valid [storage]");
 
     AppState {
         app: Arc::new(app),
@@ -259,6 +263,7 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         // No test configures a cache, so a function that reaches for one gets
         // the same "not configured" error a real app would.
         cache: None,
+        storage,
         // Built from the app's own `[payments]` section, like the mailer
         // above: a test app that names a provider gets the `/billing` routes
         // and the `billing_*` resources, and one that doesn't gets neither.
@@ -311,3 +316,4 @@ mod permissions;
 mod resources;
 mod schema;
 mod serving;
+mod storage;

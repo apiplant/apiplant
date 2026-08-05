@@ -8,6 +8,8 @@
 //! * [lifecycle hooks](hooks) running functions around each CRUD operation,
 //! * the [admin](admin) dashboard, embedded in the binary and served at
 //!   `/admin/` for every app unless `[admin] enabled = false`,
+//! * [file uploads](storage_routes) (`<base>/uploads`) served back from
+//!   `/files/...`, over a directory or an S3-compatible bucket,
 //! * the app's `public/` directory served at the site root, with a 404 page,
 //! * TLS inferred from the app's `https/` directory.
 
@@ -70,6 +72,18 @@ macro_rules! build_app {
                 "/auth/apikeys",
                 $crate::ntex_web::post().to($crate::auth_routes::create_api_key),
             );
+
+        // Uploads carry their own payload limit, because the framework-wide
+        // default is a JSON body's worth and this route exists to take files.
+        if let Some(storage) = &state.storage {
+            scope = scope.service(
+                $crate::ntex_web::resource("/uploads")
+                    .state($crate::ntex_web::types::PayloadConfig::new(
+                        storage.max_bytes() as usize,
+                    ))
+                    .route($crate::ntex_web::post().to($crate::storage_routes::upload)),
+            );
+        }
 
         // The flows that reach somebody through their mailbox exist only where
         // this app can actually send mail. An unmounted route answers 404,
@@ -264,6 +278,19 @@ macro_rules! build_app {
                 );
         }
 
+        // Stored files answer above the API and the static site, on the prefix
+        // the stored links carry. Registered before them so a `/files` path in
+        // `public/` cannot shadow an upload.
+        if let Some(base) = &statics.storage_base {
+            // `{key}*` and not `{key:.*}`: ntex's per-segment regex stops at a
+            // `/`, and a storage key is dated — `2026/08/…` — so it always has
+            // one. The tail form is the only spelling that matches.
+            app = app.service(
+                guarded!(format!("{base}/{{key}}*"))
+                    .route($crate::ntex_web::get().to($crate::storage_routes::serve)),
+            );
+        }
+
         for route in &statics.public_routes {
             app = app.service(
                 guarded!(route.as_str()).route($crate::ntex_web::get().to($crate::public_asset)),
@@ -301,6 +328,7 @@ mod banner;
 mod billing;
 pub mod builtins;
 pub mod cabi;
+pub mod call;
 mod crud;
 pub mod email_auth;
 mod emails;
@@ -312,6 +340,7 @@ mod openapi;
 mod response;
 mod sse;
 mod state;
+mod storage_routes;
 #[cfg(test)]
 mod tests;
 
@@ -601,6 +630,18 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         None => tracing::debug!("no cache configured"),
     }
 
+    let storage = apiplant_storage::Storage::connect(&app.config.storage, &app.root)
+        .map_err(|e| apiplant_core::Error::Message(e.to_string()))?;
+    match &storage {
+        Some(storage) => tracing::info!(
+            "  storage -> {} ({}), served at {}/",
+            storage.kind(),
+            storage.location(),
+            storage.public_base()
+        ),
+        None => tracing::debug!("no storage configured"),
+    }
+
     let ai = apiplant_ai::Ai::from_config(&app.config.ai)?;
     let agent_ais = app
         .agents
@@ -799,6 +840,7 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         functions: Arc::new(registry),
         mailer,
         cache,
+        storage,
         payments,
         ai,
         oauth: oauth.map(Arc::new),

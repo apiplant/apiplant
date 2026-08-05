@@ -76,6 +76,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Lifecycle hooks](docs/hooks.md) | running functions before/after every CRUD operation |
 | [Sending email](docs/email.md) | one `[email]` provider — SMTP, SES, SendGrid, Brevo, Mailjet… |
 | [Caching](docs/caching.md) | the optional `[cache]` Redis a function can reach |
+| [File storage](docs/storage.md) | the `file` field type, `[storage]` on a directory or an S3-compatible bucket |
 | [Payments](docs/payments.md) | one `[payments]` provider — catalogue, subscriptions, checkout, tax |
 | [AI](docs/ai.md) | one `[ai]` provider — a streaming chat endpoint, `ctx.chat`, streaming functions |
 | [Admin dashboard](docs/admin.md) | the built-in operator UI, `[admin]` config, action forms |
@@ -103,6 +104,7 @@ my-app/
 │   ├── organization.toml
 │   ├── user.toml        #   an administrator who can sign in
 │   └── product.csv      #   …in TOML or CSV, whichever suits the table
+├── storage/             # uploaded files, when [storage] backend is `local`
 └── functions/           # function sources, their config, and the built libraries
     ├── greet.rs         # you write this…
     ├── greet.toml       #   …plus optional config
@@ -115,6 +117,7 @@ my-app/
 | `https/`         | plain HTTP                                                  |
 | `models/*.toml`  | just the built-in `organization`, `membership`, `user`, `api_key`, `oauth_connection` |
 | `seed/`          | an empty database — nobody to sign in as                    |
+| `storage/`       | created on first boot; uploads land here unless `[storage]` names a bucket |
 | `functions/`     | no function endpoints                                       |
 
 Functions are ordinary `.rs` files in `functions/`, each written as if it were a
@@ -158,7 +161,9 @@ references = "user"
 ```
 
 Field types: `string`, `text`, `integer`, `big_int`, `float`, `boolean`,
-`uuid`, `timestamp`, `json`, and `reference` (with `references = "<resource>"`).
+`uuid`, `timestamp`, `json`, `file` (an uploaded file, held as the URL it is
+served from — see [File storage](docs/storage.md)), and `reference` (with
+`references = "<resource>"`).
 Field options include `required`, `unique`, `hidden`, `max_length`, `default`,
 and `on_delete` — see [Resources](docs/resources.md). Every resource gets a
 `uuid` primary key and `created_at`/`updated_at` automatically. Fields marked
@@ -512,6 +517,55 @@ See [Sending email](docs/email.md), [Caching](docs/caching.md),
 [`examples/15-email`](examples/15-email) and
 [`examples/16-caching`](examples/16-caching).
 
+## File storage: uploads that outlive the backend
+
+A `file` field is a column that holds a file:
+
+```toml
+[fields.photo]
+type = "file"
+```
+
+```toml
+[storage]                                 # `local` unless told otherwise
+backend = "local"
+dir     = "storage"                       # a mounted volume, in a container
+```
+
+The dashboard renders that field as an upload button *and* a URL box — store a
+file, or point at one that already exists. `POST <base>/uploads` takes the file
+as a raw body and answers with the link; `GET /files/<key>` serves it back.
+
+What the row stores is a **relative** URL:
+
+```json
+{ "name": "Chair", "photo": "/files/2026/08/1a2b3c4d5e6f-chair.png" }
+```
+
+Never a bucket, never a signed link with an expiry. So moving to block storage
+is five lines of TOML and no data migration — every stored link keeps working,
+because none of them ever named the backend:
+
+```toml
+[storage]                                 # S3, R2, MinIO and B2 differ only here
+backend           = "s3"
+bucket            = "app-uploads"
+region            = "auto"
+endpoint          = "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+access_key_id     = "${R2_ACCESS_KEY_ID}"
+secret_access_key = "${R2_SECRET_ACCESS_KEY}"
+```
+
+The bucket stays private — reads are proxied — so there is no public-read policy
+and no signed-URL scheme to get wrong. An app that would rather serve from a CDN
+sets `base_url` and stores absolute links instead.
+
+`user.avatar_url` and `organization.avatar_url` are `file` fields, so a picture
+picker for people and workspaces is there without configuring anything. See
+[File storage](docs/storage.md) and
+[`examples/21-docker`](examples/21-docker) for the volume it needs in a
+container.
+
 ## Payments: billing as resources, not as a bolt-on
 
 A third optional section, and the one that adds the most:
@@ -660,6 +714,7 @@ apiplant run [APP_DIR]       serve the app (APP_DIR defaults to `.`)
 apiplant build [APP_DIR]     compile functions/* into loadable libraries
 apiplant check [APP_DIR]     load and validate the app, then exit
 apiplant seed [APP_DIR]      migrate, then load seed/ into the database
+apiplant call NAME [APP_DIR] run one function and print what it returned
 apiplant admin [APP_DIR]     bake a static admin panel to host elsewhere
 apiplant cli [SERVER|DIR]    interactive console for a running server
 apiplant studio              serve the visual editor from this binary
@@ -682,11 +737,65 @@ the app's fixture after migrating; `build` takes
 `--release` and `--force`; `admin` takes `--api <domain-or-base-url>` and
 optionally `--out <dir>`; `cli` takes a server address — a URL, a `host:port` or
 a domain — or, failing that, an app directory whose `main.toml` names one;
-`studio` takes `--host` and `--port`.
+`studio` takes `--host` and `--port`; `call` takes `--input`, `--as` and
+`--quiet`.
 
 The command is always spelled out — `apiplant ./my-app` is an error that tells
 you to write `apiplant run ./my-app` — and an app directory that doesn't exist
 is refused rather than served as an empty app.
+
+### Scheduled jobs
+
+A function you can call over HTTP is a function you can schedule, with no
+server in the way:
+
+```bash
+apiplant call nightly_report ./my-app
+apiplant call nightly_report --input '{"day":"yesterday"}'
+apiplant call send_digests --input @/etc/apiplant/digest.json --as "$USER_ID"
+```
+
+It builds what a request would have — the same database, email provider, cache,
+payments and AI assistant from the same `main.toml` — hands the function its
+input, and prints what it returned on stdout. Anything the function emits goes
+to stderr as it happens (`--quiet` drops it), so a long job's progress shows up
+in the logs while the result stays pipeable into `jq`.
+
+Two things differ from the HTTP endpoint, both on purpose: there is no access
+check, because there is no request to authenticate and anyone who can run the
+binary against your database already has more than an endpoint would give them
+(`--as <USER_ID>` sets the caller a function sees); and `[access] private`
+functions can be called, because a scheduled job is the same kind of trusted
+caller a hook is. It does not migrate — that stays `apiplant seed` or a boot.
+
+Which makes a Kubernetes CronJob the backend image with different arguments:
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: apiplant
+              image: ghcr.io/acme/my-app:latest   # the backend image, as deployed
+              args: ["call", "nightly_report", "/app"]
+              envFrom:
+                - secretRef:
+                    name: my-app-env             # the same DATABASE_URL etc.
+```
+
+`--input @-` reads stdin, and `--input @<file>` reads a file — which is the one
+that survives a manifest, since a ConfigMap mounted next to the job beats
+quoting JSON inside YAML inside a container's arguments. A non-zero exit means
+the function failed, so the Job's `backoffLimit` retries what you'd expect it
+to.
 
 ### The admin dashboard
 

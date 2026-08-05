@@ -23,7 +23,7 @@ import {
   Field,
   PageTitle,
 } from "../ui";
-import { FieldEditor, buildPayload, createDraft, recordLabel } from "../fields";
+import { FieldEditor, FilePicker, buildPayload, createDraft, recordLabel } from "../fields";
 import type { Draft } from "../fields";
 import {
   api,
@@ -821,19 +821,23 @@ export function OrganizationPage() {
                   onInput={(event) => setSlug(event.currentTarget.value)}
                 />
               </Field>
-              {/* Shown beside the box because a URL is not a picture until
+              {/* Shown beside the picker because a URL is not a picture until
                   something loads it, and a typo here is otherwise invisible
                   until the workspace switcher draws it wrong. */}
-              <Field label="Logo" help="A URL to a square image. Left empty, the initials are used.">
-                <div class="flex items-center gap-3">
+              <Field
+                label="Logo"
+                help="Upload a square image, or point at one. Left empty, the initials are used."
+              >
+                <div class="flex items-start gap-3">
                   <Avatar name={name() || organizationLabel(currentOrganization())} src={logo()} />
-                  <input
-                    class="input"
-                    disabled={!mayEdit()}
-                    placeholder="https://example.com/logo.png"
-                    value={logo()}
-                    onInput={(event) => setLogo(event.currentTarget.value)}
-                  />
+                  <div class="min-w-0 flex-1">
+                    <FilePicker
+                      value={logo()}
+                      onChange={setLogo}
+                      disabled={!mayEdit()}
+                      placeholder="https://example.com/logo.png"
+                    />
+                  </div>
                 </div>
               </Field>
               <Show

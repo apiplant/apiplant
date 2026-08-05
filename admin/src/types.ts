@@ -17,6 +17,7 @@ export type FieldType =
   | "uuid"
   | "timestamp"
   | "json"
+  | "file"
   | "reference";
 
 /** Concrete input to render. The generator resolves `auto` for us. */
@@ -33,6 +34,7 @@ export type Widget =
   | "json"
   | "switch"
   | "number"
+  | "file"
   | "reference";
 
 /** What a free-text field holds. `plain` is an ordinary textarea. */

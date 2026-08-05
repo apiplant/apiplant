@@ -13,6 +13,7 @@ use apiplant_db::Db;
 use apiplant_email::Mailer;
 use apiplant_oauth::Providers;
 use apiplant_payments::Payments;
+use apiplant_storage::Storage;
 use ntex::web::HttpRequest;
 use uuid::Uuid;
 
@@ -45,6 +46,10 @@ pub struct AppState {
     pub oauth: Option<Arc<Providers>>,
     /// Per-agent AI assistants whose config overrides the app-wide `[ai]`.
     pub agent_ais: Arc<HashMap<String, Ai>>,
+    /// The app's file store, when `[storage]` names a backend. Behind the
+    /// `<base>/uploads` endpoint and the `file` field type, and nothing else —
+    /// no other path in the server writes to disk or to a bucket.
+    pub storage: Option<Storage>,
     /// Everything served alongside the API: the dashboard and the public site.
     pub statics: Arc<Statics>,
     /// The admin manifest for this app, built on boot.
@@ -70,6 +75,8 @@ pub struct Statics {
     pub public_routes: Vec<String>,
     /// Page to answer unmatched requests with.
     pub not_found_page: Option<PathBuf>,
+    /// URL prefix stored files answer on (`/files`), when the app stores any.
+    pub storage_base: Option<String>,
 }
 
 impl Statics {
@@ -106,6 +113,11 @@ impl Statics {
         }
 
         Statics {
+            storage_base: app
+                .config
+                .storage
+                .is_active()
+                .then(|| app.config.storage.normalized_public_base()),
             admin_path,
             public_dir,
             public_routes,

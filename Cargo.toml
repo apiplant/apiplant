@@ -9,6 +9,7 @@ members = [
     "crates/apiplant-auth",
     "crates/apiplant-email",
     "crates/apiplant-cache",
+    "crates/apiplant-storage",
     "crates/apiplant-payments",
     "crates/apiplant-oauth",
     "crates/apiplant-ai",
@@ -35,6 +36,7 @@ apiplant-db = { path = "crates/apiplant-db", version = "0.5.0" }
 apiplant-auth = { path = "crates/apiplant-auth", version = "0.5.0" }
 apiplant-email = { path = "crates/apiplant-email", version = "0.5.0" }
 apiplant-cache = { path = "crates/apiplant-cache", version = "0.5.0" }
+apiplant-storage = { path = "crates/apiplant-storage", version = "0.5.0" }
 apiplant-payments = { path = "crates/apiplant-payments", version = "0.5.0" }
 apiplant-oauth = { path = "crates/apiplant-oauth", version = "0.5.0" }
 apiplant-ai = { path = "crates/apiplant-ai", version = "0.5.0" }

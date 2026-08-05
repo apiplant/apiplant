@@ -74,6 +74,66 @@ through `status.toml` and `version.toml`, which is how `GET
 also runs one query, so a 200 from it means the database genuinely answers —
 enough for a readiness probe.
 
+## Uploads, and the one volume they need
+
+`[storage]` decides where an uploaded file goes, and the `file` field type is
+how a model asks for one — `note.toml` has an `attachment`. In the dashboard
+that field is an upload button *and* a URL box: the first stores the file and
+writes back the link, the second takes a link to something already hosted.
+
+```bash
+curl -X POST 'localhost:8080/api/uploads?filename=receipt.pdf' \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/pdf' \
+  --data-binary @receipt.pdf
+# {"url":"/files/2026/08/1a2b3c4d5e6f-receipt.pdf", ...}
+
+curl localhost:8080/files/2026/08/1a2b3c4d5e6f-receipt.pdf
+```
+
+The link stored in the row is **relative**. That is the whole design: the
+column names a path this server answers, never a bucket, so the backend behind
+it is a configuration decision and not a data migration.
+
+In a container that means one volume:
+
+```yaml
+    environment:
+      STORAGE_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+```
+
+Without it every upload lives inside the container's writable layer and is
+discarded on the next `up --build` — the same mistake as running Postgres with
+no `pgdata`.
+
+### Or no volume at all
+
+`backend = "s3"` puts the files in block storage instead, and the same block
+covers S3, Cloudflare R2, MinIO and anything else with an S3 front door; they
+differ only in `endpoint`:
+
+```toml
+[storage]
+backend           = "s3"
+bucket            = "${STORAGE_BUCKET}"
+region            = "auto"
+endpoint          = "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+access_key_id     = "${R2_ACCESS_KEY_ID}"
+secret_access_key = "${R2_SECRET_ACCESS_KEY}"
+```
+
+Delete the volume, set those five variables, redeploy. Existing rows keep
+working, because they still say `/files/…` and the server now answers that from
+the bucket. Files already on the volume have to be copied across once — that is
+an `aws s3 sync`, not a schema change.
+
+The bucket stays **private**: reads are proxied through this server, which is
+why nothing needs a public-read policy or a signed-URL scheme. An app that
+would rather serve from a CDN sets `base_url` and stores absolute links
+instead, trading the portability for the hop.
+
 ## Migrations, and why there is no migration step
 
 `auto_migrate = true`, so the container reconciles the database with `models/`
@@ -86,6 +146,22 @@ overwrites a row you changed.
 The compose file waits on Postgres' healthcheck rather than hoping. Without it
 the first `up` races the database's own initialisation and the app exits.
 
+## Scheduled work reuses this image
+
+The entrypoint is the `apiplant` binary, so anything the CLI can do is this
+image with different arguments — including running one of the app's functions:
+
+```bash
+docker compose run --rm api call status /app
+# → {"release":"local","env":"compose","notes":0}
+```
+
+That is the whole story for a Kubernetes CronJob too: same image, same
+`envFrom`, `args: ["call", "status", "/app"]`. No second image to
+build, no HTTP call to schedule against a server that might be mid-deploy, and
+the function is the same one the API exposes. See
+[Functions](../../docs/functions.md#from-the-command-line-and-from-a-scheduler).
+
 ## Before this is production
 
 * **`JWT_SECRET` from a secret store, never the image.** Anyone holding it can
@@ -95,6 +171,12 @@ the first `up` races the database's own initialisation and the app exits.
   change.
 * **The `note` resource is `public` on all five actions**, so that the curl
   commands above need no login. Real resources are not.
+* **Uploads are `authenticated`, and reads are not.** A stored link is
+  unguessable but not secret: anyone holding it can fetch the file, because it
+  has to work in an `<img>` tag and in an email. Files that need an access check
+  do not belong in a `file` field.
+* **`allowed_types` is set.** Left empty it accepts anything, and an upload
+  endpoint that accepts anything is a file host.
 * **TLS terminates somewhere.** Usually at the load balancer in front of this;
   see [Configuration](../../docs/configuration.md) for serving it directly from
   an `https/` directory instead.

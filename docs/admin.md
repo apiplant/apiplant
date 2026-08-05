@@ -231,11 +231,17 @@ label need not match.
 | `boolean` | a switch |
 | `timestamp` | a date-and-time picker |
 | `json` | a JSON textarea |
+| `file` | an upload button and a URL box, with a preview beside them |
 | `reference` | a searchable picker showing the target's `display_field` |
 | anything with `options` | a dropdown |
 
 Override it with `text`, `textarea`, `select`, `email`, `url`, `password`,
-`color`, `date`, `date_time`, `json` or `switch`.
+`color`, `date`, `date_time`, `json`, `switch` or `file`.
+
+`file` is worth setting on a plain `string` column that already holds an image
+URL — an existing `logo` field, say — to gain the upload button without changing
+the column. It uploads into [`[storage]`](storage.md) and writes back the link;
+what the column holds is a string either way.
 
 ### Fields on the registration form
 

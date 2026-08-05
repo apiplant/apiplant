@@ -375,6 +375,41 @@ export async function api(path: string, options: RequestOptions = {}): Promise<u
   return payload;
 }
 
+/**
+ * Send one file to `<base>/uploads` and get back the URL it is served from.
+ *
+ * The file goes as the raw body rather than as multipart: the endpoint takes
+ * one file, and a `File` is already exactly the bytes to send. What comes back
+ * is normally a relative link (`/files/…`), which is what gets written into the
+ * field — so the value in the row never names a bucket or an origin.
+ */
+export async function uploadFile(file: File): Promise<string> {
+  const current = manifest();
+  if (!current) throw new Error("The dashboard is still loading.");
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    // The declared type is what the server checks against `allowed_types` and
+    // what it stores; a file the browser could not identify is left unnamed
+    // rather than guessed at here.
+    "Content-Type": file.type || "application/octet-stream",
+  };
+  if (session.apiKey) headers["X-Api-Key"] = session.apiKey;
+  if (session.token) headers.Authorization = `Bearer ${session.token}`;
+  if (session.organizationId) headers["X-Organization"] = session.organizationId;
+
+  const response = await fetch(
+    `${current.api_base_url}/uploads?filename=${encodeURIComponent(file.name)}`,
+    { method: "POST", headers, body: file },
+  );
+
+  const payload = await readPayload(response);
+  if (!response.ok) throw responseError(response, payload);
+  const url = asRecord(payload)?.url;
+  if (typeof url !== "string" || !url) throw new Error("The server stored the file but returned no URL.");
+  return url;
+}
+
 interface StreamState {
   error: string | null;
   result: unknown;

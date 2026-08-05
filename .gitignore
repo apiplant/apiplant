@@ -27,6 +27,11 @@ examples/**/functions/**/target/
 # its dependencies are installed. The lockfile is not — that one is committed.
 examples/**/functions/**/dist/
 
+# Uploaded files. `[storage] backend = "local"` creates this directory on boot
+# and fills it with whatever people upload — never something to commit.
+examples/**/storage/
+/storage/
+
 # Static admin panels baked into an example by `apiplant admin`.
 examples/**/admin
 

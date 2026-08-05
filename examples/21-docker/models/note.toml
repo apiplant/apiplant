@@ -22,3 +22,9 @@ type = "text"
 [fields.pinned]
 type    = "boolean"
 default = false
+
+# A file field: the dashboard offers an upload (into `[storage]`, so onto the
+# `uploads` volume) or a URL typed by hand. Either way the column holds a
+# string, and the API is none the wiser.
+[fields.attachment]
+type = "file"

@@ -19,6 +19,7 @@ own rules affect presentation only and are never the mechanism of enforcement.
 | Organisation memberships and roles are read from the database per request, never carried in the token, so a revoked role takes effect immediately. | |
 | Every value reaches Postgres as a bind parameter; only validated, double-quoted identifiers are ever interpolated into SQL. | [`apiplant-db`](../crates/apiplant-db/src/lib.rs) |
 | Static files resolve under `public/` only; a path that would escape the root is refused rather than served. | [Configuration](configuration.md) |
+| Uploads require authentication, are capped by `max_size_mb` while the body arrives, and are stored under a server-minted key; a `/files` path that would escape the store is refused, and no uploaded file is ever served as HTML — every read carries `nosniff`. | [File storage](storage.md) |
 | An OAuth sign-in is bound to a `state` this server issued, stored as a SHA-256 hash and spendable once, with PKCE wherever the provider supports it; and a provider account reaches an existing user only through an address that provider says it **verified**. | [Authentication](authentication.md#signing-in-with-somebody-elses-account) |
 
 A `before_*` hook is subject to the same rules as the caller: the body it
@@ -81,6 +82,25 @@ neither is unaffected by this section. If you do configure them:
   not store session tokens, password hashes or any data whose loss would matter:
   Redis is usually unauthenticated on a private network, and cached data is
   disposable by definition.
+
+### Who may upload, and who may read
+
+`[storage]` is **on by default**, so an app that writes no such section still
+accepts uploads from any signed-in caller into a `storage/` directory. Decide
+three things:
+
+* **`allowed_types`.** Empty accepts anything, which makes the endpoint a file
+  host. Naming the types the app actually uses (`["image/*"]`) is one line.
+* **`max_size_mb`.** The default is 10 MB per file. There is no per-user quota
+  and no total quota; an app that needs one enforces it in a
+  [hook](hooks.md) or in front of the endpoint.
+* **That reads are unauthenticated.** A stored link is unguessable — a UUID per
+  object — but anyone holding it can fetch the file, because it has to work in
+  an `<img>` tag and in an email. A `file` field is not the place for documents
+  that need an access check on every read.
+
+`backend = "none"` turns all of it off: no upload endpoint, no `/files`, and no
+directory created.
 
 ### TLS
 

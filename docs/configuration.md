@@ -62,6 +62,11 @@ logo     = "logo.png"        # banner image, a path inside `public/`
 url    = "redis://127.0.0.1:6379"
 prefix = "my-app:"
 
+[storage]                    # uploaded files; `local` unless told otherwise
+backend       = "local"      # local | s3 | none
+dir           = "storage"    # local: a directory (a mounted volume, in a container)
+allowed_types = ["image/*"]  # empty accepts anything
+
 [payments]                   # optional: Stripe, disabled unless a provider is named
 provider   = "stripe"
 secret_key = "${STRIPE_SECRET_KEY}"
@@ -228,6 +233,32 @@ and never used by the framework itself. See [Caching](caching.md).
 | `timeout_secs` | `5` | How long one operation may take. |
 
 A `url` that cannot be reached fails the boot.
+
+## `[storage]`
+
+Where uploaded files go, and what backs the [`file` field type](resources.md).
+A `file` column holds a **relative** URL — `/files/2026/08/…` — which the server
+answers from whichever backend is named here, so switching between them is a
+configuration change and not a data migration. On by default: with no section at
+all, uploads land in a `storage/` directory. See [File storage](storage.md).
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `backend` | `local` | `local`, `s3`, or `none` to refuse uploads outright. |
+| `dir` | `storage` | `local` only. Relative to the app root unless absolute; created on boot. Must be a mounted volume in a container. |
+| `public_base` | `/files` | URL prefix the stored links carry and the server answers on. |
+| `max_size_mb` | `10` | Largest upload accepted. |
+| `allowed_types` | *(empty)* | `image/png`, `image/*`. Empty accepts anything. |
+| `bucket` | *(empty)* | `s3` only, required. |
+| `region` | `auto` | `s3` only. R2 and most S3-compatibles want `auto`. |
+| `endpoint` | *(empty)* | `s3` only. Empty uses AWS's own; set it for R2, MinIO, B2. |
+| `access_key_id` / `secret_access_key` | *(empty)* | `s3` only, both required. |
+| `path_style` | *(set when `endpoint` is)* | `<endpoint>/<bucket>/<key>` addressing. Required by MinIO and R2. |
+| `prefix` | *(empty)* | Key prefix, so several apps can share one bucket or directory. |
+| `base_url` | *(empty)* | Store absolute links under this origin (a CDN) instead of proxying reads. |
+
+A misconfigured backend — `s3` with no bucket, a `dir` that cannot be created —
+fails the boot rather than the first upload.
 
 ## `[payments]`
 
@@ -406,7 +437,9 @@ No `https/` directory means plain HTTP.
 * `url` takes precedence over the individual `[database]` parts.
 * An empty `jwt_secret` is allowed but logs a warning.
 * `[email]`, `[cache]`, `[payments]` and `[ai]` are opt-in; a misconfigured one
-  fails the boot rather than failing quietly at first use.
+  fails the boot rather than failing quietly at first use. `[storage]` is the
+  exception among the optional services: it is on by default, and `backend =
+  "none"` is how an app opts out.
 * Removing `[payments]` removes the routes and the resources but not the tables,
   since migrations are additive and records of money changing hands should
   outlive a configuration change.

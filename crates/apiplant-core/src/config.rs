@@ -27,6 +27,7 @@ pub struct Config {
     pub public: PublicConfig,
     pub email: EmailConfig,
     pub cache: CacheConfig,
+    pub storage: StorageConfig,
     pub payments: PaymentsConfig,
     pub ai: AiConfig,
     pub oauth: OAuthConfig,
@@ -500,6 +501,120 @@ impl CacheConfig {
     /// server.
     pub fn is_active(&self) -> bool {
         self.enabled && !self.url.trim().is_empty()
+    }
+}
+
+/// Where uploaded files go.
+///
+/// A `file` field holds a *relative* URL — `/files/2026/…/logo.png` — never a
+/// bucket address, and the server answers that URL from whichever backend is
+/// configured. That is the whole point of the indirection: an app that starts
+/// on a mounted volume and later moves to S3 changes four lines of TOML and
+/// nothing else. No row is rewritten, because no row ever named the backend.
+///
+/// ```toml
+/// # A directory — a Docker volume, in practice.
+/// [storage]
+/// backend = "local"
+/// dir     = "storage"
+///
+/// # Or block storage. `r2` is `s3` with an endpoint, and so is MinIO.
+/// [storage]
+/// backend           = "s3"
+/// bucket            = "app-uploads"
+/// region            = "auto"
+/// endpoint          = "https://${R2_ACCOUNT}.r2.cloudflarestorage.com"
+/// access_key_id     = "${R2_ACCESS_KEY_ID}"
+/// secret_access_key = "${R2_SECRET_ACCESS_KEY}"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct StorageConfig {
+    /// `local` (the default), `s3`, or `none` to refuse uploads outright.
+    pub backend: String,
+    /// `local`: the directory uploads are written to, relative to the app root
+    /// unless absolute. In a container this is what you mount a volume at.
+    pub dir: String,
+    /// URL prefix the stored links carry and the server answers on. Always
+    /// starts with `/` and never ends with one (normalised on load).
+    pub public_base: String,
+    /// Largest upload accepted, in megabytes.
+    pub max_size_mb: u64,
+    /// Content types an upload may declare, as exact types (`image/png`) or
+    /// wildcards (`image/*`). Empty (the default) accepts anything — an
+    /// authenticated caller is already trusted to write a row.
+    pub allowed_types: Vec<String>,
+    /// `s3`: the bucket. Required when `backend = "s3"`.
+    pub bucket: String,
+    /// `s3`: the region. R2 and most S3-compatibles want `auto`.
+    pub region: String,
+    /// `s3`: the API origin. Empty uses AWS's own
+    /// (`https://<bucket>.s3.<region>.amazonaws.com`); set it for R2, MinIO,
+    /// Backblaze or any other S3-compatible service.
+    pub endpoint: String,
+    /// `s3`: credentials.
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    /// `s3`: address objects as `<endpoint>/<bucket>/<key>` rather than putting
+    /// the bucket in the hostname. Required by MinIO and by R2 (the default
+    /// when an `endpoint` is set).
+    pub path_style: Option<bool>,
+    /// Key prefix inside the bucket or directory, so several apps can share one.
+    pub prefix: String,
+    /// Serve files from somewhere else entirely — a CDN, or a public bucket —
+    /// by storing absolute URLs under this origin instead of relative ones.
+    ///
+    /// Empty (the default) keeps links relative and proxies reads through the
+    /// server, which is what makes a private bucket work. Setting it is a
+    /// deliberate trade: faster, but the objects must be publicly readable and
+    /// the links stop being portable.
+    pub base_url: String,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        StorageConfig {
+            backend: "local".to_string(),
+            dir: "storage".to_string(),
+            public_base: "/files".to_string(),
+            max_size_mb: 10,
+            allowed_types: Vec::new(),
+            bucket: String::new(),
+            region: "auto".to_string(),
+            endpoint: String::new(),
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            path_style: None,
+            prefix: String::new(),
+            base_url: String::new(),
+        }
+    }
+}
+
+impl StorageConfig {
+    /// Whether uploads are accepted at all.
+    pub fn is_active(&self) -> bool {
+        !matches!(self.backend.trim().to_lowercase().as_str(), "none" | "")
+    }
+
+    /// `/files` — leading slash, no trailing slash, whatever was written.
+    pub fn normalized_public_base(&self) -> String {
+        let trimmed = self.public_base.trim().trim_matches('/');
+        match trimmed.is_empty() {
+            true => "/files".to_string(),
+            false => format!("/{trimmed}"),
+        }
+    }
+
+    /// Whether objects are addressed as `<endpoint>/<bucket>/<key>`. Explicit
+    /// when written down; otherwise path-style exactly when a custom endpoint
+    /// is set, since that is what every S3-compatible service but AWS wants.
+    pub fn uses_path_style(&self) -> bool {
+        self.path_style.unwrap_or(!self.endpoint.trim().is_empty())
+    }
+
+    pub fn max_size_bytes(&self) -> u64 {
+        self.max_size_mb.saturating_mul(1024 * 1024)
     }
 }
 

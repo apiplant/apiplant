@@ -481,6 +481,40 @@ curl -XPOST http://localhost:8099/api/functions/greet \
 * Visibility is enforced, returning `401`, `403` or `404`.
 * `Ok(output)` is serialized to JSON; `Err(e)` becomes a `400` with `e`'s text.
 
+### From the command line, and from a scheduler
+
+`apiplant call` runs a function without serving anything, which is what a
+scheduled job needs:
+
+```bash
+apiplant call greet --input '{"name":"World"}'
+# → {"message":"Bonjour, World!","registered_users":1}
+
+apiplant call nightly_report ./my-app          # the app directory, after the name
+apiplant call send_digests --input @batch.json --as "$USER_ID" --quiet
+```
+
+* `--input` takes JSON, `@<file>`, or `@-` for stdin. It is validated before the
+  function sees it; omitted, it is `{}` — the same as an empty request body.
+* The return value is printed on **stdout**, and everything the function `emit`s
+  is relayed to **stderr** as it is produced, so progress is visible in the logs
+  and the result is still pipeable. `--quiet` drops the emitted chunks.
+* A function that fails exits non-zero with its message. Unlike the endpoint,
+  an internal error prints its detail: whoever ran the command is the operator
+  the detail was written for.
+* The database, mailer, cache, payments and AI assistant are built from the same
+  `main.toml` as the server's, so the function behaves as it does in a request.
+* **No access check, and no visibility check.** There is no request to
+  authenticate; `--as <USER_ID>` sets what `ctx.principal_id()` returns, and a
+  `private` function — which has no endpoint at all — can be called this way,
+  because a scheduler is the same kind of trusted caller a hook is.
+* Migrations are **not** run. That stays `apiplant seed` or a server boot, so a
+  job can't migrate production at 3am because it was scheduled to.
+
+Since the backend image's entrypoint is the `apiplant` binary, a Kubernetes
+CronJob is that image with different `args` — see
+[the README](../README.md#scheduled-jobs) for the manifest.
+
 ### Streaming what it produces
 
 Every function has a second endpoint, `<base>/functions/<name>/stream`, which

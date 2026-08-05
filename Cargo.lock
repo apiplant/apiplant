@@ -308,6 +308,7 @@ dependencies = [
  "apiplant-js",
  "apiplant-oauth",
  "apiplant-payments",
+ "apiplant-storage",
  "chrono",
  "futures-util",
  "libloading 0.8.9",
@@ -320,6 +321,22 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "apiplant-storage"
+version = "0.5.0"
+dependencies = [
+ "apiplant-core",
+ "chrono",
+ "hex",
+ "hmac",
+ "reqwest",
+ "sha2",
+ "thiserror 2.0.19",
+ "tokio",
  "tracing",
  "uuid",
 ]

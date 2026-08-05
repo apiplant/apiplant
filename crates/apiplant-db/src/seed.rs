@@ -298,7 +298,10 @@ fn to_sql(ty: FieldType, raw: &Raw) -> Result<Option<SqlValue>, String> {
         // TOML is typed, but a number written for a text column (a postcode, a
         // version) is a spelling, not a mistake — so a scalar is accepted
         // wherever a string is wanted.
-        Raw::Typed(v) if matches!(ty, FieldType::String | FieldType::Text) && !v.is_string() => {
+        Raw::Typed(v)
+            if matches!(ty, FieldType::String | FieldType::Text | FieldType::File)
+                && !v.is_string() =>
+        {
             match v {
                 Json::Object(_) | Json::Array(_) => return Err("expected a string".to_string()),
                 other => SqlValue::from(other.to_string()),

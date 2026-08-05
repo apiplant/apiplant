@@ -34,6 +34,21 @@ services:
       # A real deployment reads this from a secret store. Anyone holding it can
       # mint a session for any user.
       JWT_SECRET: compose-secret-change-me
+      # Where `[storage] backend = "local"` writes. It has to be the mount
+      # point below: a container's own filesystem is discarded on every deploy,
+      # so an upload written anywhere else is gone by the next `up --build`.
+      STORAGE_DIR: /data/uploads
+    volumes:
+      # The uploads volume. This one line is the difference between files that
+      # survive a redeploy and files that do not — and it is the only thing
+      # `backend = "local"` needs.
+      #
+      # Moving to S3 or R2 instead: set the `[storage]` block in `main.toml` to
+      # `backend = "s3"` (the commented block there), drop this volume, and no
+      # stored link changes. A `file` field holds `/files/…`, which this server
+      # answers from whichever backend is configured, so nothing in the database
+      # ever named the volume.
+      - uploads:/data/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -54,3 +69,4 @@ services:
 
 volumes:
   pgdata:
+  uploads:

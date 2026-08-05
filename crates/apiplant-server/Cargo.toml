@@ -18,6 +18,7 @@ apiplant-oauth.workspace = true
 apiplant-ai.workspace = true
 futures-util.workspace = true
 apiplant-cache.workspace = true
+apiplant-storage.workspace = true
 apiplant-abi = { workspace = true, features = ["manifest-json"] }
 apiplant-assets.workspace = true
 apiplant-js.workspace = true

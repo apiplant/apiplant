@@ -6,6 +6,7 @@
 //! apiplant build [APP_DIR]     # compile functions/* into loadable libraries
 //! apiplant check [APP_DIR]     # load & validate the app, then exit
 //! apiplant seed [APP_DIR]      # load seed/ into the database
+//! apiplant call NAME [APP_DIR] # run one function and print what it returned
 //! apiplant admin [APP_DIR]     # bake a static admin panel to host elsewhere
 //! apiplant cli [SERVER|DIR]   # interactive console for a running app
 //! apiplant studio              # serve the visual editor from this binary
@@ -34,6 +35,7 @@ usage:
   apiplant build [APP_DIR]     compile functions/* into loadable libraries
   apiplant check [APP_DIR]     load and validate the app, then exit
   apiplant seed [APP_DIR]      migrate, then load seed/ into the database
+  apiplant call NAME [APP_DIR] run one function and print what it returned
   apiplant admin [APP_DIR]     bake a static admin panel to host elsewhere
   apiplant cli [SERVER|DIR]    interactive console for a running server
                                (a URL or host; or an app directory, default `.`)
@@ -51,7 +53,19 @@ options:
   --out <DIR>       (admin) where to write it (default: APP_DIR/admin)
   --host <ADDR>     (studio) interface to bind (default 127.0.0.1)
   --port <PORT>     (studio) port to listen on (default 5273)
+  --input <JSON>    (call) the function's input — JSON, `@file`, or `@-` for
+                    stdin (default: `{}`)
+  --as <USER_ID>    (call) the user id the function sees as its caller
+  --quiet           (call) drop what the function emits instead of relaying it
   -h, --help        show this message
+
+`call` runs one of the app's functions the way an HTTP request to
+`/functions/<NAME>` would — same database, same email/cache/payments/AI — but
+with no server and no access check, which is what makes it the thing to put in
+a Kubernetes CronJob: schedule this binary against the same image and config.
+Private functions can be called too. It does not migrate. The result goes to
+stdout and anything the function emits goes to stderr, so a job's output is
+still parseable while its progress stays visible in the logs.
 
 Every served app gets the admin dashboard at `/admin/` — it is built into this
 binary and describes whichever app is being served, so you only need `admin` to
@@ -80,6 +94,12 @@ enum Command {
         release: bool,
     },
     Check,
+    Call {
+        name: String,
+        input: Option<String>,
+        principal: Option<String>,
+        quiet: bool,
+    },
     Admin {
         api: String,
         out: Option<String>,
@@ -116,6 +136,9 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
     let mut seed = false;
     let mut release = false;
     let mut force = false;
+    let mut quiet = false;
+    let mut input = None;
+    let mut principal = None;
     let mut api = None;
     let mut out = None;
     let mut host = None;
@@ -153,6 +176,14 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
                     name = Some(arg);
                     continue;
                 }
+                "--input" => {
+                    input = Some(arg);
+                    continue;
+                }
+                "--as" => {
+                    principal = Some(arg);
+                    continue;
+                }
                 "--port" => {
                     port = Some(
                         arg.parse::<u16>()
@@ -170,6 +201,9 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--seed" => seed = true,
             "--release" => release = true,
             "--force" => force = true,
+            "--quiet" => quiet = true,
+            "--input" => expecting = Some("--input"),
+            "--as" => expecting = Some("--as"),
             "--api" => expecting = Some("--api"),
             "--out" => expecting = Some("--out"),
             "--host" => expecting = Some("--host"),
@@ -179,7 +213,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             "--name" => expecting = Some("--name"),
             // Kept for compatibility with the original flag-style invocation.
             "--check" => command = Some("check"),
-            "init" | "run" | "build" | "check" | "seed" | "admin" | "cli" | "studio"
+            "init" | "run" | "build" | "check" | "seed" | "call" | "admin" | "cli" | "studio"
                 if command.is_none() && dir.is_none() =>
             {
                 command = Some(match arg.as_str() {
@@ -187,6 +221,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
                     "run" => "run",
                     "build" => "build",
                     "seed" => "seed",
+                    "call" => "call",
                     "admin" => "admin",
                     "cli" => "cli",
                     "studio" => "studio",
@@ -201,8 +236,11 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             }
             other if dir.is_none() => dir = Some(other.to_string()),
             // `apiplant init my-app <repo-url>` — the second positional is the
-            // template, so the common form needs no flag at all.
-            other if command == Some("init") && extra.is_none() => extra = Some(other.to_string()),
+            // template, so the common form needs no flag at all. For `call` it
+            // is the app directory, the function name having taken the first.
+            other if matches!(command, Some("init") | Some("call")) && extra.is_none() => {
+                extra = Some(other.to_string())
+            }
             other => return Err(format!("unexpected argument `{other}`")),
         }
     }
@@ -214,8 +252,11 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
     let Some(command) = command else {
         return Err("a command is required".into());
     };
-    if command != "init" && extra.is_some() {
+    if !matches!(command, "init" | "call") && extra.is_some() {
         return Err(format!("`{command}` takes at most one directory"));
+    }
+    if command != "call" && (input.is_some() || principal.is_some() || quiet) {
+        return Err("`--input`, `--as` and `--quiet` only apply to `call`".into());
     }
 
     let command = match command {
@@ -285,6 +326,29 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
                 Command::Seed
             } else {
                 Command::Check
+            }
+        }
+        "call" => {
+            if from.is_some() || branch.is_some() || name.is_some() {
+                return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
+            }
+            if build_first || seed || release || force || api.is_some() || out.is_some() {
+                return Err("`call` does not take run/build/admin flags".into());
+            }
+            if host.is_some() || port.is_some() {
+                return Err("`--host` and `--port` only apply to `studio`".into());
+            }
+            // The first positional is the function; the app directory follows
+            // it, so `dir` has to be shuffled along by one.
+            let Some(function) = dir.take() else {
+                return Err("`call` needs a function name: `apiplant call <NAME>`".into());
+            };
+            dir = extra.take();
+            Command::Call {
+                name: function,
+                input,
+                principal,
+                quiet,
             }
         }
         "admin" => {
@@ -440,6 +504,30 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
+        Command::Call {
+            name,
+            input,
+            principal,
+            quiet,
+        } => {
+            let input = read_input(input.as_deref())?;
+            let app = if quiet { App::load(dir)? } else { load(dir)? };
+            let result = apiplant_server::call::call(
+                &app,
+                &name,
+                apiplant_server::call::Options {
+                    input,
+                    principal,
+                    emit_to_stderr: !quiet,
+                },
+            )
+            .await?;
+            // The result alone on stdout, so `apiplant call ... | jq` works and
+            // a CronJob can pipe it somewhere.
+            println!("{result}");
+            Ok(())
+        }
+
         Command::Admin { api, out } => {
             let stale = compile::stale(dir);
             if !stale.is_empty() {
@@ -541,6 +629,38 @@ async fn seed_app(app: &App) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Resolve `--input` to the JSON a function will be handed.
+///
+/// A literal is the common case, `@file` is the one that survives a shell and a
+/// Kubernetes manifest (a ConfigMap mounted next to the job beats quoting JSON
+/// inside YAML inside a container's args), and `@-` is stdin.
+fn read_input(input: Option<&str>) -> anyhow::Result<String> {
+    use std::io::Read;
+
+    let text = match input {
+        None => return Ok("{}".to_string()),
+        Some("@-") => {
+            let mut buffer = String::new();
+            std::io::stdin().read_to_string(&mut buffer)?;
+            buffer
+        }
+        Some(path) if path.starts_with('@') => {
+            let path = &path[1..];
+            std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("cannot read `--input` file `{path}`: {e}"))?
+        }
+        Some(literal) => literal.to_string(),
+    };
+
+    // Checked here rather than left to the function, because "expected value at
+    // line 1 column 1" from inside a plugin is a much worse error than this one.
+    if !text.trim().is_empty() {
+        serde_json::from_str::<serde_json::Value>(&text)
+            .map_err(|e| anyhow::anyhow!("`--input` is not valid JSON: {e}"))?;
+    }
+    Ok(text)
+}
+
 fn load(dir: &std::path::Path) -> anyhow::Result<App> {
     tracing::info!("loading app from {}", dir.display());
     let app = App::load(dir)?;
@@ -629,6 +749,92 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("only apply to `init`"), "{error}");
+    }
+
+    #[test]
+    fn call_takes_a_function_then_a_directory() {
+        let parsed = args(&["call", "nightly_report"]);
+        assert_eq!(parsed.dir, ".");
+        match parsed.command {
+            Command::Call {
+                name,
+                input,
+                principal,
+                quiet,
+            } => {
+                assert_eq!(name, "nightly_report");
+                assert!(input.is_none() && principal.is_none() && !quiet);
+            }
+            other => panic!("expected call, got {other:?}"),
+        }
+
+        // The directory follows the function name, not the other way round.
+        let parsed = args(&["call", "nightly_report", "./app"]);
+        assert_eq!(parsed.dir, "./app");
+        assert!(
+            matches!(parsed.command, Command::Call { ref name, .. } if name == "nightly_report")
+        );
+
+        // A function may share a name with a subcommand — the command slot is
+        // already spoken for by the time the name is read.
+        assert!(matches!(
+            args(&["call", "run"]).command,
+            Command::Call { ref name, .. } if name == "run"
+        ));
+
+        let parsed = args(&[
+            "call",
+            "nightly_report",
+            "--input",
+            "{\"day\":1}",
+            "--as",
+            "00000000-0000-0000-0000-000000000000",
+            "--quiet",
+        ]);
+        match parsed.command {
+            Command::Call {
+                input,
+                principal,
+                quiet,
+                ..
+            } => {
+                assert_eq!(input.as_deref(), Some("{\"day\":1}"));
+                assert!(principal.is_some());
+                assert!(quiet);
+            }
+            other => panic!("expected call, got {other:?}"),
+        }
+
+        // A missing name is a mistake, not a call to a function named `.`.
+        let error = parse(vec!["call".to_string()]).unwrap_err();
+        assert!(error.contains("needs a function name"), "{error}");
+
+        // And call's flags belong to call alone.
+        let error = parse(
+            ["run", "--input", "{}"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )
+        .unwrap_err();
+        assert!(error.contains("only apply to `call`"), "{error}");
+    }
+
+    #[test]
+    fn input_comes_from_a_literal_a_file_or_nothing() {
+        assert_eq!(read_input(None).unwrap(), "{}");
+        assert_eq!(read_input(Some("{\"a\":1}")).unwrap(), "{\"a\":1}");
+        assert!(read_input(Some("not json")).is_err());
+
+        let path = std::env::temp_dir().join("apiplant-call-input.json");
+        std::fs::write(&path, "{\"from\":\"file\"}").unwrap();
+        assert_eq!(
+            read_input(Some(&format!("@{}", path.display()))).unwrap(),
+            "{\"from\":\"file\"}"
+        );
+        std::fs::remove_file(&path).ok();
+
+        assert!(read_input(Some("@/no/such/input.json")).is_err());
     }
 
     #[test]

@@ -16,6 +16,7 @@ export const FIELD_TYPES = [
   "uuid",
   "timestamp",
   "json",
+  "file",
   "reference",
 ] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];

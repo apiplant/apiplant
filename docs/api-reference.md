@@ -186,6 +186,36 @@ read-only history resources `ai_<name>_thread` and `ai_<name>_message`. The chat
 route writes them; ordinary CRUD may list and read them according to the agent's
 `history` permission.
 
+## Storage endpoints
+
+Mounted unless `[storage] backend = "none"`, which is to say by default. See
+[File storage](storage.md).
+
+| Method | Path | Who | Purpose |
+|--------|------|-----|---------|
+| POST | `<base>/uploads` | **authenticated** | store one file, returning `{url, key, size, content_type}` |
+| GET | `/files/<key>` | anyone | read a stored file back |
+
+The upload takes the file as the **raw request body** — not multipart — with its
+name in `?filename=` and its type in `Content-Type`:
+
+```bash
+curl -X POST 'localhost:8080/api/uploads?filename=chair.png' \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: image/png' \
+  --data-binary @chair.png
+```
+
+`url` is a **relative** link (`/files/2026/08/…`) and is what goes into a
+[`file` field](resources.md). `413` means the body exceeded `max_size_mb`, and
+`415` a content type outside `allowed_types`.
+
+`GET /files/<key>` sits outside `base_path`, alongside the dashboard and the
+static site, because it is the URL stored in rows and served in `<img>` tags. It
+is unauthenticated: a stored link is unguessable, but anyone holding it can read
+the file. Responses carry `nosniff` and a one-year immutable cache header, and
+no upload is ever served as HTML.
+
 ## Function endpoints
 
 | Method | Path | Notes |
@@ -251,6 +281,8 @@ See [Lifecycle hooks](hooks.md).
 | `404` | resource, route or row not found; also a `private` action, or an owner-scoped row belonging to someone else |
 | `405` | wrong HTTP method for a function |
 | `409` | uniqueness conflict |
+| `413` | an upload larger than `[storage] max_size_mb` |
+| `415` | an upload whose content type is outside `[storage] allowed_types` |
 | `500` | unexpected server or database error, or a declared hook whose function is not loaded |
 
 Errors are JSON: `{ "error": "<message>" }`. A [hook](hooks.md) can return any

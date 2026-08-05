@@ -50,8 +50,12 @@ unique = true
 # handed to us by an identity provider the way a person is — so it is here for
 # an app to fill and for every interface to read: the dashboard's workspace
 # switcher shows it in place of the initials it would otherwise draw.
+#
+# A `file` field, so the dashboard offers an upload into `[storage]` as well as
+# a URL box. What is stored is a string either way — an uploaded logo is a
+# relative link this server answers, a pasted one is whatever was pasted.
 [fields.avatar_url]
-type = "string"
+type = "file"
 max_length = 1024
 "#;
 
@@ -180,11 +184,15 @@ visible = false
 # provider hands over: a sign-in through [`[oauth]`](crate::config::OAuthConfig)
 # fills them in, so an account that arrives that way arrives with a name and a
 # picture rather than an email address and a blank.
+#
+# The picture is a `file` field: a provider fills it with the URL it gave us,
+# and somebody changing it in the dashboard uploads one into `[storage]` or
+# types a URL of their own. Both are the same string in the same column.
 [fields.display_name]
 type = "string"
 
 [fields.avatar_url]
-type = "string"
+type = "file"
 max_length = 1024
 
 # True when the address above is one apiplant invented rather than one somebody
@@ -434,6 +442,8 @@ default = false
 [fields.display_name]
 type = "string"
 
+# A plain string, not a `file`: this row is a record of what the provider
+# claimed, so nothing should offer to replace it with an upload.
 [fields.avatar_url]
 type = "string"
 max_length = 1024

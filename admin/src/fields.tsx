@@ -9,9 +9,9 @@
  */
 
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Field, Spinner, Toggle } from "./ui";
+import { Button, Field, Spinner, Toggle } from "./ui";
 import { MarkupEditor } from "./markup";
-import { api, asRecord, asRecords, resourceByName, session } from "./store";
+import { api, asRecord, asRecords, reportError, resourceByName, session, uploadFile } from "./store";
 import type { ApiRecord, FieldManifest, JsonValue, ResourceManifest } from "./types";
 
 /** A form's working copy: every value held as the string (or boolean) the
@@ -72,6 +72,11 @@ export function formatValue(field: FieldManifest, record: ApiRecord): string {
   if (field.type === "json") {
     const text = JSON.stringify(raw);
     return text.length > 60 ? `${text.slice(0, 57)}…` : text;
+  }
+  // A stored link is mostly a dated key and a UUID. The filename on the end is
+  // the only part of it a person put there, so it is the only part shown.
+  if (field.type === "file" && typeof raw === "string") {
+    return raw.split("?")[0].split("/").pop() || raw;
   }
   if (typeof raw === "number") return raw.toLocaleString();
   const text = String(raw);
@@ -269,6 +274,20 @@ export function FieldEditor(props: {
     );
   }
 
+  if (props.field.widget === "file") {
+    return (
+      <Field label={props.field.label} help={props.field.help} required={props.field.required} error={props.error}>
+        <FilePicker
+          value={text()}
+          onChange={set}
+          disabled={props.disabled}
+          placeholder={props.field.placeholder ?? undefined}
+          maxLength={props.field.max_length ?? undefined}
+        />
+      </Field>
+    );
+  }
+
   if (props.field.widget === "select") {
     return (
       <Field label={props.field.label} help={props.field.help} required={props.field.required} error={props.error}>
@@ -360,6 +379,104 @@ export function FieldEditor(props: {
         onInput={(event) => set(event.currentTarget.value)}
       />
     </Field>
+  );
+}
+
+/**
+ * Give a field a file, either way round.
+ *
+ * Uploading sends the file to `<base>/uploads` and writes back the relative
+ * link the server answers on. Typing a URL writes that instead — the column is
+ * a string, and a picture already hosted somewhere is a perfectly good value
+ * for it. Both are always available: the second is not an escape hatch for when
+ * uploads are off, it is the other half of what a `file` field means.
+ */
+export function FilePicker(props: {
+  value: string;
+  onChange: (url: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  maxLength?: number;
+}) {
+  const [busy, setBusy] = createSignal(false);
+  const [broken, setBroken] = createSignal(false);
+  let input: HTMLInputElement | undefined;
+
+  // A changed value deserves a fresh attempt at previewing it; otherwise one
+  // URL that failed to load would leave the slot blank for its replacement.
+  createEffect(() => {
+    props.value;
+    setBroken(false);
+  });
+
+  const name = () => props.value.split("?")[0].split("/").pop() || props.value;
+
+  const send = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      props.onChange(await uploadFile(file));
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy(false);
+      // Cleared so that picking the same file twice — after a failure — still
+      // fires a change event.
+      if (input) input.value = "";
+    }
+  };
+
+  return (
+    <div class="space-y-2">
+      <div class="flex items-center gap-2.5">
+        <Show when={props.value && !broken()}>
+          <img
+            src={props.value}
+            alt=""
+            class="h-12 w-12 shrink-0 rounded-lg border border-line bg-surface-2 object-cover"
+            onError={() => setBroken(true)}
+          />
+        </Show>
+        <input
+          ref={input}
+          type="file"
+          class="hidden"
+          disabled={props.disabled || busy()}
+          onChange={(event) => void send(event.currentTarget.files?.[0])}
+        />
+        <Button
+          size="sm"
+          loading={busy()}
+          disabled={props.disabled}
+          onClick={() => input?.click()}
+        >
+          {props.value ? "Replace" : "Upload"}
+        </Button>
+        <Show when={props.value}>
+          <a
+            href={props.value}
+            target="_blank"
+            rel="noreferrer"
+            class="truncate text-xs text-muted hover:text-ink"
+            title={props.value}
+          >
+            {name()}
+          </a>
+          <Button size="sm" variant="ghost" disabled={props.disabled || busy()} onClick={() => props.onChange("")}>
+            Clear
+          </Button>
+        </Show>
+      </div>
+      <input
+        class="input font-mono text-[0.78125rem]"
+        type="text"
+        disabled={props.disabled || busy()}
+        maxLength={props.maxLength}
+        placeholder={props.placeholder ?? "/files/… or https://…"}
+        value={props.value}
+        onInput={(event) => props.onChange(event.currentTarget.value)}
+      />
+    </div>
   );
 }
 

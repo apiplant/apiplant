@@ -10,7 +10,7 @@ pub fn json_to_sql(ty: FieldType, v: &serde_json::Value) -> Result<SqlValue, Str
         return Ok(null_for(ty));
     }
     Ok(match ty {
-        FieldType::String | FieldType::Text => {
+        FieldType::String | FieldType::Text | FieldType::File => {
             SqlValue::from(v.as_str().ok_or("expected a string")?.to_string())
         }
         FieldType::Integer => SqlValue::from(
@@ -36,7 +36,7 @@ pub fn json_to_sql(ty: FieldType, v: &serde_json::Value) -> Result<SqlValue, Str
 /// type of a bound null).
 pub fn null_for(ty: FieldType) -> SqlValue {
     match ty {
-        FieldType::String | FieldType::Text => SqlValue::String(None),
+        FieldType::String | FieldType::Text | FieldType::File => SqlValue::String(None),
         FieldType::Integer => SqlValue::Int(None),
         FieldType::BigInt => SqlValue::BigInt(None),
         FieldType::Float => SqlValue::Double(None),
@@ -51,7 +51,7 @@ pub fn null_for(ty: FieldType) -> SqlValue {
 /// for a column, used for `?field=value` filtering.
 pub fn string_to_sql(ty: FieldType, s: &str) -> Result<SqlValue, String> {
     Ok(match ty {
-        FieldType::String | FieldType::Text => SqlValue::from(s.to_string()),
+        FieldType::String | FieldType::Text | FieldType::File => SqlValue::from(s.to_string()),
         FieldType::Integer => SqlValue::from(s.parse::<i32>().map_err(|_| "expected an integer")?),
         FieldType::BigInt => SqlValue::from(s.parse::<i64>().map_err(|_| "expected an integer")?),
         FieldType::Float => SqlValue::from(s.parse::<f64>().map_err(|_| "expected a number")?),

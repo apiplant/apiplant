@@ -824,6 +824,7 @@ fn resolve_widget(field: &Field) -> &'static str {
         return "textarea";
     }
     match field.ty {
+        FieldType::File => "file",
         FieldType::Text => "textarea",
         FieldType::Boolean => "switch",
         FieldType::Json => "json",
@@ -946,6 +947,7 @@ fn field_type_name(ty: FieldType) -> &'static str {
         FieldType::Uuid => "uuid",
         FieldType::Timestamp => "timestamp",
         FieldType::Json => "json",
+        FieldType::File => "file",
         FieldType::Reference => "reference",
     }
 }
