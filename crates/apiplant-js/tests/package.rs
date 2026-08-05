@@ -30,6 +30,8 @@ struct Recorder {
     payments_replies: Arc<Mutex<Vec<Value>>>,
     /// What `ai` answers with, in order; the last one repeats.
     ai_replies: Arc<Mutex<Vec<Value>>>,
+    /// What `publish` answers with, in order; the last one repeats.
+    publish_replies: Arc<Mutex<Vec<Value>>>,
     config: String,
     principal: String,
     hook: String,
@@ -142,6 +144,18 @@ impl HostApi for Recorder {
     fn emit(&self, chunk: RStr<'_>) -> bool {
         self.record("emit", chunk.as_str());
         true
+    }
+
+    fn publish(&self, request: RStr<'_>) -> RResult<RString, RString> {
+        self.record("publish", request.as_str());
+        RResult::ROk(
+            next_reply(
+                &self.publish_replies,
+                json!({ "id": "m-1", "topic": "t", "delivered": 1 }),
+            )
+            .to_string()
+            .into(),
+        )
     }
 
     fn cache(&self, request: RStr<'_>) -> RResult<RString, RString> {

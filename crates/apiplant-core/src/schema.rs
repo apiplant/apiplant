@@ -22,6 +22,9 @@ pub struct Resource {
     /// Named functions to run around each CRUD operation.
     #[serde(default)]
     pub hooks: Hooks,
+    /// Topics to publish a message on when a write succeeds, from `[publish]`.
+    #[serde(default)]
+    pub publish: Publishes,
     /// Optional auth configuration; only meaningful on the `user` resource.
     #[serde(default)]
     pub auth: Option<AuthSpec>,
@@ -101,6 +104,21 @@ impl Resource {
                     resource: self.meta.name.clone(),
                     message: format!(
                         "hook `{}` only exists on the `user` resource, which owns the auth endpoints",
+                        event.as_str()
+                    ),
+                });
+            }
+        }
+        // A topic that can't be published is worth catching here, where the
+        // file and the key are still known, rather than at the first write to
+        // this resource — which is a request nobody wants to see fail.
+        for (event, topic) in self.publish.iter() {
+            if !crate::QueuesConfig::valid_topic(topic) {
+                return Err(crate::Error::Schema {
+                    resource: self.meta.name.clone(),
+                    message: format!(
+                        "`publish.{}` names `{topic}`, which is not a topic: use letters, \
+                         digits, `.`, `_`, `-` or `:`",
                         event.as_str()
                     ),
                 });
@@ -894,6 +912,63 @@ impl HookEvent {
                 | HookEvent::BeforeUpdate
                 | HookEvent::BeforeDelete
         )
+    }
+}
+
+/// The `[publish]` section of a resource: a topic per write that succeeded.
+///
+/// ```toml
+/// [publish]
+/// after_create = "order.placed"
+/// after_update = "order.changed"
+/// after_delete = "order.cancelled"
+/// ```
+///
+/// This is the shortest path from "a row changed" to "something happens about
+/// it", with no function in between: the row is the message. What it buys over
+/// an `after_create` hook that publishes is that the work is *not* the
+/// requester's to wait for — the response goes out as soon as the row is
+/// committed, and the handler runs on its own.
+///
+/// Only the three `after_*` writes are here, and deliberately. A `before_*`
+/// topic would announce something that has not happened and may still be
+/// rejected, and a list or read publishes nothing worth hearing about.
+///
+/// Unknown keys are rejected, so `after_creat` fails at load rather than never
+/// firing.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Publishes {
+    pub after_create: Option<String>,
+    pub after_update: Option<String>,
+    pub after_delete: Option<String>,
+}
+
+impl Publishes {
+    /// The topic announced for an event, if any.
+    pub fn get(&self, event: HookEvent) -> Option<&str> {
+        let slot = match event {
+            HookEvent::AfterCreate => &self.after_create,
+            HookEvent::AfterUpdate => &self.after_update,
+            HookEvent::AfterDelete => &self.after_delete,
+            _ => &None,
+        };
+        slot.as_deref().map(str::trim).filter(|t| !t.is_empty())
+    }
+
+    /// Every declared `(event, topic)` pair, in lifecycle order.
+    pub fn iter(&self) -> impl Iterator<Item = (HookEvent, &str)> {
+        [
+            HookEvent::AfterCreate,
+            HookEvent::AfterUpdate,
+            HookEvent::AfterDelete,
+        ]
+        .into_iter()
+        .filter_map(|event| self.get(event).map(|topic| (event, topic)))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.iter().next().is_none()
     }
 }
 

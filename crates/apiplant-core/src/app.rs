@@ -54,6 +54,13 @@ impl App {
             }
         }
 
+        // 1b-i. The queue's own table. Unconditional, because `publish` works
+        //       in an app that never wrote a `[queues]` section — see
+        //       `defaults::queue_builtins`.
+        for (name, src) in crate::defaults::queue_builtins() {
+            resources.insert(name.to_string(), crate::defaults::parse_builtin(src));
+        }
+
         // 1b-ii. The table a sign-in lives in while somebody reads a consent
         //        screen, only for an app that has an `[oauth]` provider.
         if config.oauth.enabled() {

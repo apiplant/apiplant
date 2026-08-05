@@ -56,9 +56,31 @@ function expandParam(resource: ResourceManifest): string {
   return resource.relations.map((relation) => relation.relation).join(",");
 }
 
-function includeOrgContext(resource: ResourceManifest, action: "list" | "read" | "update" | "delete"): boolean {
+/**
+ * Whether this request should carry `X-Organization`.
+ *
+ * Always, for an org-scoped resource: the header is what selects the tenant.
+ *
+ * On a *global* resource there is no tenant to select, but a policy may still
+ * be answered against the caller's organisation — `role:<name>` asks whether
+ * you hold that role in the one you are acting in, and cannot be answered
+ * without knowing which. `requires_org` on the manifest is the server's own
+ * verdict on that, so the two sides cannot drift; deriving it again from the
+ * policy string here is how they would.
+ *
+ * Then one case the flag does not cover, because it is about widening rather
+ * than permitting: under `owner`, an admin is shown the whole organisation's
+ * rows instead of only their own, which the server can only do when it knows
+ * which organisation that is.
+ */
+function includeOrgContext(
+  resource: ResourceManifest,
+  action: "list" | "read" | "create" | "update" | "delete",
+): boolean {
   if (resource.scope === "organization") return true;
-  return Boolean(session.organizationId && hasRole("admin") && resource.permissions[action].value === "owner");
+  if (!session.organizationId) return false;
+  const policy = resource.permissions[action];
+  return policy.requires_org || (hasRole("admin") && policy.value === "owner");
 }
 
 // --- list ------------------------------------------------------------------
@@ -545,9 +567,7 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
           {
             method: isNew() ? "POST" : "PATCH",
             body: payload,
-          org: isNew()
-            ? props.resource.scope === "organization"
-            : includeOrgContext(props.resource, "update"),
+          org: includeOrgContext(props.resource, isNew() ? "create" : "update"),
         },
         ),
       );

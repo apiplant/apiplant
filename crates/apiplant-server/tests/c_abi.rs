@@ -143,6 +143,7 @@ struct MockHost {
     payment_ops: Mutex<Vec<String>>,
     chats: Mutex<Vec<String>>,
     chunks: Mutex<Vec<String>>,
+    published: Mutex<Vec<String>>,
     hook_json: String,
 }
 
@@ -156,6 +157,7 @@ impl MockHost {
             payment_ops: Mutex::new(Vec::new()),
             chats: Mutex::new(Vec::new()),
             chunks: Mutex::new(Vec::new()),
+            published: Mutex::new(Vec::new()),
             hook_json: String::new(),
         }
     }
@@ -193,6 +195,12 @@ impl HostApi for MockHost {
         self.chats.lock().unwrap().push(request.as_str().into());
         RResult::ROk(RString::from(
             r#"{"text":"hello","provider":"custom","model":"local"}"#,
+        ))
+    }
+    fn publish(&self, request: RStr<'_>) -> RResult<RString, RString> {
+        self.published.lock().unwrap().push(request.as_str().into());
+        RResult::ROk(RString::from(
+            r#"{"id":"m-1","topic":"order.paid","delivered":1}"#,
         ))
     }
     fn emit(&self, chunk: RStr<'_>) -> bool {
@@ -233,6 +241,9 @@ impl HostApi for SharedHost {
     fn ai(&self, r: RStr<'_>) -> RResult<RString, RString> {
         self.0.ai(r)
     }
+    fn publish(&self, r: RStr<'_>) -> RResult<RString, RString> {
+        self.0.publish(r)
+    }
     fn emit(&self, chunk: RStr<'_>) -> bool {
         self.0.emit(chunk)
     }
@@ -265,6 +276,9 @@ impl HostApi for FailingHost {
     }
     fn ai(&self, _r: RStr<'_>) -> RResult<RString, RString> {
         RResult::RErr(RString::from("no ai provider configured"))
+    }
+    fn publish(&self, _r: RStr<'_>) -> RResult<RString, RString> {
+        RResult::RErr(RString::from("no queue in this test"))
     }
     fn emit(&self, _chunk: RStr<'_>) -> bool {
         false

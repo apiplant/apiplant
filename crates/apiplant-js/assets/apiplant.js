@@ -336,6 +336,56 @@ export function emit(chunk) {
   return ctx.emit(chunk);
 }
 
+// ---- queues ----------------------------------------------------------------
+
+/**
+ * Work that happens after the response.
+ *
+ * `queue.publish` records a message and returns; whichever functions the app's
+ * `[queues.subscribe]` points at that topic run afterwards, on their own, with
+ * retries. Nothing the handler does can fail the request that published it --
+ * which is the reason to reach for this rather than just calling the function.
+ *
+ * ```js
+ * queue.publish("order.paid", { orderId: order.id });
+ * ```
+ */
+export const queue = {
+  /**
+   * Queue a message. Returns `{ id, topic, delivered }`, where `delivered` is
+   * how many subscribers it was queued for.
+   *
+   * `delivered: 0` is not an error -- the message is still recorded -- but it
+   * means nothing is listening to that topic, which is nearly always a typo.
+   */
+  publish(topic, message) {
+    return ctx.publish(topic, message);
+  },
+};
+
+/**
+ * When running as a queue subscriber, the delivery this call is:
+ * `{ topic, messageId, subscriber, attempts, principalId }`. `null` for an HTTP
+ * call or a lifecycle hook.
+ *
+ * The message body itself arrives as the function's ordinary input, so a
+ * handler is just a function and can be called by hand to test it.
+ *
+ * `attempts` is the one to branch on. Delivery is at-least-once, so anything
+ * above 1 is a message whose side effects may already have partly happened.
+ */
+export function delivery() {
+  const raw = ctx.hook();
+  if (!raw || raw.event !== "message") return null;
+  return {
+    topic: raw.topic,
+    messageId: raw.message_id,
+    subscriber: raw.subscriber,
+    attempts: raw.attempts,
+    principalId: raw.principal_id ?? "",
+  };
+}
+
 // ---- the request -----------------------------------------------------------
 
 /** This function's `functions/<name>.toml`, as an object. */

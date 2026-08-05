@@ -1,13 +1,17 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import {
   CONFIG_PATH,
+  allFunctionNames,
   configValue,
   ensureMainToml,
   fileText,
   setConfigFromToml,
   setConfigValue,
+  setSubscriptions,
   studio,
+  subscriptions,
 } from "../lib/store";
+import type { Subscription } from "../lib/store";
 import { setView, view } from "../lib/nav";
 import {
   Badge,
@@ -161,8 +165,28 @@ const AI_ACCESS_OPTIONS = [
   { value: "private", label: "private — not exposed" },
 ] as const;
 
-function accessLevelOf(value: string | number | boolean | undefined) {
-  return typeof value === "string" && value.startsWith("role:") ? "role" : String(value ?? "authenticated");
+const QUEUE_PUBLISH_OPTIONS = [
+  { value: "private", label: "private — no endpoint at all" },
+  { value: "authenticated", label: "authenticated — any signed-in caller" },
+  { value: "member", label: "member — of the active organisation" },
+  { value: "role", label: "role:… — a named org role" },
+  { value: "public", label: "public — anyone" },
+] as const;
+
+/**
+ * Which option a written access string selects. `role:<name>` collapses to
+ * `role`, and the name goes in the box beside it.
+ *
+ * `fallback` is the *server's* default for the setting, which differs: an
+ * unwritten `[ai] access` is `authenticated`, an unwritten `[queues] publish`
+ * is `private`. Showing the wrong one would make the form disagree with the
+ * app it is describing.
+ */
+function accessLevelOf(
+  value: string | number | boolean | undefined,
+  fallback = "authenticated",
+) {
+  return typeof value === "string" && value.startsWith("role:") ? "role" : String(value ?? fallback);
 }
 
 function accessRoleOf(value: string | number | boolean | undefined) {
@@ -501,6 +525,85 @@ const SECTIONS: ConfigSection[] = [
     ],
   },
   {
+    id: "queues",
+    title: "Queues",
+    hint:
+      "Work that happens after the response. `publish` writes a row and fires a Postgres NOTIFY; " +
+      "a subscriber claims it and runs a function. No broker to deploy.",
+    fields: [
+      {
+        key: "enabled",
+        label: "enabled",
+        group: "Handling",
+        kind: "boolean" as const,
+        hint: "Pauses handling without deleting the subscriptions below. Publishing still records rows, so nothing is lost while it is off.",
+      },
+      {
+        key: "poll_secs",
+        label: "poll (s)",
+        group: "Handling",
+        placeholder: "30",
+        kind: "number" as const,
+        hint: "The sweep beneath the NOTIFY. Delivery is immediate either way; this is what catches a missed notification.",
+      },
+      {
+        key: "batch",
+        label: "batch",
+        group: "Handling",
+        placeholder: "10",
+        kind: "number" as const,
+      },
+      {
+        key: "max_attempts",
+        label: "max attempts",
+        group: "Retries",
+        placeholder: "5",
+        kind: "number" as const,
+        hint: "Then the message is left `failed` for a person to look at. 1 means no retries.",
+      },
+      {
+        key: "retry_backoff_secs",
+        label: "retry backoff (s)",
+        group: "Retries",
+        placeholder: "10",
+        kind: "number" as const,
+        hint: "Doubles each attempt: 10s, 20s, 40s, 80s.",
+      },
+      {
+        key: "lease_secs",
+        label: "lease (s)",
+        group: "Retries",
+        placeholder: "300",
+        kind: "number" as const,
+        hint: "Before a claimed message is offered to another subscriber. Set it above your slowest handler.",
+      },
+      {
+        key: "retain_hours",
+        label: "retain (h)",
+        group: "Retention",
+        placeholder: "24",
+        kind: "number" as const,
+        hint: "Deletes handled messages after this. 0 keeps them. `failed` rows are never swept.",
+      },
+      {
+        key: "prefix",
+        label: "channel prefix",
+        group: "Retention",
+        placeholder: "apiplant",
+        kind: "text" as const,
+        hint: "So two apps sharing one database do not wake each other.",
+      },
+      {
+        key: "publish",
+        label: "http publish",
+        group: "Publishing over HTTP",
+        kind: "select" as const,
+        options: QUEUE_PUBLISH_OPTIONS,
+        hint: "Who may POST <base>/queues/{topic}. `private` — the default — means there is no such endpoint.",
+      },
+    ],
+  },
+  {
     id: "payments",
     title: "Payments",
     hint: "Taking money. Naming a provider also adds the billing_* resources and the /billing endpoints.",
@@ -647,6 +750,181 @@ function selectOptions(sectionId: string, field: ConfigField) {
   return [{ value: current, label: `${current} (current)` }, ...selectOptionsList(field)];
 }
 
+/**
+ * An access string with its optional role, as one control.
+ *
+ * `role:<name>` is two facts in one value — which level, and which role — so it
+ * is a select plus a box that appears only when it means something. Shared by
+ * `[ai] access` and `[queues] publish`, which use the same grammar.
+ */
+function AccessField(props: {
+  table: string;
+  field: string;
+  options: readonly { value: string; label: string }[];
+  fallback: string;
+}) {
+  const current = () => configValue(props.table, props.field);
+  const level = () => accessLevelOf(current(), props.fallback);
+
+  return (
+    <div class="flex gap-2">
+      <Select
+        class="flex-1"
+        value={level()}
+        options={props.options}
+        onChange={(value) =>
+          setConfigValue(
+            props.table,
+            props.field,
+            value === "role" ? `role:${accessRoleOf(current()) || "admin"}` : value,
+          )
+        }
+      />
+      <Show when={level() === "role"}>
+        <TextInput
+          mono
+          class="max-w-[10rem]"
+          value={accessRoleOf(current())}
+          placeholder="admin"
+          onInput={(value) => setConfigValue(props.table, props.field, `role:${value}`)}
+        />
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * `[queues.subscribe]`: which function handles which topic.
+ *
+ * Its own card because it is a map rather than a set of scalar settings, and
+ * because it is the part of `[queues]` anybody actually comes here to change —
+ * the rest are knobs with sensible defaults.
+ *
+ * Nothing here names a *publisher*. A topic is announced by whatever publishes
+ * it — a function's `publish`, a model's `[publish]`, the HTTP endpoint — and
+ * none of them know this table exists. That indirection is the point: adding a
+ * second handler to a topic is one line here and no change anywhere else.
+ */
+function SubscriptionsCard() {
+  const entries = createMemo(subscriptions);
+  const known = createMemo(() => allFunctionNames());
+
+  const edit = (update: (draft: Subscription[]) => void) => {
+    const draft = entries().map((entry) => ({ topic: entry.topic, functions: [...entry.functions] }));
+    update(draft);
+    setSubscriptions(draft);
+  };
+
+  // A topic mid-edit has no functions yet, so it would be dropped on write.
+  // Held here until it names one, which is what lets the row exist at all.
+  const [pending, setPending] = createSignal<Subscription[]>([]);
+  const rows = createMemo(() => [...entries(), ...pending()]);
+
+  const commit = (index: number, next: Subscription) => {
+    const saved = entries().length;
+    if (index < saved) {
+      edit((draft) => {
+        draft[index] = next;
+      });
+      return;
+    }
+    // A pending row that now names both is a real subscription.
+    if (next.topic.trim() && next.functions.length > 0) {
+      setPending((current) => current.filter((_, i) => i !== index - saved));
+      edit((draft) => draft.push(next));
+      return;
+    }
+    setPending((current) => current.map((row, i) => (i === index - saved ? next : row)));
+  };
+
+  const remove = (index: number) => {
+    const saved = entries().length;
+    if (index < saved) edit((draft) => draft.splice(index, 1));
+    else setPending((current) => current.filter((_, i) => i !== index - saved));
+  };
+
+  const unknown = createMemo(() =>
+    rows().flatMap((row) => row.functions.filter((name) => name && !known().includes(name))),
+  );
+
+  return (
+    <Card>
+      <CardHeader
+        title="Subscriptions"
+        hint="Topic → the function(s) that handle it. Each subscriber gets its own retries, so one failing never re-runs another."
+      />
+      <datalist id="queue-function-names">
+        <For each={known()}>{(name) => <option value={name} />}</For>
+      </datalist>
+
+      <div class="space-y-3 px-4 py-4">
+        <Show
+          when={rows().length > 0}
+          fallback={
+            <p class="text-xs leading-relaxed text-muted">
+              Nothing subscribes yet. A message published to a topic with no subscriber is still recorded in{" "}
+              <Mono>queue_message</Mono> — so it is never lost — but no function runs.
+            </p>
+          }
+        >
+          <For each={rows()}>
+            {(row, index) => (
+              <div class="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                <Labelled label="topic" hint={index() === 0 ? "letters, digits, . _ - :" : undefined}>
+                  <TextInput
+                    mono
+                    value={row.topic}
+                    placeholder="order.paid"
+                    onInput={(value) => commit(index(), { ...row, topic: value })}
+                  />
+                </Labelled>
+                <Labelled
+                  label="functions"
+                  hint={index() === 0 ? "comma-separated for several" : undefined}
+                >
+                  <TextInput
+                    mono
+                    list="queue-function-names"
+                    value={row.functions.join(", ")}
+                    placeholder="fulfilOrder"
+                    onInput={(value) =>
+                      commit(index(), {
+                        ...row,
+                        functions: value
+                          .split(",")
+                          .map((name) => name.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                  />
+                </Labelled>
+                <Button variant="ghost" size="sm" onClick={() => remove(index())}>
+                  Remove
+                </Button>
+              </div>
+            )}
+          </For>
+        </Show>
+
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setPending((current) => [...current, { topic: "", functions: [] }])}
+        >
+          Add topic
+        </Button>
+      </div>
+
+      <Show when={unknown().length > 0}>
+        <div class="border-t border-line px-4 py-3 text-xs leading-relaxed text-warn">
+          <Mono>{unknown().join(", ")}</Mono> — no library in <Mono>functions/</Mono> exports that. Messages on
+          its topic will retry and then land in the dead-letter until it is built and dropped in.
+        </div>
+      </Show>
+    </Card>
+  );
+}
+
 export function ConfigPage() {
   const [draft, setDraft] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -777,7 +1055,10 @@ export function ConfigPage() {
                           >
                             <Labelled label={field.label} hint={field.hint}>
                               <Show
-                                when={section().id === "ai" && field.key === "access"}
+                                when={
+                                  (section().id === "ai" && field.key === "access") ||
+                                  (section().id === "queues" && field.key === "publish")
+                                }
                                 fallback={
                                   <Show
                                     when={field.kind === "select"}
@@ -835,31 +1116,12 @@ export function ConfigPage() {
                                   </Show>
                                 }
                               >
-                                <div class="flex gap-2">
-                                  <Select
-                                    class="flex-1"
-                                    value={accessLevelOf(configValue("ai", "access"))}
-                                    options={AI_ACCESS_OPTIONS}
-                                    onChange={(value) =>
-                                      setConfigValue(
-                                        "ai",
-                                        "access",
-                                        value === "role"
-                                          ? `role:${accessRoleOf(configValue("ai", "access")) || "admin"}`
-                                          : value,
-                                      )
-                                    }
-                                  />
-                                  <Show when={accessLevelOf(configValue("ai", "access")) === "role"}>
-                                    <TextInput
-                                      mono
-                                      class="max-w-[10rem]"
-                                      value={accessRoleOf(configValue("ai", "access"))}
-                                      placeholder="admin"
-                                      onInput={(value) => setConfigValue("ai", "access", `role:${value}`)}
-                                    />
-                                  </Show>
-                                </div>
+<AccessField
+                                  table={section().id}
+                                  field={field.key}
+                                  options={section().id === "ai" ? AI_ACCESS_OPTIONS : QUEUE_PUBLISH_OPTIONS}
+                                  fallback={section().id === "ai" ? "authenticated" : "private"}
+                                />
                               </Show>
                             </Labelled>
                           </Show>
@@ -870,6 +1132,10 @@ export function ConfigPage() {
                 </For>
               </div>
             </Card>
+
+            <Show when={section().id === "queues"}>
+              <SubscriptionsCard />
+            </Show>
 
             <Show when={section().id === "application"}>
               <Card>

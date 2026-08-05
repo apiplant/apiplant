@@ -423,8 +423,30 @@ INFO apiplant_server:   hook post.before_create -> post_before_create
 * Hooks run **outside** the operation's transaction. An `after_create` hook that
   fails turns the response into an error, but the row stays written.
 
+## Hooks or queues?
+
+A hook runs *inside* the request. That is exactly what you want when the work
+must happen before the response, or is allowed to reject it — validation,
+rewriting a body, resolving an id. It is exactly what you do not want for work
+the caller has no stake in: an `after_create` hook that emails a receipt makes
+the receipt provider's outage into a failed signup.
+
+For those, publish a message instead. A resource can even do it with no function
+at all:
+
+```toml
+[publish]
+after_create = "user.signed_up"
+```
+
+The caller's response goes out as soon as the row is committed; the handler runs
+afterwards, retries on its own, and cannot fail the write. See
+[Queues](queues.md).
+
 ## See also
 
+* [Queues](queues.md): the same "and then…", but after the response and with
+  retries.
 * [Functions](functions.md): writing, building and configuring the functions
   hooks point at.
 * [Permissions](permissions.md): the checks that run before any hook.

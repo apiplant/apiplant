@@ -140,6 +140,33 @@ Available keys are `before_`/`after_` × `list`, `read`, `create`, `update`,
 data each hook receives and what it can return, are in
 [Lifecycle hooks](hooks.md).
 
+## `[publish]`
+
+An optional section announcing the resource's successful writes on a
+[queue topic](queues.md), so that work which should follow a write does not have
+to happen inside the request that made it:
+
+```toml
+[publish]
+after_create = "order.placed"
+after_update = "order.changed"
+after_delete = "order.cancelled"
+```
+
+The row *is* the message: a subscriber gets the record exactly as the API would
+have returned it, which is why no function is needed here at all. The caller's
+response goes out as soon as the row is committed, and nothing a handler does
+can fail the write.
+
+Only the three `after_*` writes can be announced. A `before_*` topic would
+announce something that has not happened yet and may still be rejected, and a
+read or a list has nothing worth announcing. Unknown keys and unusable topic
+names are both rejected at load time.
+
+Which functions run is `[queues.subscribe]` in `main.toml` — nothing here names
+a handler, which is what lets one be added without touching this file. See
+[Queues](queues.md).
+
 ## `[admin]`
 
 An optional section controlling how the resource appears in the generated

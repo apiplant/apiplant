@@ -45,9 +45,9 @@
 //! * The string `apiplant_invoke` writes to `*out` is released by the host
 //!   calling the library's own [`apiplant_free`](FreeFn).
 //! * Strings the host returns from [`Host::config`], [`Host::query`],
-//!   [`Host::principal_id`], [`Host::hook`], [`Host::send_email`] and
-//!   [`Host::cache`], [`Host::payments`] and [`Host::ai`] are released by the library calling
-//!   [`Host::free_string`].
+//!   [`Host::principal_id`], [`Host::hook`], [`Host::send_email`],
+//!   [`Host::cache`], [`Host::payments`], [`Host::ai`] and [`Host::publish`]
+//!   are released by the library calling [`Host::free_string`].
 //!
 //! The pointer from `apiplant_manifest` is never freed, so it must be static.
 //!
@@ -159,6 +159,13 @@ pub struct Host {
     /// Returns non-zero while it is still worth producing more, and zero once
     /// the caller has hung up. See [`HostApi::emit`](crate::HostApi::emit).
     pub emit: Option<extern "C" fn(ctx: *mut c_void, chunk: *const c_char) -> i32>,
+
+    /// Queue a message for later. `request_json` is
+    /// `{"op":"publish","topic":"order.paid","message":{…}}`; returns
+    /// `{"id":…,"topic":…,"delivered":n}` or `{"error":"…"}`.
+    /// See [`HostApi::publish`](crate::HostApi::publish).
+    pub publish:
+        Option<extern "C" fn(ctx: *mut c_void, request_json: *const c_char) -> *mut c_char>,
 }
 
 /// Reports the contract the library was built against; must return

@@ -77,6 +77,7 @@ impl Function for CFunction {
             payments: Some(host_payments),
             ai: Some(host_ai),
             emit: Some(host_emit),
+            publish: Some(host_publish),
         };
 
         let mut out: *mut c_char = std::ptr::null_mut();
@@ -216,6 +217,17 @@ extern "C" fn host_ai(ctx: *mut c_void, request: *const c_char) -> *mut c_char {
             return to_c(r#"{"error":"invalid ai request"}"#);
         };
         in_band(bridge.host.ai(RStr::from_str(&request)))
+    })
+}
+
+extern "C" fn host_publish(ctx: *mut c_void, request: *const c_char) -> *mut c_char {
+    guard_string(|| {
+        // SAFETY: as in `host_query`.
+        let (Some(bridge), Some(request)) = (unsafe { bridge(ctx) }, unsafe { cstr(request) })
+        else {
+            return to_c(r#"{"error":"invalid publish request"}"#);
+        };
+        in_band(bridge.host.publish(RStr::from_str(&request)))
     })
 }
 

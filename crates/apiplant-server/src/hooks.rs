@@ -214,6 +214,44 @@ pub async fn run(
     .await
 }
 
+/// Publish the topic a resource declares for `event`, if it declares one.
+///
+/// The row is the message. A subscriber to `order.placed` gets the order,
+/// exactly as the API would have returned it — so the handler is an ordinary
+/// function over an ordinary object, and can be tested by posting one to it.
+///
+/// **Never fails the request.** By the time this runs the row is committed and
+/// the caller's response is decided; turning "the message could not be queued"
+/// into a 500 would tell them their write failed when it did not. It is logged
+/// instead, at `error`, because a dropped announcement is a real problem — just
+/// not theirs.
+///
+/// Deliberately after the `after_*` hook rather than before it: a hook may still
+/// replace or reject the response, and announcing a create that the hook then
+/// turned into a 409 would be announcing something that did not happen.
+pub async fn announce(
+    state: &AppState,
+    resource: &Resource,
+    event: HookEvent,
+    request: &HookRequest,
+    row: &Value,
+) {
+    let Some(topic) = resource.publish.get(event) else {
+        return;
+    };
+    let published_by = request.principal_id.clone().unwrap_or_default();
+
+    if let Err(error) = state.queue.publish(topic, row, &published_by).await {
+        tracing::error!(
+            resource = %resource.meta.name,
+            event = event.as_str(),
+            topic,
+            %error,
+            "could not publish the message this write declares — the write itself succeeded"
+        );
+    }
+}
+
 /// Run the auth hook bound to `event`, if the `user` resource declares one.
 ///
 /// Same contract as [`run`]: `Ok(None)` carries on, `Ok(Some(value))` is a
@@ -283,6 +321,7 @@ async fn invoke(
     let cache = state.cache.clone();
     let payments = state.payments.clone();
     let ai = state.ai.clone();
+    let queue = state.queue.clone();
     let handle = tokio::runtime::Handle::current();
     let name = name.to_string();
     let hook_name = name.clone();
@@ -291,6 +330,7 @@ async fn invoke(
         let f = functions.get(&name).expect("checked above");
         let bridge = HostBridge::new(db, handle, f.config_json.clone(), principal_id)
             .with_services(mailer, cache, payments, ai)
+            .with_queue(queue)
             .with_hook(context);
         f.invoke(bridge, &input)
     })

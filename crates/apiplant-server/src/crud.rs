@@ -191,9 +191,13 @@ async fn scope(
     Ok(filters)
 }
 
-/// Global resources: no org isolation; the policy alone decides. `member`/`role`
-/// are only meaningful on `organization` (scoped to your orgs) and on `user`
-/// (scoped to your co-members, in [`scope`]).
+/// Global resources: no org isolation; the policy alone decides.
+///
+/// `member` is only meaningful on `organization` (scoped to your orgs) and on
+/// `user` (scoped to your co-members, in [`scope`]). `role:` works everywhere,
+/// but means different things: on `organization` it *filters* to the orgs you
+/// hold the role in; on any other global resource there is nothing to filter,
+/// so it gates on the role you hold in the organisation you have selected.
 fn authorize_global(
     access: &Access,
     caller: &Caller,
@@ -223,14 +227,34 @@ fn authorize_global(
             Some(_) => Ok(Vec::new()),
             None => Err(deny()),
         },
+        // On `organization` itself, a role narrows the rows: the organisations
+        // you hold it in. Anywhere else there is nothing to narrow — a global
+        // table has no `organization_id` — so the role is a gate rather than a
+        // filter: you hold it in the organisation you have selected, or you do
+        // not get in.
+        //
+        // That has to mean *something* here, because the framework ships global
+        // resources that depend on it: `billing_product` and `billing_price`
+        // are `role:admin` to write, and the queue is `role:admin` to read.
+        // Refusing outright would leave a catalogue nobody can edit and a
+        // ledger nobody can look at.
         Access::Role(role) => match &caller.principal {
             Some(p) if is_org_resource => {
                 Ok(vec![Filter::in_uuids("id", p.org_ids_with_role(role))])
             }
-            Some(_) => Err(error(
-                403,
-                "role permissions apply to organisation-scoped resources",
-            )),
+            Some(p) => match caller.active_org.and_then(|org| p.membership(org)) {
+                // Any of the caller's roles will do, and an admin holds them
+                // all — the same rule an org-scoped resource applies.
+                Some(membership) if membership.has_role(role) => Ok(Vec::new()),
+                Some(_) => Err(error(
+                    403,
+                    format!("requires the `{role}` role in this organisation"),
+                )),
+                None => Err(error(
+                    403,
+                    "select an organisation with the X-Organization header",
+                )),
+            },
             None => Err(deny()),
         },
     }
@@ -818,7 +842,7 @@ pub async fn create(
         }
     }
 
-    match hooks::run(
+    let response = match hooks::run(
         &state,
         r,
         HookEvent::AfterCreate,
@@ -829,8 +853,11 @@ pub async fn create(
     {
         Ok(Some(replacement)) => HttpResponse::Created().json(&replacement),
         Ok(None) => HttpResponse::Created().json(&created),
-        Err(resp) => resp,
-    }
+        // The hook rejected it, so there is nothing to announce.
+        Err(resp) => return resp,
+    };
+    hooks::announce(&state, r, HookEvent::AfterCreate, &hook_req, &created).await;
+    response
 }
 
 /// After an organisation is created, add the creator as an `admin` member.
@@ -1085,7 +1112,7 @@ pub async fn update(
         Err(e) => return db_error(e),
     };
 
-    match hooks::run(
+    let response = match hooks::run(
         &state,
         r,
         HookEvent::AfterUpdate,
@@ -1096,8 +1123,10 @@ pub async fn update(
     {
         Ok(Some(replacement)) => ok(&replacement),
         Ok(None) => ok(&updated),
-        Err(resp) => resp,
-    }
+        Err(resp) => return resp,
+    };
+    hooks::announce(&state, r, HookEvent::AfterUpdate, &hook_req, &updated).await;
+    response
 }
 
 pub async fn delete(
@@ -1130,11 +1159,14 @@ pub async fn delete(
         );
     }
 
-    // A delete hook needs the row it is about to lose, so fetch it first — but
-    // only when one is actually declared.
-    let has_delete_hook =
-        r.hook(HookEvent::BeforeDelete).is_some() || r.hook(HookEvent::AfterDelete).is_some();
-    let doomed = if has_delete_hook {
+    // A delete hook needs the row it is about to lose, and so does a
+    // `[publish] after_delete` — the row *is* the message, and after the
+    // delete there is nowhere left to read it from. Fetched only when
+    // something actually wants it, so an ordinary delete stays one statement.
+    let needs_the_row = r.hook(HookEvent::BeforeDelete).is_some()
+        || r.hook(HookEvent::AfterDelete).is_some()
+        || r.publish.get(HookEvent::AfterDelete).is_some();
+    let doomed = if needs_the_row {
         match state.db.get(r, id, &filters).await {
             Ok(Some(row)) => row,
             Ok(None) => return error(404, "not found"),
@@ -1176,12 +1208,17 @@ pub async fn delete(
         discard_empty_organization(&state, org).await;
     }
 
-    match hooks::run(&state, r, HookEvent::AfterDelete, &hook_req, payload()).await {
+    let response = match hooks::run(&state, r, HookEvent::AfterDelete, &hook_req, payload()).await
+    {
         // A replacement turns the usual empty `204` into a `200` with a body.
         Ok(Some(replacement)) => ok(&replacement),
         Ok(None) => HttpResponse::NoContent().finish(),
-        Err(resp) => resp,
-    }
+        Err(resp) => return resp,
+    };
+    // The row is gone, so the message carries what it was — the last chance
+    // anything downstream has to see it.
+    hooks::announce(&state, r, HookEvent::AfterDelete, &hook_req, &payload()).await;
+    response
 }
 
 #[cfg(test)]
@@ -1285,8 +1322,32 @@ type = "string"
             Filter::In { column, values } if column == "id" && values.len() == 1
         ));
 
+        // A role on an ordinary global resource gates rather than filters, so
+        // it needs an organisation to be checked against. Without one there is
+        // no question to answer.
         let err = match authorize(&Access::Role("admin".into()), &caller, &plan) {
-            Ok(_) => panic!("role-gated global resource should be rejected"),
+            Ok(_) => panic!("a role check needs an active organisation"),
+            Err(err) => err,
+        };
+        assert_eq!(err.status().as_u16(), 403);
+
+        // With one, the role decides — and it lets every row through, because a
+        // global table has none to narrow to.
+        let admin_here = Caller {
+            principal: caller.principal.clone(),
+            active_org: Some(org_a),
+        };
+        assert!(authorize(&Access::Role("admin".into()), &admin_here, &plan)
+            .unwrap()
+            .is_empty());
+
+        // Holding a different role in that organisation is not holding this one.
+        let member_here = Caller {
+            principal: caller.principal.clone(),
+            active_org: Some(org_b),
+        };
+        let err = match authorize(&Access::Role("admin".into()), &member_here, &plan) {
+            Ok(_) => panic!("a member is not an admin"),
             Err(err) => err,
         };
         assert_eq!(err.status().as_u16(), 403);

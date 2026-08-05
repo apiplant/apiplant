@@ -11,7 +11,9 @@
 //! reference the environment: `url = "$DATABASE_URL"`,
 //! `port = "${PORT:-8080}"`. See [`crate::env`] for the syntax.
 
+use crate::schema::Access;
 use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Fully-resolved server configuration.
@@ -28,6 +30,7 @@ pub struct Config {
     pub email: EmailConfig,
     pub cache: CacheConfig,
     pub storage: StorageConfig,
+    pub queues: QueuesConfig,
     pub payments: PaymentsConfig,
     pub ai: AiConfig,
     pub oauth: OAuthConfig,
@@ -615,6 +618,218 @@ impl StorageConfig {
 
     pub fn max_size_bytes(&self) -> u64 {
         self.max_size_mb.saturating_mul(1024 * 1024)
+    }
+}
+
+/// Background work: a message published now, handled by a function shortly
+/// after, outside the request that caused it.
+///
+/// The transport is Postgres and nothing else — no broker to run, no second
+/// thing that can be down. A `publish` writes a row to `queue_message` and
+/// fires a `NOTIFY`; a subscriber wakes on that notification and claims the row
+/// with `FOR UPDATE SKIP LOCKED`. The two halves matter for different reasons:
+/// the *row* is what makes the message survive a restart and lets a failure be
+/// retried, and the *notification* is what makes it happen in milliseconds
+/// rather than on the next poll.
+///
+/// Because a message is a row, the guarantee is **at-least-once**: a handler
+/// that succeeds but crashes before its row is marked done runs again. Write
+/// handlers that can be run twice — the same reason `billing_event` exists.
+///
+/// ```toml
+/// [queues]
+/// # Which function handles which topic. One name, or several.
+/// [queues.subscribe]
+/// "user.signed_up" = "send_welcome"
+/// "order.paid"     = ["fulfil_order", "notify_ops"]
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct QueuesConfig {
+    /// Turn message handling off without deleting the subscriptions. Publishing
+    /// still records rows, so nothing is lost while it is off — it is a pause,
+    /// not a drain.
+    pub enabled: bool,
+    /// Prepended to the Postgres `NOTIFY` channel this app wakes on, so two
+    /// apps sharing one database don't wake each other for nothing.
+    pub prefix: String,
+    /// Topic → the function(s) that handle it. Written as one name or a list:
+    ///
+    /// ```toml
+    /// [queues.subscribe]
+    /// "user.signed_up" = "send_welcome"
+    /// "order.paid"     = ["fulfil_order", "notify_ops"]
+    /// ```
+    ///
+    /// Each subscriber gets its **own** row and its own retries, so a failing
+    /// `notify_ops` never re-runs `fulfil_order`.
+    #[serde(deserialize_with = "topic_subscriptions")]
+    pub subscribe: BTreeMap<String, Vec<String>>,
+    /// How often to sweep for work regardless of notifications. The `NOTIFY` is
+    /// what makes delivery immediate; this is the safety net that picks up a
+    /// message published while this process was starting, a retry whose backoff
+    /// has expired, and anything a dropped connection lost the wakeup for.
+    pub poll_secs: u64,
+    /// Most messages claimed in one go. Larger batches trade latency on the
+    /// last message for fewer round trips.
+    pub batch: u32,
+    /// How many times a message is tried before it is left `failed` for a person
+    /// to look at. `1` means no retries at all.
+    pub max_attempts: u32,
+    /// Base of the retry backoff, in seconds: attempt *n* waits
+    /// `retry_backoff_secs * 2^(n-1)`, so the default retries after 10s, 20s,
+    /// 40s, 80s and then gives up.
+    pub retry_backoff_secs: u64,
+    /// How long a claimed message may be worked on before another subscriber
+    /// is allowed to take it.
+    ///
+    /// This is what makes a killed process — an OOM, a rolling deploy, a lost
+    /// node — recoverable rather than a message stuck forever in `running`.
+    /// Set it comfortably above the slowest handler: expiring the lease early
+    /// is what turns at-least-once into "twice, concurrently".
+    pub lease_secs: u64,
+    /// Delete handled messages after this many hours, on the same sweep. `0`
+    /// keeps them forever, which is a reasonable choice for a low-volume app
+    /// that wants the ledger.
+    pub retain_hours: u64,
+    /// Who may publish over HTTP at `POST <base>/queues/{topic}`, in the same
+    /// grammar a resource's `[permissions]` uses.
+    ///
+    /// `private` — the default — means there is no such endpoint at all. A
+    /// topic is an internal name that triggers real work, so it is not
+    /// something to expose without deciding to.
+    pub publish: String,
+}
+
+impl Default for QueuesConfig {
+    fn default() -> Self {
+        QueuesConfig {
+            enabled: true,
+            prefix: "apiplant".to_string(),
+            subscribe: BTreeMap::new(),
+            poll_secs: 30,
+            batch: 10,
+            max_attempts: 5,
+            retry_backoff_secs: 10,
+            lease_secs: 300,
+            retain_hours: 24,
+            publish: "private".to_string(),
+        }
+    }
+}
+
+/// Accepts `"topic" = "fn"` and `"topic" = ["fn", "fn"]` in the same table, for
+/// the same reason [`one_or_many`] exists: the common case is one subscriber,
+/// and it shouldn't have to be written as a one-element list.
+fn topic_subscriptions<'de, D: serde::Deserializer<'de>>(
+    de: D,
+) -> Result<BTreeMap<String, Vec<String>>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    let raw = BTreeMap::<String, OneOrMany>::deserialize(de)?;
+    Ok(raw
+        .into_iter()
+        .map(|(topic, subscribers)| {
+            let subscribers = match subscribers {
+                OneOrMany::One(name) => vec![name],
+                OneOrMany::Many(names) => names,
+            };
+            (
+                topic.trim().to_string(),
+                subscribers
+                    .into_iter()
+                    .map(|name| name.trim().to_string())
+                    .filter(|name| !name.is_empty())
+                    .collect(),
+            )
+        })
+        .filter(|(topic, subscribers): &(String, Vec<String>)| {
+            !topic.is_empty() && !subscribers.is_empty()
+        })
+        .collect())
+}
+
+impl QueuesConfig {
+    /// The `NOTIFY` channel this app's publishers and subscribers meet on.
+    ///
+    /// One channel for the whole app rather than one per topic: the payload
+    /// carries the topic, a listener has a single subscription to re-establish
+    /// after a reconnect, and adding a topic needs no new `LISTEN`. It also
+    /// sidesteps Postgres's 63-byte limit on a channel name, which an app's own
+    /// topic names would otherwise have to live inside.
+    pub fn channel(&self) -> String {
+        let prefix = self.prefix.trim().trim_matches('_');
+        match prefix.is_empty() {
+            true => "apiplant_queue".to_string(),
+            false => format!("{prefix}_queue"),
+        }
+    }
+
+    /// Whether `topic` is a name this app will carry.
+    ///
+    /// Deliberately narrow — letters, digits, and `. _ - :` — because a topic
+    /// is an identifier that ends up in config keys, log lines and dashboard
+    /// filters, and a topic with a space or a quote in it reads as a mistake
+    /// everywhere it appears. Checked when publishing rather than trusted, since
+    /// a topic can arrive from a function's runtime string.
+    pub fn valid_topic(topic: &str) -> bool {
+        let topic = topic.trim();
+        !topic.is_empty()
+            && topic.len() <= 200
+            && topic
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':'))
+    }
+
+    /// The functions subscribed to a topic, in the order they were declared.
+    pub fn subscribers(&self, topic: &str) -> &[String] {
+        self.subscribe
+            .get(topic.trim())
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Every function name any topic points at, deduplicated. Used at boot to
+    /// report a subscription whose function isn't loaded.
+    pub fn subscribed_functions(&self) -> BTreeSet<&str> {
+        self.subscribe
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// Whether a subscriber loop should run: switched on *and* something to
+    /// listen for. Publishing does not depend on this — a message published
+    /// with no subscriber is still recorded, which is what makes "why didn't my
+    /// handler run?" answerable.
+    pub fn is_active(&self) -> bool {
+        self.enabled && !self.subscribe.is_empty()
+    }
+
+    /// The resolved policy for the HTTP publish endpoint. An unparseable
+    /// `publish` closes the door, matching how every other access string here
+    /// treats a typo — and so does `owner`, which names a column on a row and
+    /// means nothing for a topic.
+    pub fn publish_access(&self) -> Access {
+        match Access::parse(self.publish.trim()) {
+            Access::Owner => Access::Private,
+            access => access,
+        }
+    }
+
+    /// Seconds to wait before retrying a message that has failed `attempts`
+    /// times, doubling each time and capped at an hour so a poisoned message
+    /// doesn't schedule itself past the retention sweep.
+    pub fn retry_delay_secs(&self, attempts: u32) -> u64 {
+        let doubling = 1u64.checked_shl(attempts.saturating_sub(1)).unwrap_or(u64::MAX);
+        self.retry_backoff_secs
+            .saturating_mul(doubling)
+            .min(60 * 60)
     }
 }
 

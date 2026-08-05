@@ -185,6 +185,62 @@ declare module "apiplant" {
     remember<T>(key: string, ttlSeconds: number, compute: () => T): T;
   };
 
+  // ---- queues --------------------------------------------------------------
+
+  /** What `queue.publish` reports back. */
+  export interface Publication {
+    /** Id of the queued message -- the same id its handler sees as
+     *  `delivery().messageId`. */
+    id: string;
+    topic: string;
+    /**
+     * How many subscribers it was queued for.
+     *
+     * `0` means nothing subscribes to that topic. Not an error -- the message
+     * is still recorded in `queue_message` -- but almost always a typo.
+     */
+    delivered: number;
+  }
+
+  /**
+   * Work that happens after the response.
+   *
+   * `publish` records a message and returns; whichever functions
+   * `[queues.subscribe]` points at that topic run afterwards, on their own,
+   * with retries. Nothing the handler does can fail the request that published
+   * it -- which is the reason to reach for this rather than just calling it.
+   */
+  export const queue: {
+    publish(topic: string, message?: unknown): Publication;
+  };
+
+  /** The delivery a subscriber is running for. */
+  export interface DeliveryContext {
+    topic: string;
+    /** Stable across retries, so it works as an idempotency key. */
+    messageId: string;
+    /** This function's name, as the subscription named it. */
+    subscriber: string;
+    /**
+     * Which attempt this is, from 1.
+     *
+     * Delivery is at-least-once: anything above 1 is a message whose side
+     * effects may already have partly happened.
+     */
+    attempts: number;
+    /** Who published it, or `""` when the server did. */
+    principalId: string;
+  }
+
+  /**
+   * When running as a queue subscriber, the delivery this call is; `null` for
+   * an HTTP call or a lifecycle hook.
+   *
+   * The message body arrives as the function's ordinary input, so a handler is
+   * just a function and can be called by hand to test it.
+   */
+  export function delivery(): DeliveryContext | null;
+
   // ---- email ---------------------------------------------------------------
 
   /** A recipient: `"ann@example.com"`, `"Ann <ann@example.com>"`, or split. */
@@ -494,6 +550,8 @@ declare module "apiplant" {
     payments<T = Value>(request: PaymentsRequest): T;
     cache(request: Record<string, unknown>): Value;
     chat(request: ChatRequest | string): ChatReply;
+    /** Queue a message for its topic's subscribers. Prefer `queue.publish`. */
+    publish(topic: string, message?: unknown): Publication;
     emit(chunk: string): boolean;
     log: Logger;
     BadRequest: typeof BadRequest;

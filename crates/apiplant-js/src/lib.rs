@@ -209,6 +209,7 @@ fn serve(
         "cache" => in_band(host.cache(RStr::from_str(payload))),
         "payments" => in_band(host.payments(RStr::from_str(payload))),
         "ai" => in_band(host.ai(RStr::from_str(payload))),
+        "publish" => in_band(host.publish(RStr::from_str(payload))),
         // The one host call whose payload is text rather than an object, and
         // whose answer is a fact rather than a document: was anybody there to
         // receive it. The bootstrap sends every payload as JSON, so the chunk

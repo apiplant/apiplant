@@ -473,6 +473,79 @@ impl<'a, 'h, C> Context<'a, 'h, C> {
         self.host.emit(RStr::from_str(chunk))
     }
 
+    /// Queue a message for whatever subscribes to `topic`, and return before it
+    /// is handled.
+    ///
+    /// This is the "and then, separately" of a request: the caller gets their
+    /// answer as soon as the work is *recorded*, and the handler runs after —
+    /// on this process or another one, immediately or after a retry.
+    ///
+    /// ```no_run
+    /// # use apiplant_function::prelude::*;
+    /// # #[derive(serde::Serialize)] struct Order { id: String, total: i64 }
+    /// # fn example(ctx: &Context<()>, order: Order) -> Result<(), String> {
+    /// // The receipt, the warehouse and the analytics sync all happen after
+    /// // this returns — none of them keep the buyer waiting, and none of them
+    /// // can fail the sale.
+    /// ctx.publish("order.paid", &order)?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// Which functions run is `[queues.subscribe]` in `main.toml`, not
+    /// something the publisher names — that is the point of a topic. Publishing
+    /// to a topic nobody subscribes to is **not** an error: the message is
+    /// recorded, a warning is logged, and
+    /// [`Publication::delivered`] is `0`. Check it if that matters to you.
+    ///
+    /// Errors when the topic isn't a usable name, or when the write failed.
+    /// Note what a success does *not* promise: that the handler worked, or that
+    /// it will ever work. A publisher that needs to know that is asking for a
+    /// function call, not a message.
+    pub fn publish<T: serde::Serialize>(
+        &self,
+        topic: &str,
+        message: &T,
+    ) -> Result<Publication, String> {
+        let message = serde_json::to_value(message).map_err(|e| e.to_string())?;
+        let request = serde_json::json!({ "op": "publish", "topic": topic, "message": message });
+        match self.host.publish(RStr::from_str(&request.to_string())) {
+            RResult::ROk(reply) => serde_json::from_str(reply.as_str())
+                .map_err(|e| format!("unreadable publish reply: {e}")),
+            RResult::RErr(e) => Err(e.into_string()),
+        }
+    }
+
+    /// The delivery this invocation *is*, when the function is running as a
+    /// queue subscriber rather than answering a request.
+    ///
+    /// `None` for an HTTP call or a resource hook — so one handler can serve
+    /// both, and only the part that cares has to ask.
+    ///
+    /// ```no_run
+    /// # use apiplant_function::prelude::*;
+    /// # fn charge(_: &serde_json::Value) -> Result<(), String> { Ok(()) }
+    /// # fn example(ctx: &Context<()>, input: &serde_json::Value) -> Result<(), String> {
+    /// if let Some(delivery) = ctx.delivery() {
+    ///     if delivery.attempts > 1 {
+    ///         // Delivery is at-least-once: a retry may be finishing work an
+    ///         // earlier attempt already started.
+    ///         ctx.warn(&format!("retrying {} (attempt {})", delivery.topic, delivery.attempts));
+    ///     }
+    /// }
+    /// charge(input)
+    /// # }
+    /// ```
+    pub fn delivery(&self) -> Option<Delivery> {
+        let raw = self.host.hook().into_string();
+        let parsed: Delivery = serde_json::from_str(&raw).ok()?;
+        // The hook slot carries both kinds of context; only one of them is a
+        // message, and a resource hook must not be mistaken for one.
+        match parsed.event == "message" {
+            true => Some(parsed),
+            false => None,
+        }
+    }
+
     /// Send one operation to the host's cache and parse its reply.
     fn cache(&self, request: serde_json::Value) -> Result<serde_json::Value, String> {
         match self.host.cache(RStr::from_str(&request.to_string())) {
@@ -733,6 +806,64 @@ pub struct ChatReply {
     pub input_tokens: Option<u64>,
     /// Tokens the answer cost, when the provider reports it.
     pub output_tokens: Option<u64>,
+}
+
+/// Everything the host knows about the operation a hook fired for.
+///
+/// Reachable through [`Context::hook`]. Every field is optional on the wire, so
+/// a function written against an older host still loads; unknown fields are
+/// ignored, so a newer host can add more.
+/// What [`Context::publish`] reports back: the message was written down.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct Publication {
+    /// Id of the queued message — the same id the handler sees as
+    /// [`Delivery::message_id`], and the one to put in a log line.
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub topic: String,
+    /// How many subscribers it was queued for.
+    ///
+    /// `0` means the topic is in nobody's `[queues.subscribe]`. That is not an
+    /// error and the message is still recorded, but it is nearly always a typo,
+    /// so it is worth an `if` in anything that must not silently do nothing.
+    #[serde(default)]
+    pub delivered: usize,
+}
+
+/// One queued message, as its handler sees it.
+///
+/// The message body itself arrives as the function's ordinary *input*, exactly
+/// as if it had been posted to the endpoint — so a handler is a normal function
+/// and can be called by hand to test it. This is the envelope around it.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct Delivery {
+    /// Always `"message"`; how a delivery is told apart from a resource hook.
+    #[serde(default)]
+    pub event: String,
+    /// The topic it was published to.
+    #[serde(default)]
+    pub topic: String,
+    /// Id of the row in `queue_message`.
+    ///
+    /// Stable across retries, which is what makes it usable as an idempotency
+    /// key — the natural way to make an at-least-once handler safe to run twice.
+    #[serde(default)]
+    pub message_id: String,
+    /// This function's name, as the subscription named it.
+    #[serde(default)]
+    pub subscriber: String,
+    /// Which attempt this is, counting from `1`.
+    ///
+    /// Anything above `1` means an earlier attempt failed *or* died partway —
+    /// so its side effects may have happened. Handlers that write to the
+    /// outside world should branch on this, or be written so they don't have to.
+    #[serde(default)]
+    pub attempts: u32,
+    /// The principal that published it, or empty when the publisher was the
+    /// server itself (a resource `[publish]`, or a function with no caller).
+    #[serde(default)]
+    pub principal_id: String,
 }
 
 /// Everything the host knows about the operation a hook fired for.
@@ -1128,7 +1259,9 @@ impl AdminBuilder {
 
 /// A curated set of imports for function authors: `use apiplant_function::prelude::*;`.
 pub mod prelude {
-    pub use crate::{reply, Chat, ChatMessage, ChatReply, Context, Email, Hook, Sent};
+    pub use crate::{
+        reply, Chat, ChatMessage, ChatReply, Context, Delivery, Email, Hook, Publication, Sent,
+    };
     pub use apiplant_abi::{HttpMethod, LogLevel, Visibility};
     /// `#[derive(JsonSchema)]` for typed OpenAPI (with the `schema` feature).
     #[cfg(feature = "schema")]
@@ -1527,6 +1660,10 @@ mod tests {
             self.service(request)
         }
 
+        fn publish(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.service(request)
+        }
+
         fn emit(&self, chunk: RStr<'_>) -> bool {
             self.chunks.lock().unwrap().push(chunk.as_str().to_string());
             self.emit_delivered
@@ -1572,6 +1709,10 @@ mod tests {
 
         fn ai(&self, request: RStr<'_>) -> RResult<RString, RString> {
             self.0.ai(request)
+        }
+
+        fn publish(&self, request: RStr<'_>) -> RResult<RString, RString> {
+            self.0.publish(request)
         }
 
         fn emit(&self, chunk: RStr<'_>) -> bool {
@@ -1774,6 +1915,76 @@ mod tests {
         assert!(request.get("html").is_none());
         assert!(request.get("cc").is_none());
         assert!(request.get("from").is_none());
+    }
+
+    #[test]
+    fn publish_sends_the_topic_and_message_and_reads_the_receipt() {
+        let (mock, host) = shared(
+            MockHost::success("{}", "u1", serde_json::json!([])).replying(
+                serde_json::json!({ "id": "m-1", "topic": "order.paid", "delivered": 2 }),
+            ),
+        );
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        let receipt = ctx
+            .publish("order.paid", &serde_json::json!({ "order_id": "o-9" }))
+            .unwrap();
+
+        let request = mock.last_service_request();
+        assert_eq!(request["op"], "publish");
+        assert_eq!(request["topic"], "order.paid");
+        assert_eq!(request["message"]["order_id"], "o-9");
+
+        assert_eq!(receipt.id, "m-1");
+        assert_eq!(receipt.delivered, 2);
+    }
+
+    /// Publishing into a topic nobody subscribes to is a success with nothing
+    /// delivered, not an error — a publisher that cares has to look, and this
+    /// is what it looks at.
+    #[test]
+    fn publishing_to_an_unsubscribed_topic_succeeds_with_nothing_delivered() {
+        let host = MockHost::success("{}", "u1", serde_json::json!([]))
+            .replying(serde_json::json!({ "id": "m-2", "topic": "nobody.home", "delivered": 0 }));
+        let host = HostApi_TO::from_value(host, TD_Opaque);
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        let receipt = ctx.publish("nobody.home", &serde_json::json!({})).unwrap();
+        assert_eq!(receipt.delivered, 0);
+    }
+
+    /// The hook slot carries both a resource hook and a queue delivery, so the
+    /// two must not be confused for each other in either direction.
+    #[test]
+    fn a_delivery_is_read_from_the_hook_slot_and_a_resource_hook_is_not_one() {
+        let delivery = MockHost::success("{}", "", serde_json::json!([])).with_hook(
+            serde_json::json!({
+                "event": "message", "topic": "order.paid", "message_id": "m-3",
+                "subscriber": "fulfil_order", "attempts": 3, "principal_id": "u1"
+            }),
+        );
+        let delivery = HostApi_TO::from_value(delivery, TD_Opaque);
+        let ctx = Context::__new(&delivery, (), String::new(), None);
+
+        let got = ctx.delivery().expect("this invocation is a delivery");
+        assert_eq!(got.topic, "order.paid");
+        assert_eq!(got.message_id, "m-3");
+        assert_eq!(got.subscriber, "fulfil_order");
+        // The field a handler branches on to stay idempotent.
+        assert_eq!(got.attempts, 3);
+
+        let hook = MockHost::success("{}", "u1", serde_json::json!([])).with_hook(
+            serde_json::json!({ "event": "after_create", "resource": "post" }),
+        );
+        let hook = HostApi_TO::from_value(hook, TD_Opaque);
+        let ctx = Context::__new(&hook, (), "u1".into(), None);
+        assert!(ctx.delivery().is_none());
+
+        // And a plain HTTP call is neither.
+        let plain = MockHost::success("{}", "u1", serde_json::json!([]));
+        let plain = HostApi_TO::from_value(plain, TD_Opaque);
+        let ctx = Context::__new(&plain, (), "u1".into(), None);
+        assert!(ctx.delivery().is_none());
     }
 
     #[test]

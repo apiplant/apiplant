@@ -292,6 +292,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "apiplant-queue"
+version = "0.5.0"
+dependencies = [
+ "apiplant-core",
+ "apiplant-db",
+ "chrono",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "apiplant-server"
 version = "0.5.0"
 dependencies = [
@@ -308,6 +325,7 @@ dependencies = [
  "apiplant-js",
  "apiplant-oauth",
  "apiplant-payments",
+ "apiplant-queue",
  "apiplant-storage",
  "chrono",
  "futures-util",

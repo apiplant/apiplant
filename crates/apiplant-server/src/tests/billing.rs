@@ -36,50 +36,6 @@ fn plain_app(db_url: &str) -> String {
 
 /// Register somebody, put them in an organisation with `role`, and return
 /// their session token and the organisation's id.
-async fn member(state: &AppState, email: &str, role: &str) -> (String, String) {
-    let hash = state.auth.hash_password("hunter2").unwrap();
-    let user = state
-        .db
-        .create(
-            state.app.resources.get("user").unwrap(),
-            &json!({ "email": email, "password_hash": hash })
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .unwrap();
-    let user_id = user["id"].as_str().unwrap().to_string();
-
-    let org = state
-        .db
-        .create(
-            state.app.resources.get("organization").unwrap(),
-            &json!({ "name": "Acme" }).as_object().unwrap().clone(),
-        )
-        .await
-        .unwrap();
-    let org_id = org["id"].as_str().unwrap().to_string();
-
-    state
-        .db
-        .create(
-            state.app.resources.get("membership").unwrap(),
-            &json!({ "user_id": user_id, "organization_id": org_id, "role": role })
-                .as_object()
-                .unwrap()
-                .clone(),
-        )
-        .await
-        .unwrap();
-
-    let token = state
-        .auth
-        .issue_token(Uuid::parse_str(&user_id).unwrap())
-        .unwrap();
-    (token, org_id)
-}
-
 /// An app that names no provider has neither the endpoints nor the tables.
 ///
 /// This is the whole shape of the feature. Five tables and a price list is a
@@ -194,7 +150,7 @@ async fn only_an_admin_of_a_named_organization_can_start_a_checkout() {
     let root = temp_dir("paycheckout");
     write_files(&root, &[("main.toml", &paying_app(&db.url))]);
     let state = load_state(&root).await;
-    let (member_token, org) = member(&state, "member@example.test", "member").await;
+    let (member_token, org) = member_with_role(&state, "member@example.test", "member").await;
     let app = init_http_app!(state);
 
     let body = json!({ "price_id": Uuid::new_v4().to_string() });
@@ -250,7 +206,7 @@ async fn an_admin_buying_an_unknown_price_gets_a_404_and_no_provider_call() {
     let root = temp_dir("payprice");
     write_files(&root, &[("main.toml", &paying_app(&db.url))]);
     let state = load_state(&root).await;
-    let (token, org) = member(&state, "boss@example.test", "admin").await;
+    let (token, org) = member_with_role(&state, "boss@example.test", "admin").await;
     let app = init_http_app!(state);
 
     for (price_id, expected) in [
@@ -333,7 +289,7 @@ async fn the_catalogue_is_public_to_read_and_admin_to_change() {
     let root = temp_dir("paycat");
     write_files(&root, &[("main.toml", &paying_app(&db.url))]);
     let state = load_state(&root).await;
-    let (member_token, org) = member(&state, "member@example.test", "member").await;
+    let (member_token, org) = member_with_role(&state, "member@example.test", "member").await;
     let app = init_http_app!(state);
 
     // Anonymous reads are fine.

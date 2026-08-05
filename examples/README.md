@@ -27,6 +27,7 @@ is a complete app: point the binary at it and it runs.
 | 20 | [streaming](20-streaming) | any function's second endpoint: `/stream`, sending the answer as it is produced and into the admin action view |
 | 21 | [docker](21-docker) | shipping it: the app inside `ghcr.io/apiplant/apiplant`, a compose file, config from the environment |
 | 22 | [oauth](22-oauth) | signing in with GitHub, Google, LinkedIn and X: four `[oauth.…]` blocks, two credentials each, and a sign-in page made of links |
+| 23 | [queues](23-queues) | background work on Postgres alone: `publish` from a function, `[queues.subscribe]` to a topic, a model announcing its own writes, retries and a dead-letter |
 
 ## Running one
 
@@ -125,6 +126,7 @@ loads a fixture without starting a server. See [Seed data](../docs/seed.md).
 | 20-streaming | `apiplant_streaming` |
 | 21-docker | `apiplant_docker` (in its own container) |
 | 22-oauth | `apiplant_oauth` |
+| 23-queues | `apiplant_queues` |
 
 Separate databases keep the examples genuinely independent: example 05 redefines
 `user` to log in by username, which cannot share a table with the built-in

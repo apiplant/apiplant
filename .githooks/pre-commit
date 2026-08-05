@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Pre-commit hook: keep the READMEs pinned to the workspace version, and rebuild
+# whatever generated assets the staged changes invalidate.
+#
+# Enable in a fresh clone with:  git config core.hooksPath .githooks
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+version=$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
+  | sed -n 's/^version *= *"\([^"]*\)".*/\1/p' | head -n 1)
+if [ -z "$version" ]; then
+  echo "pre-commit: could not read version from Cargo.toml" >&2
+  exit 1
+fi
+minor=${version%.*}
+
+# ---------------------------------------------------------------- version sync
+for f in README.md docs/README.md; do
+  [ -f "$f" ] || continue
+  before=$(cat "$f")
+  sed -i -E \
+    -e "s/apiplant-v[0-9]+\.[0-9]+\.[0-9]+/apiplant-v$version/g" \
+    -e "s/apiplant:[0-9]+\.[0-9]+(\.[0-9]+)?/apiplant:$version/g" \
+    -e "s/\`[0-9]+\.[0-9]+\.[0-9]+\`/\`$version\`/g" \
+    -e "s/\`[0-9]+\.[0-9]+\`/\`$minor\`/g" \
+    -e "s/(# or +):[0-9]+\.[0-9]+/\1:$minor/g" \
+    "$f"
+  if [ "$before" != "$(cat "$f")" ]; then
+    echo "pre-commit: updated version in $f -> $version"
+    git add "$f"
+  fi
+done
+
+# --------------------------------------------------------------------- rebuilds
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+changed() {
+  echo "$staged" | grep -qE "$1"
+}
+
+# Anything staged under the generated asset trees is a build output, not input.
+if changed '^studio/(src|public|index\.html|package\.json|vite\.config\.ts|tsconfig\.json)'; then
+  echo "pre-commit: rebuilding studio"
+  (cd studio && pnpm install --frozen-lockfile --prefer-offline >/dev/null && pnpm build)
+  git add crates/apiplant-assets/assets/studio
+fi
+
+if changed '^admin/(src|index\.html|package\.json|vite\.config\.ts|tsconfig\.json)'; then
+  echo "pre-commit: rebuilding admin"
+  (cd admin && pnpm install --frozen-lockfile --prefer-offline >/dev/null && pnpm build)
+  git add crates/apiplant-assets/assets/admin
+fi
+
+# The npm package's sources live in the js crate's assets; `pnpm sync` copies
+# them into typescript/ (gitignored) so the type check runs against the truth.
+if changed '^(typescript/|crates/apiplant-js/assets/)'; then
+  echo "pre-commit: syncing and checking typescript"
+  (cd typescript && pnpm install --frozen-lockfile --prefer-offline >/dev/null && pnpm sync && pnpm check)
+fi

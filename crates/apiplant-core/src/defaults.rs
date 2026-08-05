@@ -1035,6 +1035,128 @@ pub fn oauth_builtins() -> Vec<(&'static str, &'static str)> {
     vec![("oauth_state", OAUTH_STATE_TOML)]
 }
 
+/// One published message, waiting for one subscriber to handle it.
+///
+/// This table *is* the queue. A `publish` writes a row here and fires a
+/// `NOTIFY`; a subscriber claims the row, runs the function, and marks it. The
+/// row is what makes the message durable — a broker-less queue whose messages
+/// only lived in a notification would lose everything published while nothing
+/// was listening, and would have nowhere to record that an attempt failed.
+///
+/// One row per *subscriber*, not per message: a topic two functions listen to
+/// produces two rows, so a handler that keeps failing retries on its own
+/// schedule without dragging its neighbour along. A message nobody subscribes
+/// to still gets a row, marked handled with no subscriber — the answer to "I
+/// published it, why did nothing happen?" is then a row rather than a silence.
+///
+/// Readable by an admin and writable by nobody: the columns are a state machine
+/// the subscriber owns, and editing one by hand is how a message gets handled
+/// twice or never.
+pub const QUEUE_MESSAGE_TOML: &str = r#"
+[resource]
+name = "queue_message"
+scope = "global"
+timestamps = true
+
+[admin]
+label = "Queued message"
+plural = "Queue"
+group = "Operations"
+
+# Spelled out rather than left to the defaults, because the questions this
+# screen answers are asked in a hurry: what is stuck, on which topic, for whom,
+# and how many times has it tried. The generic guess — first string column —
+# would name a row by `claimed_by`, which is the one column that is usually
+# empty.
+display_field = "topic"
+columns = ["topic", "subscriber", "status", "attempts", "available_at", "processed_at"]
+
+# `error` is in here because the way somebody arrives at this table is usually
+# with half a message from a log line and no idea which row it came from.
+search_fields = ["topic", "subscriber", "error"]
+
+# Visible and readable, because the questions this table answers — what is
+# stuck, what failed, what is retrying — are asked by a person under time
+# pressure, and making them write SQL for it is not a kindness. Nothing here is
+# writable over the API: the subscriber owns these columns.
+[permissions]
+list   = "role:admin"
+read   = "role:admin"
+create = "private"
+update = "private"
+delete = "private"
+
+[fields.topic]
+type = "string"
+required = true
+
+# The function this row is for. Empty means the message was published to a
+# topic nothing subscribes to; the row is kept as the record that it happened.
+[fields.subscriber]
+type = "string"
+
+# pending → running → done, or → failed once the attempts run out. A `pending`
+# row whose `available_at` is in the future is waiting out a retry backoff; a
+# `running` row whose `claimed_at` is older than `[queues] lease_secs` belongs
+# to a subscriber that died, and is taken back on the next sweep.
+[fields.status]
+type = "string"
+required = true
+default = "pending"
+
+[fields.status.admin]
+options = ["pending|Pending", "running|Running", "done|Done", "failed|Failed"]
+
+[fields.payload]
+type = "json"
+required = true
+
+[fields.attempts]
+type = "integer"
+required = true
+default = 0
+
+# The earliest this row may be claimed. Set on publish (now) and pushed forward
+# by each failure, which is how the retry backoff is expressed without a timer
+# living in any one process.
+[fields.available_at]
+type = "timestamp"
+required = true
+
+# When the current attempt started, and which process took it. Together with
+# `[queues] lease_secs` these are what let a message survive the subscriber
+# that was holding it: a `running` row nobody has finished within the lease is
+# assumed abandoned and offered again.
+[fields.claimed_at]
+type = "timestamp"
+
+[fields.claimed_by]
+type = "string"
+
+[fields.processed_at]
+type = "timestamp"
+
+# Why the last attempt failed. Kept on a row that later succeeds, because "it
+# worked on the third try" is worth knowing.
+[fields.error]
+type = "text"
+
+# Who published it: a principal id, or empty when the publisher was the server
+# itself (a resource `[publish]` declaration, or a function with no caller).
+[fields.published_by]
+type = "string"
+"#;
+
+/// The one resource an app gets for using queues.
+///
+/// Unconditional, unlike the billing tables: `[queues]` needs no configuration
+/// to be useful — a function calling `publish` works in an app whose `main.toml`
+/// never mentions queues at all — so the table has to be there before anyone
+/// declares anything. It costs one empty table.
+pub fn queue_builtins() -> Vec<(&'static str, &'static str)> {
+    vec![("queue_message", QUEUE_MESSAGE_TOML)]
+}
+
 /// Parse one built-in by its embedded TOML. Panics on a malformed built-in —
 /// that would be a bug in this crate, caught by the test below.
 pub fn parse_builtin(toml_src: &str) -> Resource {
@@ -1053,6 +1175,7 @@ mod tests {
             .into_iter()
             .chain(billing_builtins())
             .chain(oauth_builtins())
+            .chain(queue_builtins())
         {
             let r = parse_builtin(src);
             assert_eq!(r.meta.name, name);

@@ -44,7 +44,7 @@ Or run the container image, which is published to the GitHub registry for
 The image tags carry no `v` prefix — `0.5.0`, `0.5`, or `latest`:
 
 ```bash
-docker pull ghcr.io/apiplant/apiplant:0.5.0   # or :0.4, or :latest
+docker pull ghcr.io/apiplant/apiplant:0.5.0   # or :0.5, or :latest
 docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 
@@ -76,6 +76,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Lifecycle hooks](docs/hooks.md) | running functions before/after every CRUD operation |
 | [Sending email](docs/email.md) | one `[email]` provider — SMTP, SES, SendGrid, Brevo, Mailjet… |
 | [Caching](docs/caching.md) | the optional `[cache]` Redis a function can reach |
+| [Queues](docs/queues.md) | background work on Postgres alone: `publish`, `[queues.subscribe]`, retries |
 | [File storage](docs/storage.md) | the `file` field type, `[storage]` on a directory or an S3-compatible bucket |
 | [Payments](docs/payments.md) | one `[payments]` provider — catalogue, subscriptions, checkout, tax |
 | [AI](docs/ai.md) | one `[ai]` provider — a streaming chat endpoint, `ctx.chat`, streaming functions |
@@ -566,6 +567,44 @@ picker for people and workspaces is there without configuring anything. See
 [`examples/21-docker`](examples/21-docker) for the volume it needs in a
 container.
 
+## Queues: background work, with nothing else to run
+
+Some work should not be in the request that caused it. A receipt email, a
+warehouse call, an analytics sync — the buyer does not care, and none of them
+should be able to fail the sale.
+
+```ts
+db.execute(sql`UPDATE apiplant_order SET status = 'paid' WHERE id = ${id}::uuid`);
+queue.publish("order.paid", { orderId: id });   // returns; the rest happens after
+```
+
+```toml
+[queues.subscribe]                        # topic -> the function(s) that handle it
+"order.paid" = ["fulfilOrder", "notifyOps"]
+```
+
+There is no broker to deploy. `publish` writes a row to `queue_message` and
+fires a Postgres `NOTIFY`; a subscriber wakes on the notification and claims the
+row with `FOR UPDATE SKIP LOCKED`. The two halves do different jobs, and most
+home-made queues have only one: the **row** is what survives a restart, records
+a failure and lets it be retried, and the **notification** is what makes it
+happen in milliseconds rather than on the next poll.
+
+A resource can announce its own writes with no function at all, in which case
+the row is the message:
+
+```toml
+# models/order.toml
+[publish]
+after_delete = "order.cancelled"
+```
+
+Failures retry on a doubling backoff and then stay in the table, marked
+`failed`, with the reason on them — a dead-letter you have to go and look at,
+which is the point. Delivery is at-least-once, so handlers must be safe to run
+twice; [the guide](docs/queues.md) is blunt about why that is the only honest
+guarantee on offer. See [`examples/23-queues`](examples/23-queues).
+
 ## Payments: billing as resources, not as a bolt-on
 
 A third optional section, and the one that adds the most:
@@ -655,6 +694,7 @@ See [AI](docs/ai.md), [`examples/19-ai`](examples/19-ai) and
 | `apiplant-auth`        | passwords, JWT sessions, API keys, permission evaluation          |
 | `apiplant-email`       | outbound mail: SMTP, SES (SigV4), SendGrid, Brevo, Mailjet, Mailgun, Postmark, Resend |
 | `apiplant-cache`       | the optional Redis a function can reach                            |
+| `apiplant-queue`       | background messages: the Postgres outbox behind `[queues]`          |
 | `apiplant-payments`    | the optional Stripe integration behind `[payments]`                |
 | `apiplant-ai`          | the optional assistant behind `[ai]`: OpenAI, Anthropic, or anything OpenAI-shaped |
 | `apiplant-server`      | the ntex server: CRUD routing, auth, functions, OpenAPI/Swagger, TLS |

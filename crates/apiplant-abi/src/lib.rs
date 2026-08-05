@@ -363,7 +363,45 @@ pub trait HostApi: Send + Sync {
     ///   "data": null, "row": { "id": "…", "title": "…" }, "rows": null
     /// }
     /// ```
+    ///
+    /// A function running as a queue *subscriber* reads its delivery here
+    /// instead, under `"event": "message"` — the topic, the message's id, and
+    /// which attempt this is:
+    ///
+    /// ```json
+    /// { "event": "message", "topic": "order.paid", "message_id": "…",
+    ///   "subscriber": "fulfil_order", "attempts": 1, "principal_id": "…" }
+    /// ```
+    ///
+    /// `attempts` is the one worth branching on: delivery is at-least-once, so
+    /// anything above `1` is a message whose side effects may have partly
+    /// happened already.
     fn hook(&self) -> RString;
+
+    /// Queue a message for whichever functions subscribe to a topic, to be
+    /// handled after this invocation returns.
+    ///
+    /// ```json
+    /// // request
+    /// { "op": "publish", "topic": "order.paid", "message": { "order_id": "…" } }
+    /// // reply
+    /// { "id": "…", "topic": "order.paid", "delivered": 2 }
+    /// ```
+    ///
+    /// `delivered` is how many subscribers it was queued for, and **zero is not
+    /// an error**: the message is recorded either way, so that a topic nobody
+    /// listens to is a row to find rather than a silence to guess at. A
+    /// publisher that would rather know can check it.
+    ///
+    /// This returns once the message is *committed*, not once it has been
+    /// handled — that is the entire point, and what makes it different from
+    /// calling the other function directly. The handler runs on a subscriber,
+    /// possibly in another process, possibly after a retry, and its failure has
+    /// no effect on this invocation.
+    ///
+    /// Errors when the topic isn't a usable name, or when the database refused
+    /// the write. It does *not* error when no subscriber is configured.
+    fn publish(&self, request: RStr<'_>) -> RResult<RString, RString>;
 }
 
 /// Marks an [`Function::invoke`] error as *the function's own fault* — a panic

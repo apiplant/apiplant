@@ -24,6 +24,7 @@ use apiplant_cache::Cache;
 use apiplant_db::Db;
 use apiplant_email::Mailer;
 use apiplant_payments::Payments;
+use apiplant_queue::Queue;
 
 /// A function implemented in the framework itself rather than loaded from a
 /// library: an ordinary Rust `fn` over the same [`HostBridge`] a dynamic
@@ -306,6 +307,12 @@ pub struct HostBridge {
     payments: Option<Payments>,
     /// The app's configured AI assistant, when it has one.
     ai: Option<Ai>,
+    /// The app's queue. Unlike the four above this is not optional: `publish`
+    /// needs no configuration to work, because the table it writes to is a
+    /// built-in. It is `Option` only for the handful of call sites that build a
+    /// bridge without an app around it — a test, mainly — and those get the
+    /// same "not configured" message the others give.
+    queue: Option<Queue>,
     /// Where [`HostApi::emit`] sends what a function produces mid-invocation,
     /// when this call is being streamed to somebody. `None` for every other
     /// invocation, which is what makes `emit` a no-op there rather than an
@@ -331,6 +338,7 @@ impl HostBridge {
             cache: None,
             payments: None,
             ai: None,
+            queue: None,
             chunks: None,
             config_json,
             principal_id,
@@ -355,6 +363,12 @@ impl HostBridge {
         self.cache = cache;
         self.payments = payments;
         self.ai = ai;
+        self
+    }
+
+    /// Lend the function the app's queue, so it can `publish`.
+    pub fn with_queue(mut self, queue: Queue) -> Self {
+        self.queue = Some(queue);
         self
     }
 
@@ -527,6 +541,27 @@ impl HostApi for HostBridge {
                     .unwrap_or_else(|_| "{}".to_string())
                     .into(),
             ),
+            Err(e) => RResult::RErr(e.to_string().into()),
+        }
+    }
+
+    fn publish(&self, request: RStr<'_>) -> RResult<RString, RString> {
+        let Some(queue) = &self.queue else {
+            return RResult::RErr(
+                "this invocation has no queue attached"
+                    .to_string()
+                    .into(),
+            );
+        };
+        // The publisher is recorded as the caller of *this* function, so a
+        // message queued while handling somebody's request carries their id
+        // through to the handler — which is what makes the eventual work
+        // attributable to the person who caused it.
+        match self
+            .handle
+            .block_on(queue.execute(request.as_str(), &self.principal_id))
+        {
+            Ok(value) => RResult::ROk(value.to_string().into()),
             Err(e) => RResult::RErr(e.to_string().into()),
         }
     }

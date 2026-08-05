@@ -98,6 +98,7 @@ fn bridge(state: &State<AppState>, ready: &Ready) -> HostBridge {
         state.payments.clone(),
         state.ai.clone(),
     )
+    .with_queue(state.queue.clone())
 }
 
 /// Dispatch a request to a loaded function. Enforces the manifest's method and

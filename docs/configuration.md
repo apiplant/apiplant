@@ -67,6 +67,10 @@ backend       = "local"      # local | s3 | none
 dir           = "storage"    # local: a directory (a mounted volume, in a container)
 allowed_types = ["image/*"]  # empty accepts anything
 
+[queues]                     # background work; on, with nothing subscribed
+[queues.subscribe]
+"order.paid" = "fulfilOrder" # topic -> the function(s) that handle it
+
 [payments]                   # optional: Stripe, disabled unless a provider is named
 provider   = "stripe"
 secret_key = "${STRIPE_SECRET_KEY}"
@@ -259,6 +263,46 @@ all, uploads land in a `storage/` directory. See [File storage](storage.md).
 
 A misconfigured backend — `s3` with no bucket, a `dir` that cannot be created —
 fails the boot rather than the first upload.
+
+## `[queues]`
+
+Background work: a message published now, handled by a function shortly after,
+outside the request that caused it. The transport is the app's own Postgres —
+`publish` writes a row to `queue_message` and fires a `NOTIFY`, and a subscriber
+claims the row with `FOR UPDATE SKIP LOCKED`. There is nothing to install and no
+second service that can be down. See [Queues](queues.md).
+
+Publishing needs no configuration at all: `queue_message` is a built-in
+resource, so `ctx.publish` works in an app whose `main.toml` never mentions
+queues. What this section configures is the *subscriber* half.
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `true` | Pause handling without deleting the subscriptions. Publishing still records rows, so nothing is lost while it is off. |
+| `subscribe` | *(empty)* | `[queues.subscribe]`: topic → the function(s) that handle it. One name or a list; each subscriber gets its own row and its own retries. |
+| `prefix` | `apiplant` | `NOTIFY` channel prefix, so two apps sharing a database don't wake each other. |
+| `poll_secs` | `30` | Sweep interval. The `NOTIFY` is what makes delivery immediate; this is the safety net beneath it. |
+| `batch` | `10` | Messages claimed in one go. |
+| `max_attempts` | `5` | Then the message is left `failed` for a person to look at. `1` means no retries. |
+| `retry_backoff_secs` | `10` | Doubling, capped at an hour: 10s, 20s, 40s, 80s. |
+| `lease_secs` | `300` | How long a claimed message may be worked on before another subscriber may take it. Set it above your slowest handler. |
+| `retain_hours` | `24` | Delete *handled* messages after this. `0` keeps them. `failed` rows are never swept. |
+| `publish` | `private` | Who may `POST <base>/queues/{topic}`, in the resource permission grammar. The default means no such endpoint. |
+
+```toml
+[queues]
+max_attempts = 3
+
+[queues.subscribe]
+"order.paid"      = ["fulfilOrder", "notifyOps"]
+"order.cancelled" = "releaseStock"
+```
+
+A subscription naming a function that isn't loaded is reported at boot, loudly:
+its messages would otherwise queue up and retry their way to the dead-letter one
+cycle at a time.
+
+Delivery is **at-least-once** — write handlers that can be run twice.
 
 ## `[payments]`
 

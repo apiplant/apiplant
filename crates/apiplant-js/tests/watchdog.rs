@@ -28,6 +28,9 @@ impl HostApi for SilentHost {
     fn ai(&self, _request: RStr<'_>) -> RResult<RString, RString> {
         RResult::RErr("no assistant in this test".into())
     }
+    fn publish(&self, _request: RStr<'_>) -> RResult<RString, RString> {
+        RResult::RErr("no queue in this test".into())
+    }
     fn emit(&self, _chunk: RStr<'_>) -> bool {
         false
     }

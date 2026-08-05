@@ -16,11 +16,12 @@ pub mod schema;
 pub use agent::{Agent, AgentAiOverride, AgentMeta, AgentPermissions, AgentStorage, AgentTool};
 pub use app::{App, TlsPaths};
 pub use config::{
-    AiConfig, CacheConfig, Config, EmailConfig, PaymentsConfig, SmtpConfig, StorageConfig,
+    AiConfig, CacheConfig, Config, EmailConfig, PaymentsConfig, QueuesConfig, SmtpConfig,
+    StorageConfig,
 };
 pub use env::{expand_document, parse_toml};
 pub use error::{Error, Result};
 pub use schema::{
     relation_name, Access, AuthEvent, Field, FieldType, HookEvent, Hooks, OnDelete, Permissions,
-    Reference, Resource, Scope,
+    Publishes, Reference, Resource, Scope,
 };

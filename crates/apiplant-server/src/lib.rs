@@ -85,6 +85,16 @@ macro_rules! build_app {
             );
         }
 
+        // Always mounted, even though `[queues] publish` defaults to `private`
+        // and a private policy answers 404. Leaving it unmounted would let
+        // `/queues/{topic}` fall through to the generic `/{resource}/{id}`
+        // routes and come back 405 — which says "wrong method" about an
+        // endpoint that does not exist. The handler's own check gives the 404.
+        scope = scope.route(
+            "/queues/{topic}",
+            $crate::ntex_web::post().to($crate::queue_routes::publish),
+        );
+
         // The flows that reach somebody through their mailbox exist only where
         // this app can actually send mail. An unmounted route answers 404,
         // which is the honest answer: there is no password reset here. The
@@ -337,6 +347,8 @@ pub mod functions;
 pub mod hooks;
 mod oauth_routes;
 mod openapi;
+mod queue_routes;
+pub mod queues;
 mod response;
 mod sse;
 mod state;
@@ -642,6 +654,16 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         None => tracing::debug!("no storage configured"),
     }
 
+    // The queue is not optional and cannot fail to build: `publish` writes to a
+    // built-in table, so it works in an app whose main.toml never mentions
+    // queues. What `[queues]` turns on is the subscriber half, below.
+    let queue = apiplant_queue::Queue::new(&db, &app);
+    if app.config.queues.is_active() {
+        for (topic, subscribers) in &app.config.queues.subscribe {
+            tracing::info!("  topic {topic} -> {}", subscribers.join(", "));
+        }
+    }
+
     let ai = apiplant_ai::Ai::from_config(&app.config.ai)?;
     let agent_ais = app
         .agents
@@ -736,6 +758,20 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
                 f.manifest.name,
                 app.config.server.base_path,
                 f.manifest.name
+            );
+        }
+    }
+
+    // 3b. A subscription pointing at a function that isn't loaded is a topic
+    //     whose messages will queue up and fail their way to the dead-letter,
+    //     one retry cycle at a time. Say so now, at boot, rather than letting it
+    //     be discovered as a growing `failed` count.
+    for name in app.config.queues.subscribed_functions() {
+        if registry.get(name).is_none() {
+            tracing::error!(
+                function = name,
+                "a [queues.subscribe] entry names a function that is not loaded — \
+                 messages on its topic will retry and then fail"
             );
         }
     }
@@ -844,12 +880,36 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         payments,
         ai,
         oauth: oauth.map(Arc::new),
+        queue: queue.clone(),
         agent_ais: Arc::new(agent_ais),
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),
         openapi_json: Arc::new(openapi_json),
         docs_html: Arc::new(docs_html),
     };
+
+    // The subscriber runs once per *process*, not once per HTTP worker: each
+    // worker gets its own runtime and its own copy of the app, and starting a
+    // subscriber in each would have four of them competing over the same rows.
+    // `SKIP LOCKED` would keep that correct, but it would also mean four idle
+    // `LISTEN` connections per replica for no extra throughput.
+    //
+    // Deliberately spawned even when nothing is subscribed — the loop exits
+    // immediately in that case — so there is one place this is decided.
+    if state.app.config.queues.is_active() {
+        let subscriber = queues::Subscriber {
+            db: state.db.clone(),
+            queue: queue.clone(),
+            functions: Arc::clone(&state.functions),
+            mailer: state.mailer.clone(),
+            cache: state.cache.clone(),
+            payments: state.payments.clone(),
+            ai: state.ai.clone(),
+            database_url: db_url.clone(),
+            worker: format!("{}:{}", hostname(), std::process::id()),
+        };
+        tokio::spawn(queues::run(subscriber));
+    }
 
     let base_path_log = base_path.clone();
     let mut server = HttpServer::new(move || build_app!(state));
@@ -879,6 +939,18 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
     .print();
     server.run().await?;
     Ok(())
+}
+
+/// This machine's name, for `queue_message.claimed_by`.
+///
+/// Best-effort and never fatal: it is there so that "which replica keeps dying
+/// holding messages" is answerable from the table, and an unknown host is
+/// merely a less useful answer than a wrong one would be.
+fn hostname() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|h| !h.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Build a rustls server config from PEM cert + key files.

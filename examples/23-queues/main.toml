@@ -1,0 +1,47 @@
+# Background work, with Postgres as the whole of the message broker.
+#
+# `publish` writes a row to `queue_message` and fires a NOTIFY; a subscriber
+# wakes on the notification and claims the row. The row is what makes the
+# message survive a restart and lets a failure be retried; the notification is
+# what makes it happen in milliseconds instead of on the next poll.
+
+[app]
+name = "23 · Queues"
+
+[server]
+port = 8105
+base_path = "/api"
+
+[database]
+url = "postgres://postgres@127.0.0.1:5432/apiplant_queues"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "23 · Queues"
+
+[queues]
+# Retries are tuned short so the example is watchable. The defaults — five
+# attempts, 10s doubling — are what you want in production.
+max_attempts = 3
+retry_backoff_secs = 2
+
+# Off by default; switched on here so the example can be driven with `curl`
+# without writing a function first. Most apps should leave this alone and
+# publish from a function, which needs no endpoint and no credential.
+publish = "authenticated"
+
+# Which function handles which topic. One name, or a list.
+#
+# Nothing here names the *publisher*: `order.paid` is announced by the `order`
+# model below and by the `checkout` function, and neither of them knows this
+# table exists. That indirection is the entire point — adding `notifyOps` to
+# this line adds a second handler without touching either publisher.
+[queues.subscribe]
+"order.paid"      = ["fulfilOrder", "notifyOps"]
+"order.cancelled" = "releaseStock"

@@ -646,7 +646,8 @@ async fn invoke_tool(
         state.cache.clone(),
         state.payments.clone(),
         state.ai.clone(),
-    );
+    )
+    .with_queue(state.queue.clone());
 
     tokio::task::spawn_blocking(move || {
         let f = functions.get(&function).expect("checked above");

@@ -69,6 +69,25 @@ membership list can use `?expand=user`, while unrelated users remain
 inaccessible. The password column is `hidden` in either case and never leaves
 the server.
 
+## `role:` on global resources
+
+`role:` works on a global resource too, but it **gates** rather than filters:
+there is no tenant column to narrow to, so the question is only whether you hold
+that role in the organisation you selected with `X-Organization`.
+
+| Resource | What `role:admin` means |
+|----------|-------------------------|
+| `organization` | the organisations you are an admin *of* — a filter, so a list returns only those |
+| anything else global | you are an admin of the active organisation, and every row is yours to see |
+
+A request with no active organisation cannot answer the question, so it is a
+`403` asking for the header rather than a silent pass.
+
+This is what the built-in `billing_product` and `billing_price` rely on to be
+admin-writable, and the [queue](queues.md) to be admin-readable. In a
+single-tenant deployment — one organisation, the operator in it — it reads as
+"the operator", which is what an ops table wants.
+
 ## Decision model
 
 For a given action and caller, evaluation yields one of:

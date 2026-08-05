@@ -291,6 +291,8 @@ During a call the handler receives a `&Context<Config>`:
 | `chat(request)` | `Result<ChatReply, String>` | Call the [`[ai]` assistant](ai.md) and wait for the complete answer. |
 | `ask(prompt)` | `Result<String, String>` | The same, returning only the answer text. |
 | `chat_streaming(request)` | `Result<ChatReply, String>` | The same, forwarding every token to your own caller as it arrives. |
+| `publish(topic, &message)` | `Result<Publication, String>` | Queue a message for its topic's [subscribers](queues.md), to be handled after this call returns. |
+| `delivery()` | `Option<Delivery>` | The queued message this invocation *is*, when running as a subscriber; `None` over HTTP or as a hook. |
 | `emit(chunk)` | `bool` | Send a chunk of the response immediately. `false` means the caller disconnected and work should stop. |
 | `info` / `warn` / `error` / `debug(msg)` | `()` | Log through the host's `tracing`. |
 | `log(level, msg)` | `()` | Log at an explicit level. |
@@ -317,6 +319,22 @@ The billing methods call the *provider* over the network. Checking whether an
 organisation is subscribed is an ordinary `query` against
 `billing_subscription`, which the webhook keeps current and which costs no round
 trip. Use the billing methods to perform an action.
+
+`publish` is the exception to all of the above: it needs no configuration, since
+the table it writes to is a built-in. It returns once the message is *committed*
+— not once it has been handled — which is the whole difference from calling the
+other function yourself:
+
+```rust
+// The caller waits for none of this, and none of it can fail their request.
+ctx.publish("order.paid", &order)?;
+```
+
+A function is made a subscriber by `[queues.subscribe]` in `main.toml`, not by
+anything in its own code; the message body arrives as its ordinary input, so a
+handler stays an ordinary function you can call by hand. See
+[Queues](queues.md), and in particular the at-least-once guarantee — a handler
+may run twice.
 
 ## Permissions
 
@@ -838,6 +856,17 @@ when the app has not configured one, rather than silently doing nothing.
 `ai.ask(prompt)` returns only its text, and `ai.chatStreaming(...)` forwards
 every token to your own caller. `emit(chunk)` does the same for any other output
 a function produces incrementally. See [AI](ai.md).
+
+**Queues.** `queue.publish(topic, message)` records a message and returns; the
+functions `[queues.subscribe]` points at that topic handle it afterwards, with
+retries, on their own. `delivery()` is the other side: the envelope (`topic`,
+`messageId`, `attempts`) when this call *is* a queued message, and `null`
+otherwise. The body arrives as the handler's ordinary input, so a subscriber is
+an ordinary function. Delivery is at-least-once — see [Queues](queues.md).
+
+```ts
+queue.publish("order.paid", { orderId: order.id });
+```
 
 **The request.** `config<T>()`, `principalId()`, `hook<T>()` and `log`. All are
 synchronous: the isolate blocks while the host performs the work on another

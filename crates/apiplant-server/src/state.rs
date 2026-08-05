@@ -13,6 +13,7 @@ use apiplant_db::Db;
 use apiplant_email::Mailer;
 use apiplant_oauth::Providers;
 use apiplant_payments::Payments;
+use apiplant_queue::Queue;
 use apiplant_storage::Storage;
 use ntex::web::HttpRequest;
 use uuid::Uuid;
@@ -50,6 +51,13 @@ pub struct AppState {
     /// `<base>/uploads` endpoint and the `file` field type, and nothing else —
     /// no other path in the server writes to disk or to a bucket.
     pub storage: Option<Storage>,
+    /// The app's message queue. Not optional and never absent: `publish` needs
+    /// no configuration, because `queue_message` is a built-in resource every
+    /// app has. What `[queues]` configures is the *subscriber* half.
+    ///
+    /// Behind a function's `publish`, the `<base>/queues/{topic}` endpoint and
+    /// a resource's `[publish]` declarations.
+    pub queue: Queue,
     /// Everything served alongside the API: the dashboard and the public site.
     pub statics: Arc<Statics>,
     /// The admin manifest for this app, built on boot.

@@ -240,6 +240,11 @@ jobs:
           pattern: binary-*
           merge-multiple: true
 
+      # The image tags come from `{{version}}`, which drops the leading `v`;
+      # the archive names keep the tag verbatim.
+      - id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
@@ -248,8 +253,8 @@ jobs:
             ## Container image
 
             ```
-            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            docker pull ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+            docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
             ```
 
             ## Binaries

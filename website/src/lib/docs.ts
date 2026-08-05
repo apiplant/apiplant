@@ -79,6 +79,7 @@ const SECTIONS: { group: string; docs: [slug: string, title: string, summary: st
     docs: [
       ["email", "Sending email", "One [email] provider: SMTP, SES, SendGrid, Brevo and others"],
       ["caching", "Caching", "The optional Redis a function can reach"],
+      ["queues", "Queues", "Background work on Postgres alone: publish, subscribe, retries"],
       ["storage", "File storage", "The file field type, on a directory or an S3-compatible bucket"],
       ["payments", "Payments", "Catalogue, subscriptions, checkout and tax"],
       ["ai", "AI", "Agents, streaming chat, ctx.chat and live action output"],

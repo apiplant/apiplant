@@ -22,6 +22,7 @@ lifecycle hooks, introducing one concept at a time.
 | [Lifecycle hooks](hooks.md) | running functions before/after every CRUD operation |
 | [Sending email](email.md) | one `[email]` provider: SMTP, SES, SendGrid, Brevo, Mailjet and others |
 | [Caching](caching.md) | the optional `[cache]` Redis a function can reach |
+| [Queues](queues.md) | `publish` from a function, `[queues.subscribe]` to a topic, on Postgres alone |
 | [File storage](storage.md) | the `file` field type, `[storage]` on a directory or an S3-compatible bucket |
 | [Payments](payments.md) | one `[payments]` provider: catalogue, subscriptions, checkout, tax |
 | [AI](ai.md) | one `[ai]` provider: a streaming chat endpoint, configured `agents/`, `ctx.chat`, streaming functions, live admin action output |
@@ -49,7 +50,7 @@ and `linux/arm64`. The image tags carry no `v` prefix — `0.5.0`, `0.5`, or
 `latest`:
 
 ```bash
-docker pull ghcr.io/apiplant/apiplant:0.5.0   # or :0.4, or :latest
+docker pull ghcr.io/apiplant/apiplant:0.5.0   # or :0.5, or :latest
 docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 

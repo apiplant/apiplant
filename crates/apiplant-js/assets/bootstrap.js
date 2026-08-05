@@ -84,6 +84,13 @@ const ctx = Object.freeze({
     return hostJson("ai", body);
   },
 
+  /// Queue a message for whatever subscribes to this topic in
+  /// [queues.subscribe]. Returns once the message is recorded, not once it has
+  /// been handled -- the handler runs after this function does.
+  publish(topic, message) {
+    return hostJson("publish", { op: "publish", topic, message: message ?? {} });
+  },
+
   /// Push a chunk of the answer to the caller now, before this function
   /// returns. Only goes anywhere when the call came through
   /// `<base>/functions/<name>/stream`; answers whether it is still worth

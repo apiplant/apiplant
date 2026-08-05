@@ -629,6 +629,70 @@ export function configValue(section: string, key: string): string | number | boo
   return undefined;
 }
 
+// ---- queue subscriptions ----------------------------------------------------
+//
+// `[queues.subscribe]` is a map, not a list of scalars, so it cannot go through
+// `configValue`/`setConfigValue` like every other setting. It is read and
+// written whole instead, which also lets the studio normalise the two spellings
+// the server accepts — `"topic" = "one"` and `"topic" = ["one", "two"]` — into
+// one shape for the form.
+
+/** One `[queues.subscribe]` entry, as the form edits it. */
+export interface Subscription {
+  topic: string;
+  /** The function(s) that handle it, in declaration order. */
+  functions: string[];
+}
+
+/** The app's subscriptions, in the order the file lists them. */
+export function subscriptions(): Subscription[] {
+  const config = state.project?.config;
+  const table = config ? configTable(config, "queues.subscribe", false) : undefined;
+  if (!table) return [];
+  return Object.entries(table).map(([topic, value]) => ({
+    topic,
+    functions: (Array.isArray(value) ? value : [value])
+      .filter((name): name is string => typeof name === "string")
+      .map((name) => name.trim())
+      .filter(Boolean),
+  }));
+}
+
+/**
+ * Replace the whole subscription table.
+ *
+ * A single subscriber is written as a bare string rather than a one-element
+ * list, because that is what somebody reading the file would have written —
+ * and the server reads both.
+ *
+ * An entry with no topic, or a topic with no functions, is dropped: it is a row
+ * mid-edit in the form, and neither spelling means anything to the server.
+ */
+export function setSubscriptions(list: Subscription[]) {
+  if (!state.project) return;
+  setState(
+    "project",
+    "config",
+    produce((config: TomlTable) => {
+      const usable = list.filter((entry) => entry.topic.trim() && entry.functions.length > 0);
+      if (usable.length === 0) {
+        const queues = configTable(config, "queues", false);
+        if (queues) delete queues.subscribe;
+        // A `[queues]` left with nothing in it is noise in the file.
+        if (queues && Object.keys(queues).length === 0) delete config.queues;
+        return;
+      }
+      const table = configTable(config, "queues.subscribe", true)!;
+      for (const key of Object.keys(table)) delete table[key];
+      for (const entry of usable) {
+        table[entry.topic.trim()] =
+          entry.functions.length === 1 ? entry.functions[0] : [...entry.functions];
+      }
+    }),
+  );
+  syncConfigFile();
+}
+
 /** Replace main.toml wholesale from the raw editor. */
 export function setConfigFromToml(text: string) {
   const parsed = parseTable(text);

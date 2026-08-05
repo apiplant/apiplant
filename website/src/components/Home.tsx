@@ -132,6 +132,12 @@ const FEATURES = [
     icon: "M3 7h18v10H3zM3 7l9 6 9-6",
   },
   {
+    title: "Background work, no broker",
+    body: "queue.publish records a message and returns; subscribed functions handle it afterwards, with retries and a dead-letter. The transport is the Postgres you already have.",
+    href: "/docs/queues",
+    icon: "M4 7h16M4 12h16M4 17h9M17 15l3 2-3 2",
+  },
+  {
     title: "An operator dashboard, generated",
     body: "A static admin UI is generated from the same definitions, configurable per resource with [admin], and available in the terminal as apiplant cli.",
     href: "/docs/admin",
@@ -327,7 +333,7 @@ function Features() {
         library you call; it is all behaviour the server provides.
       </p>
 
-      <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <For each={FEATURES}>
           {(feature) => (
             <A

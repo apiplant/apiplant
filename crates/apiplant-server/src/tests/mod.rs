@@ -186,6 +186,58 @@ fn events() -> Vec<String> {
         .collect()
 }
 
+/// A signed-in person holding `role` in a brand-new organisation.
+///
+/// Returns their token and that organisation's id — the pair every request
+/// under an org-scoped or `role:` policy needs.
+pub(super) async fn member_with_role(
+    state: &AppState,
+    email: &str,
+    role: &str,
+) -> (String, String) {
+    let hash = state.auth.hash_password("hunter2").unwrap();
+    let user = state
+        .db
+        .create(
+            state.app.resources.get("user").unwrap(),
+            &json!({ "email": email, "password_hash": hash })
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .await
+        .unwrap();
+    let user_id = user["id"].as_str().unwrap().to_string();
+
+    let org = state
+        .db
+        .create(
+            state.app.resources.get("organization").unwrap(),
+            &json!({ "name": "Acme" }).as_object().unwrap().clone(),
+        )
+        .await
+        .unwrap();
+    let org_id = org["id"].as_str().unwrap().to_string();
+
+    state
+        .db
+        .create(
+            state.app.resources.get("membership").unwrap(),
+            &json!({ "user_id": user_id, "organization_id": org_id, "role": role })
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .await
+        .unwrap();
+
+    let token = state
+        .auth
+        .issue_token(Uuid::parse_str(&user_id).unwrap())
+        .unwrap();
+    (token, org_id)
+}
+
 async fn load_state(root: &Path) -> AppState {
     load_state_with(root, Vec::new()).await
 }
@@ -253,6 +305,9 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
     // uploads writes into a directory that is deleted with the rest of it.
     let storage = apiplant_storage::Storage::connect(&app.config.storage, &app.root)
         .expect("valid [storage]");
+    // Real, like the storage above: `queue_message` is a built-in, so the test
+    // database has the table and a test that publishes actually writes a row.
+    let queue = apiplant_queue::Queue::new(&db, &app);
 
     AppState {
         app: Arc::new(app),
@@ -270,6 +325,7 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         payments,
         ai,
         oauth: oauth.map(Arc::new),
+        queue,
         agent_ais: Arc::new(agent_ais),
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),
@@ -316,4 +372,5 @@ mod permissions;
 mod resources;
 mod schema;
 mod serving;
+mod queues;
 mod storage;

@@ -8,8 +8,8 @@
  *
  * Memory: each side frees what it allocated. The string you write to *out is
  * released by the host calling your apiplant_free; strings the host hands you
- * (config, query, principal_id, hook, send_email, cache, payments, ai) are
- * released by you calling host->free_string.
+ * (config, query, principal_id, hook, send_email, cache, payments, ai,
+ * publish) are released by you calling host->free_string.
  */
 #ifndef APIPLANT_H
 #define APIPLANT_H
@@ -96,6 +96,17 @@ typedef struct ApiplantHost {
      * including on a call nobody is streaming, whose caller is still waiting
      * for your return value. Allocates nothing; there is nothing to free. */
     int (*emit)(void *ctx, const char *chunk);
+
+    /* Queue a message for whichever functions subscribe to a topic in
+     * [queues.subscribe]. Returns once the message is committed, not once it
+     * has been handled — the handler runs after this call, on a subscriber.
+     *   {"op":"publish","topic":"order.paid","message":{"order_id":"..."}}
+     *     -> {"id":"...","topic":"order.paid","delivered":2}
+     * or {"error": "..."}. Free with free_string.
+     *
+     * "delivered":0 is not an error: the message is recorded either way, so a
+     * topic nobody listens to leaves a row rather than nothing at all. */
+    char *(*publish)(void *ctx, const char *request_json);
 } ApiplantHost;
 
 /* Callbacks are only ever appended to ApiplantHost, and the host is what

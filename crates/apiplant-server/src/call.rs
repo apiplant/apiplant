@@ -76,6 +76,11 @@ pub async fn call(app: &App, name: &str, options: Options) -> anyhow::Result<Str
         &app.config.payments,
         &app.config.server.public_origin(),
     )?;
+    // A job that publishes is a normal thing to want — a nightly sweep queuing
+    // one message per row it found. Nothing here *subscribes*, though: the
+    // messages are handled by the running server, not by this process, which
+    // exits as soon as the function returns.
+    let queue = apiplant_queue::Queue::new(&db, app);
 
     // The chunks are drained on this task while the function runs on a blocking
     // one, so a chatty function can't fill the channel unread.
@@ -98,7 +103,8 @@ pub async fn call(app: &App, name: &str, options: Options) -> anyhow::Result<Str
         config_json,
         options.principal.unwrap_or_default(),
     )
-    .with_services(mailer, cache, payments, ai);
+    .with_services(mailer, cache, payments, ai)
+    .with_queue(queue);
     if let Some(chunks) = chunks {
         bridge = bridge.streaming(chunks);
     }

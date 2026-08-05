@@ -216,6 +216,36 @@ is unauthenticated: a stored link is unguessable, but anyone holding it can read
 the file. Responses carry `nosniff` and a one-year immutable cache header, and
 no upload is ever served as HTML.
 
+## Queue endpoints
+
+| Method | Path | Who | Purpose |
+|--------|------|-----|---------|
+| POST | `<base>/queues/<topic>` | `[queues] publish` | queue the request body as a message |
+
+Off unless `[queues] publish` names a policy — the default, `private`, answers
+`404`, because a topic is an internal name wired to real work rather than
+something to expose by accident. Everything inside the app should publish
+through a function's `publish`, which needs no endpoint and no credential.
+
+```bash
+curl -X POST localhost:8080/api/queues/order.paid \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"order_id": "..."}'
+```
+
+```json
+{ "id": "...", "topic": "order.paid", "delivered": 2 }
+```
+
+`202 Accepted`, not `200`: the message is written down, and that is the whole
+promise. Whether the handler succeeds is not knowable yet and is never reported
+here — look at `queue_message`. `delivered` is how many subscribers it was
+queued for; `0` means nothing subscribes to that topic, which is recorded rather
+than refused. An empty body is a valid message (`{}`).
+
+See [Queues](queues.md).
+
 ## Function endpoints
 
 | Method | Path | Notes |

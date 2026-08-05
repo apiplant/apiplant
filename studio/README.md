@@ -31,7 +31,7 @@ header, it starts from your system preference, and it is remembered.
 
 | Piece | What the studio gives you |
 |-------|---------------------------|
-| `main.toml` | The form covers `[server]`, `[database]`, `[email]`, `[email.smtp]`, `[cache]`, `[auth]` and `[docs]`, with the framework's default shown as the placeholder. TLS is reported, not configured — it comes from `https/`. |
+| `main.toml` | The form covers `[server]`, `[database]`, `[email]`, `[email.smtp]`, `[cache]`, `[queues]` (including the topic → function subscriptions), `[payments]`, `[ai]`, `[auth]` and `[docs]`, with the framework's default shown as the placeholder. TLS is reported, not configured — it comes from `https/`. |
 | `models/*.toml` | Fields (type, `required`/`unique`/`hidden`, `max_length`, `default`, `references`, `on_delete`), the five permission actions including `role:<name>`, tenancy scope, `table`, `owner_field`, timestamps, `[admin] search_fields` (which columns one `?search=` term is matched against), and `[auth]` on `user`. Other `[admin]` keys are carried through untouched. |
 | Built-in resources | `organization`, `user`, `membership`, `api_key` and `oauth_connection` are listed with the definitions the framework ships. Editing one writes a `models/*.toml` that replaces the default — the framework's own override mechanism. |
 | `[hooks]` | All ten events, with a picker over the function names the libraries in `functions/` actually export. A hook naming a function nothing exports is flagged. |
