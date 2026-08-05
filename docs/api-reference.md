@@ -132,6 +132,25 @@ See [Authentication](authentication.md).
 | POST | `<base>/auth/login` | exchange credentials for `{token}` |
 | POST | `<base>/auth/apikeys` | issue a key, returning `{api_key, id}` |
 
+## OAuth endpoints
+
+Mounted only where `[oauth]` names a provider. See
+[Authentication](authentication.md#signing-in-with-somebody-elses-account).
+
+| Method | Path | Who | Purpose |
+|--------|------|-----|---------|
+| GET | `<base>/auth/oauth` | anyone | the providers this deployment offers, each with its `start_url` |
+| GET | `<base>/auth/oauth/{provider}/start` | anyone | **302** to the provider; `?return_to=/path` chooses the landing page, `?token_delivery=fragment\|query\|json` overrides `[oauth] token_delivery` for this one flow |
+| POST | `<base>/auth/oauth/{provider}/start` | anyone | the same as `{authorize_url, state, expires_in, linking}`; **with a session it links** rather than signs in |
+| GET | `<base>/auth/oauth/{provider}/callback` | the provider | the registered redirect URI; **302** to the landing page carrying the token |
+| POST | `<base>/auth/oauth/{provider}/callback` | a front end | the same from `{code, state}`, answering `{token, user, created, linked}` |
+| DELETE | `<base>/auth/oauth/{provider}` | the account | unlink; **409** when it is the only way in. The only way to remove one: `oauth_connection`'s own `delete` is `private`, so the check cannot be walked around |
+
+The redirect URI to register is
+`<public_url><base_path>/auth/oauth/<provider>/callback`, printed for each
+provider at boot. The token these issue is the one `POST <base>/auth/login`
+issues.
+
 ## Billing endpoints
 
 Mounted only where `[payments]` names a provider. See [Payments](payments.md).

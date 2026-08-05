@@ -30,7 +30,10 @@ import { AccountPage, ApiKeysPage, OrganizationPage, TeamPage } from "./pages/se
 import { BillingPage, noticeCheckoutOutcome } from "./pages/billing";
 import { AdminAiAssist } from "./ai-assist";
 import {
+  adoptOAuthToken,
+  avatarOf,
   currentOrganization,
+  currentUserAvatar,
   currentUserLabel,
   agentByName,
   dismissToast,
@@ -39,6 +42,7 @@ import {
   manifest,
   navigate,
   navigationGroups,
+  notify,
   organizationLabel,
   refreshSession,
   reportError,
@@ -65,6 +69,10 @@ export function App() {
 
   onMount(() => {
     restoreSession();
+    // A sign-in that went out to GitHub and came back leaves the session in the
+    // URL fragment. Take it before the router looks at the hash, since
+    // `#token=…` is a credential and not a route.
+    const arrived = adoptOAuthToken();
     syncRouteFromHash();
     // A buyer returning from the provider lands on `#/billing?checkout=…`.
     // Report the outcome and clean the address before anything reads the hash
@@ -84,6 +92,7 @@ export function App() {
         if (!response.ok) throw new Error("This dashboard's configuration could not be loaded.");
         setManifest((await response.json()) as AdminManifest);
         document.title = manifest()?.title ?? "apiplant admin";
+        if (arrived) notify("success", "Welcome back.");
         if (isSignedIn()) {
           try {
             // Verify the stored credential before loading anything with it;
@@ -233,7 +242,11 @@ function TopBar(props: { onToggleNav: () => void }) {
               onClick={open}
               class="flex max-w-48 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[0.8125rem] text-ink transition-colors hover:border-line-strong"
             >
-              <Avatar name={organizationLabel(currentOrganization())} size="sm" />
+              <Avatar
+                name={organizationLabel(currentOrganization())}
+                src={avatarOf(currentOrganization())}
+                size="sm"
+              />
               <span class="truncate">{organizationLabel(currentOrganization())}</span>
               <svg class="h-3 w-3 shrink-0 text-faint" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4">
                 <path d="M2.5 4.5 6 8l3.5-3.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -247,7 +260,7 @@ function TopBar(props: { onToggleNav: () => void }) {
           <For each={organizations()}>
             {(organization) => (
               <MenuItem onClick={() => void setActiveOrganization(String(organization.id ?? ""))}>
-                <Avatar name={organizationLabel(organization)} size="sm" />
+                <Avatar name={organizationLabel(organization)} src={avatarOf(organization)} size="sm" />
                 <span class="truncate">{organizationLabel(organization)}</span>
               </MenuItem>
             )}
@@ -257,7 +270,11 @@ function TopBar(props: { onToggleNav: () => void }) {
 
       <Show when={organizations().length === 1}>
         <span class="hidden items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-[0.8125rem] text-muted sm:flex">
-          <Avatar name={organizationLabel(currentOrganization())} size="sm" />
+          <Avatar
+            name={organizationLabel(currentOrganization())}
+            src={avatarOf(currentOrganization())}
+            size="sm"
+          />
           <span class="max-w-40 truncate">{organizationLabel(currentOrganization())}</span>
         </span>
       </Show>
@@ -272,7 +289,7 @@ function TopBar(props: { onToggleNav: () => void }) {
             class="rounded-full transition-opacity hover:opacity-80"
             aria-label="Account menu"
           >
-            <Avatar name={currentUserLabel()} />
+            <Avatar name={currentUserLabel()} src={currentUserAvatar()} />
           </button>
         )}
       >

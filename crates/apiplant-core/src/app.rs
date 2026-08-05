@@ -54,6 +54,14 @@ impl App {
             }
         }
 
+        // 1b-ii. The table a sign-in lives in while somebody reads a consent
+        //        screen, only for an app that has an `[oauth]` provider.
+        if config.oauth.enabled() {
+            for (name, src) in crate::defaults::oauth_builtins() {
+                resources.insert(name.to_string(), crate::defaults::parse_builtin(src));
+            }
+        }
+
         // 1c. Configured agents, loaded from `agents/`, each optionally adding
         //     generated history resources.
         let agents_dir = root.join("agents");

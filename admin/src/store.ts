@@ -208,6 +208,117 @@ export function signOut() {
   navigate({ kind: "dashboard" });
 }
 
+// --- signing in with somebody else's account -------------------------------
+
+/**
+ * Whether this dashboard can use the OAuth buttons at all.
+ *
+ * The flow is a pair of browser redirects that ends on a path of the *API's*
+ * origin, so a console built by `apiplant admin` and hosted somewhere else has
+ * nowhere for the token to land. Rather than offer a button that would strand
+ * somebody on an API URL, the screen falls back to the password form and says
+ * why.
+ */
+export function oauthAvailable(): boolean {
+  const current = manifest();
+  if (!current?.auth.oauth_providers?.length) return false;
+  try {
+    return new URL(current.api_base_url || ".", window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where to come back to, kept out of the URL.
+ *
+ * The token arrives in the fragment and the dashboard's routes *are* the
+ * fragment, so the two cannot both be in the address bar. Rather than move the
+ * token into the query string — where proxies and access logs would see it —
+ * the screen that left remembers where it was here, and
+ * [`adoptOAuthToken`] puts the browser back there once the token is safely in
+ * hand. `sessionStorage` because it is this tab's business and should not
+ * outlive it.
+ */
+const OAUTH_RETURN_KEY = "apiplant-admin-oauth-return";
+
+/**
+ * The query both flows send: come back to this page, and put the token where
+ * only this page can read it.
+ *
+ * `token_delivery=fragment` whatever the app configured for its own front end —
+ * it is the delivery that keeps a live credential out of access logs, and this
+ * client knows how to read it.
+ */
+function oauthQuery(): string {
+  const landing = `${window.location.pathname}${window.location.search}`;
+  const params = new URLSearchParams({ return_to: landing, token_delivery: "fragment" });
+  return `?${params.toString()}`;
+}
+
+/**
+ * Leave for the provider to sign in.
+ *
+ * A plain navigation: the endpoint answers with a redirect, so the browser
+ * simply goes. Nothing is sent that a link could not send.
+ */
+export function startOAuth(provider: { start_url: string }) {
+  const current = manifest();
+  if (!current) return;
+  sessionStorage.setItem(OAUTH_RETURN_KEY, "#/");
+  window.location.assign(
+    new URL(`${current.api_base_url}${provider.start_url}${oauthQuery()}`, window.location.href)
+      .toString(),
+  );
+}
+
+/**
+ * Leave for the provider to *connect* it to the account already signed in.
+ *
+ * The same endpoint, reached with `POST` rather than a navigation — which is
+ * the whole difference between the two, and the reason it has to be a request
+ * rather than a link: a browser cannot put an `Authorization` header on a
+ * navigation, and the server decides "sign in" versus "link" from whether the
+ * flow was started by somebody holding a session.
+ */
+export async function connectOAuth(provider: { start_url: string }): Promise<void> {
+  const started = asRecord(
+    await api(`${provider.start_url}${oauthQuery()}`, { method: "POST" }),
+  );
+  const authorize = typeof started?.authorize_url === "string" ? started.authorize_url : "";
+  if (!authorize) throw new Error("The server did not say where to go next.");
+  sessionStorage.setItem(OAUTH_RETURN_KEY, "#/account");
+  window.location.assign(authorize);
+}
+
+/**
+ * Take the session out of the URL a completed sign-in left behind.
+ *
+ * Runs before anything reads the hash for routing, because `#token=…` is not a
+ * route and would otherwise be parsed as one — and because the address bar
+ * should not keep a live credential in it for the rest of the session. Returns
+ * whether it found one, so the caller knows a fresh sign-in just happened.
+ */
+export function adoptOAuthToken(): boolean {
+  const hash = window.location.hash.replace(/^#/, "");
+  const fromFragment = new URLSearchParams(hash.startsWith("/") ? "" : hash).get("token");
+  const fromQuery = new URLSearchParams(window.location.search).get("token");
+  const token = fromFragment ?? fromQuery;
+  if (!token) return false;
+
+  session.token = token;
+  session.apiKey = "";
+  session.userId = decodeJwtSubject(token);
+  persistSession();
+
+  // Back where they were, with nothing left in the address bar — the token has
+  // been taken out of the URL, so a reload or a shared link carries no session.
+  const back = sessionStorage.getItem(OAUTH_RETURN_KEY) ?? "#/";
+  sessionStorage.removeItem(OAUTH_RETURN_KEY);
+  window.history.replaceState(null, "", `${window.location.pathname}${back}`);
+  return true;
+}
+
 // --- API -------------------------------------------------------------------
 
 export type ApiError = Error & { status?: number };
@@ -568,6 +679,18 @@ export function currentUserLabel(): string {
     if (typeof profile.display_name === "string" && profile.display_name) return profile.display_name;
   }
   return session.apiKey ? "API key session" : "Signed in";
+}
+
+/** The signed-in account's picture, when their row has one. */
+export function currentUserAvatar(): string | null {
+  const value = session.profile?.avatar_url;
+  return typeof value === "string" && value ? value : null;
+}
+
+/** An `avatar_url` off any record, when it is there and is a string. */
+export function avatarOf(record: ApiRecord | null | undefined): string | null {
+  const value = record?.avatar_url;
+  return typeof value === "string" && value ? value : null;
 }
 
 // --- permissions -----------------------------------------------------------

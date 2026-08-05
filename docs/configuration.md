@@ -66,6 +66,10 @@ prefix = "my-app:"
 provider   = "stripe"
 secret_key = "${STRIPE_SECRET_KEY}"
 
+[oauth.github]               # optional: sign in with GitHub, off unless credentialed
+client_id     = "${GITHUB_CLIENT_ID}"
+client_secret = "${GITHUB_CLIENT_SECRET}"
+
 [ai]                         # optional: a chat assistant, disabled unless named
 provider = "custom"          # none | openai | anthropic | custom
 endpoint = "http://localhost:8080"
@@ -247,6 +251,58 @@ adds the `billing_*` resources and the `/billing` endpoints. See
 
 An unusable provider configuration (unknown name or missing key) fails the
 boot.
+
+## `[oauth]`
+
+Signing in with somebody else's account. Off until a provider block carries a
+`client_id`; naming one mounts the `<base>/auth/oauth` endpoints and adds the
+`oauth_state` resource. See
+[Authentication](authentication.md#signing-in-with-somebody-elses-account).
+
+```toml
+[oauth.github]
+client_id     = "${GITHUB_CLIENT_ID}"
+client_secret = "${GITHUB_CLIENT_SECRET}"
+```
+
+apiplant ships `github`, `google`, `linkedin` and `x`, and knows each one's
+endpoints, scopes and quirks. The keys below the table are only for a provider
+it does not ship, or for pointing one somewhere else (a GitHub Enterprise host,
+say).
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `link_by_verified_email` | `true` | May a **verified** address from a provider sign somebody in to an existing account with that address? An *unverified* one never can, whatever this says. Off means such a match is refused with an answer telling the caller to sign in the way they already can and link from that session. |
+| `state_ttl_secs` | `600` | How long somebody has to get through a consent screen. Clamped to 60–3600. |
+| `success_redirect` | `/` | Where the redirecting callback lands, as a path. A caller may override it per flow with `?return_to=/somewhere`, accepted only as a path — never a full URL. |
+| `failure_redirect` | *(empty)* | Where a failed sign-in lands. Empty answers with a JSON error instead, which is what you want while setting a provider up. |
+| `token_delivery` | `fragment` | `fragment` (`…/#token=…`, never sent to a server, so it stays out of logs and `Referer`), `query` (`…?token=…`, easier for a server-rendered page), or `json` (no redirect: the callback answers with the body). A client that knows what it can read may override this per flow with `?token_delivery=` on `…/start` — the admin dashboard asks for `fragment` whatever an app has configured for its own front end. |
+| `name_field` | `display_name` | The `user` column a provider's name is written to on every sign-in. `""` writes none. |
+| `avatar_field` | `avatar_url` | The `user` column its picture is written to. `""` writes none. Both columns are in the built-in `user` model; a model that does not declare one simply does not get it filled. `email_placeholder` is filled too and is not configurable — see [Authentication](authentication.md#what-lands-on-the-account). |
+
+And per provider, under `[oauth.<name>]`:
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `client_id` | *(empty)* | What the provider issued. Empty leaves the provider off, so a committed config can name all four and a deployment supply only what it has. |
+| `client_secret` | *(empty)* | Required once `client_id` is set. A client id with no secret fails the boot rather than the first sign-in. |
+| `enabled` | `true` | Set false to take a button away without deleting the credentials. |
+| `label` | the built-in name | What the button says. |
+| `scopes` | the built-in list | Widen only for scopes the app will use: each is another line on a consent screen. **Required** for a provider apiplant does not ship. |
+| `authorize_url`, `token_url`, `userinfo_url` | the built-in URLs | **Required** for a provider apiplant does not ship. |
+| `style` | `oidc` | How to read the profile: `oidc` (standard `sub`/`email`/`email_verified`/`name`/`picture` claims) or `github`. Providers apiplant ships already know. |
+| `redirect_uri` | *(derived)* | `<public_url><base_path>/auth/oauth/<provider>/callback`. Override only when something in front of this server rewrites paths. |
+| `pkce` | *(what the provider supports)* | Rarely set by hand: X requires PKCE, GitHub does not offer it. |
+| `icon` | *(none)* | A logo for the sign-in button, as a URL a browser can fetch — usually a file in [`public/`](#public), such as `/oauth/gitlab.svg`. Only for a provider apiplant does not draw itself; without one the button shows the provider's initial. [Super Tiny Icons](https://github.com/edent/SuperTinyIcons) is a good source — several hundred brand marks, a few hundred bytes each, MIT licensed, and where apiplant's own four come from. |
+
+The redirect URI is derived from [`[server] public_url`](#server), which is
+therefore the one value that has to be right — a provider compares it byte for
+byte. `apiplant run` prints the string to register for each provider on the way
+up.
+
+An unusable configuration fails the boot: a `client_id` without a secret, an
+unknown provider without endpoints, or a replaced `oauth_connection` model
+missing a column the handshake writes.
 
 ## `[ai]`
 

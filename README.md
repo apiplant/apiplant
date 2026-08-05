@@ -221,6 +221,35 @@ Each request's permission check turns a resource's `Access` policy plus the
 caller into *allow* / *allow-if-owner* / *deny*. `owner` policies transparently
 scope queries to rows the caller owns.
 
+### Signing in with GitHub, Google, LinkedIn or X
+
+Two credentials, and the handshake is the framework's problem:
+
+```toml
+[oauth.github]
+client_id     = "${GITHUB_CLIENT_ID}"
+client_secret = "${GITHUB_CLIENT_SECRET}"
+```
+
+That mounts `<base>/auth/oauth/…`, and
+
+```html
+<a href="/api/auth/oauth/github/start">Sign in with GitHub</a>
+```
+
+is the client side in full: the endpoint redirects to the provider, the provider
+redirects back into the API, and the browser lands on your page with a session
+token — the same JWT `POST /auth/login` issues, accepted everywhere without
+anything knowing OAuth exists. apiplant knows each provider's endpoints, scopes,
+PKCE and profile shape; anything speaking OpenID Connect can be added with three
+URLs and no code.
+
+Behind it: `state` and PKCE in a table, single-use codes, accounts matched only
+on **verified** addresses, sign-ups that run the same hooks registration does,
+and a refusal to unlink the last way into an account. See
+[Authentication](docs/authentication.md#signing-in-with-somebody-elses-account)
+and [`examples/22-oauth`](examples/22-oauth).
+
 ## Multitenancy
 
 apiplant apps are multitenant by default. `organization` is the tenant,

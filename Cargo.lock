@@ -107,7 +107,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "apiplant"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "apiplant-abi",
@@ -130,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-abi"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "abi_stable",
  "serde_json",
@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-ai"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "apiplant-core",
  "futures-util",
@@ -152,11 +152,11 @@ dependencies = [
 
 [[package]]
 name = "apiplant-assets"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "apiplant-auth"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "apiplant-core",
  "argon2",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-cache"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "apiplant-core",
  "redis",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-db"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "apiplant-auth",
  "apiplant-core",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-email"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "apiplant-core",
  "chrono",
@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-function"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "abi_stable",
  "apiplant-abi",
@@ -241,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-js"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "abi_stable",
  "apiplant-abi",
@@ -261,8 +261,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "apiplant-oauth"
+version = "0.5.0"
+dependencies = [
+ "apiplant-core",
+ "base64 0.22.1",
+ "rand 0.8.7",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.19",
+ "toml",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "apiplant-payments"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "apiplant-core",
  "async-stripe",
@@ -276,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-server"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "abi_stable",
  "anyhow",
@@ -289,6 +306,7 @@ dependencies = [
  "apiplant-db",
  "apiplant-email",
  "apiplant-js",
+ "apiplant-oauth",
  "apiplant-payments",
  "chrono",
  "futures-util",

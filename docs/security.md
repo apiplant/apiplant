@@ -19,6 +19,7 @@ own rules affect presentation only and are never the mechanism of enforcement.
 | Organisation memberships and roles are read from the database per request, never carried in the token, so a revoked role takes effect immediately. | |
 | Every value reaches Postgres as a bind parameter; only validated, double-quoted identifiers are ever interpolated into SQL. | [`apiplant-db`](../crates/apiplant-db/src/lib.rs) |
 | Static files resolve under `public/` only; a path that would escape the root is refused rather than served. | [Configuration](configuration.md) |
+| An OAuth sign-in is bound to a `state` this server issued, stored as a SHA-256 hash and spendable once, with PKCE wherever the provider supports it; and a provider account reaches an existing user only through an address that provider says it **verified**. | [Authentication](authentication.md#signing-in-with-somebody-elses-account) |
 
 A `before_*` hook is subject to the same rules as the caller: the body it
 returns goes through the same stripping, so a hook cannot spoof a tenant, an
@@ -45,6 +46,26 @@ Write it as `"$JWT_SECRET"` and it is read from the environment at boot, so the
 committed `main.toml` holds no secret. Every string in every app TOML file works
 the same way; see [Configuration → Environment
 variables](configuration.md#environment-variables).
+
+### OAuth credentials, and the URL they are registered against
+
+`[oauth]` is disabled unless a provider block carries a `client_id`, so an app
+that signs nobody in this way is unaffected. If you do configure it:
+
+* keep both credentials in the environment, as above
+  (`client_secret = "$GITHUB_CLIENT_SECRET"`). The secret leaves this process in
+  exactly one request — the token exchange, server to provider — and is never in
+  a URL, a redirect or a page;
+* **`[server] public_url` is security-relevant here.** The redirect URI
+  registered with each provider is derived from it, and a provider will only
+  send a code to a URI that matches. Getting it wrong breaks sign-in; pointing
+  it at a host you do not control would be worse;
+* `token_delivery = "query"` puts a session token in a URL, where proxies,
+  access logs and `Referer` headers can record it. The default, `fragment`,
+  does not — prefer it unless a server-rendered page has to read the token;
+* `link_by_verified_email = false` is the stricter setting, not the safer one
+  in every sense: it refuses an automatic match that would have been correct.
+  Neither value ever matches an *unverified* address.
 
 ### Email and cache credentials
 

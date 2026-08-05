@@ -90,20 +90,27 @@ back; a directory left in the app is inert.
 
 | Screen | Purpose |
 |--------|---------------|
-| Sign in / Create account | Getting in. Registration appears only when [`allow_registration`](configuration.md) is on. |
+| Sign in / Create account | Getting in. Registration appears only when [`allow_registration`](configuration.md) is on, and a button per [`[oauth]`](authentication.md#signing-in-with-somebody-elses-account) provider appears above the form, each with that provider's own mark. |
 | Home | An overview of the resources they manage and the actions they can run. |
 | A resource | A searchable, paginated table. Click a row to open it. |
 | A record | One form with every field, its relationships, and the records attached to it. |
 | An action | A form generated from a [function](functions.md)'s input type, its streamed output as it happens, and its final result. |
 | Team | Who is in the organisation and which roles each holds, granted and revoked individually. |
-| Organization | The workspace's details, and switching between workspaces. |
-| Your account | Their own profile. |
+| Organization | The workspace's details — including the logo shown wherever it is named — and switching between workspaces. |
+| Your account | Their own profile, and — where `[oauth]` names providers — the linked accounts they can sign in through, to connect or disconnect. |
 | API keys | Issuing and revoking keys. |
 | Connect a terminal | Issuing a key to [`apiplant cli`](cli.md), reached only from the link that command opens. |
 
 Everything is derived from the app. There is no dashboard code to write, and the
 shipped JavaScript is byte-identical across applications; only
 `apiplant-admin.json` differs.
+
+The sign-in buttons are an example of that: `auth.oauth_providers` in the
+manifest is whatever `[oauth]` names, so the console offers exactly the
+providers that work — and none at all in an app that configured none. A console
+[hosted on another origin](#a-static-copy-hosted-elsewhere) hides them, because
+the flow ends on a path of the API's origin and there would be nowhere for the
+session to land; the password form still works there.
 
 ### Organizations
 

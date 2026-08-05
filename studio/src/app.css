@@ -177,6 +177,24 @@
     mask-image: none;
   }
 
+  /* GitHub's mark has two official variants: the black one, and a white one
+     for dark backgrounds. Super Tiny Icons ships the black one, which
+     disappears against this theme's dark surfaces — so the dark theme wears the
+     other. Google's and LinkedIn's are colour marks with only one correct
+     rendering, and are left alone. */
+  .mark-github .mark-bg {
+    fill: #fff;
+  }
+  .mark-github .mark-fg {
+    fill: #181717;
+  }
+  :root.light .mark-github .mark-bg {
+    fill: #181717;
+  }
+  :root.light .mark-github .mark-fg {
+    fill: #fff;
+  }
+
   .card {
     background-color: var(--color-surface);
     border: 1px solid var(--color-line);

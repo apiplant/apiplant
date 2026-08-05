@@ -29,6 +29,7 @@ pub struct Config {
     pub cache: CacheConfig,
     pub payments: PaymentsConfig,
     pub ai: AiConfig,
+    pub oauth: OAuthConfig,
 }
 
 /// What the app calls itself.
@@ -499,6 +500,189 @@ impl CacheConfig {
     /// server.
     pub fn is_active(&self) -> bool {
         self.enabled && !self.url.trim().is_empty()
+    }
+}
+
+/// Signing in with somebody else's account.
+///
+/// Each `[oauth.<provider>]` block turns one provider on, and a block needs
+/// only the two credentials that provider issued:
+///
+/// ```toml
+/// [oauth.github]
+/// client_id     = "${GITHUB_CLIENT_ID}"
+/// client_secret = "${GITHUB_CLIENT_SECRET}"
+///
+/// [oauth.google]
+/// client_id     = "${GOOGLE_CLIENT_ID}"
+/// client_secret = "${GOOGLE_CLIENT_SECRET}"
+/// ```
+///
+/// Everything else — the authorize URL, the token URL, where the profile is
+/// read from, which scopes ask for an email, whether the provider wants PKCE,
+/// whether it insists on the client secret as HTTP Basic — apiplant knows for
+/// `github`, `google`, `linkedin` and `x`. A provider it does not know is
+/// configured in full (see [`OAuthProviderConfig::style`]), which is how a
+/// fifth one is added without waiting for a release.
+///
+/// Turning any of this on mounts `<base>/auth/oauth/…` and adds the
+/// `oauth_state` [resource](crate::defaults). With no block at all, none of it
+/// exists.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct OAuthConfig {
+    /// Whether a **verified** address from a provider may sign somebody in to
+    /// an existing account carrying the same address (default true).
+    ///
+    /// This is the convenience that makes "I registered with a password, then
+    /// came back through Google" work, and it is safe only because the address
+    /// must be one the provider says it verified. An unverified address is
+    /// never matched, whatever this is set to — that is not a policy, it is the
+    /// difference between signing in and taking over. Set it false and a
+    /// matching address is refused with an answer that says how to connect the
+    /// two deliberately — sign in the way you already can, then link the
+    /// provider from an authenticated session. Inconvenient, and never wrong.
+    ///
+    /// The same refusal is what an *unverified* matching address always gets,
+    /// whatever this is set to.
+    pub link_by_verified_email: bool,
+    /// How long a started sign-in stays completable, in seconds (default 600).
+    /// Long enough to read a consent screen, short enough that an abandoned
+    /// flow is not a lasting hole. Clamped to 60–3600.
+    pub state_ttl_secs: u64,
+    /// Where the browser lands after a successful sign-in through the
+    /// *redirecting* endpoint, as a path on this site (default `/`).
+    ///
+    /// A caller can override it per flow with `?return_to=/somewhere`, which is
+    /// accepted only as a path — never a full URL — because a redirect target
+    /// somebody else chooses is how a sign-in page becomes a phishing hop.
+    pub success_redirect: String,
+    /// Where a *failed* sign-in lands, as a path. Empty (the default) answers
+    /// with a plain JSON error instead, which is what you want while setting
+    /// providers up and not what you want in front of users.
+    pub failure_redirect: String,
+    /// How the session token reaches the browser on the redirecting endpoint:
+    ///
+    /// | Value | Effect |
+    /// |---|---|
+    /// | `fragment` (default) | `…/#token=…` — a fragment is never sent to a server, so it stays out of proxy logs and `Referer` headers |
+    /// | `query` | `…?token=…` — easier to read from a server-rendered page, and it *is* in those logs |
+    /// | `json` | no redirect at all: the callback answers `{ "token": …, "user": … }`, which is what a single-page app posting the code itself wants |
+    pub token_delivery: String,
+    /// The `user` column a provider's name is written to on sign-in, or empty
+    /// to write none. `display_name` is in the built-in model; an app that
+    /// calls it something else names it here, and one that would rather keep
+    /// its own copy of a name sets this to `""`.
+    pub name_field: String,
+    /// The `user` column a provider's picture is written to, or empty for none.
+    /// Same bargain as `name_field`.
+    ///
+    /// Both are written on *every* sign-in, not only the first: people change
+    /// their name and their picture, and a copy that is only ever right on the
+    /// day the account was created is worse than no copy.
+    pub avatar_field: String,
+    /// The providers, keyed by name. Written as `[oauth.github]` rather than
+    /// `[oauth.providers.github]` — the flattening is what buys that, and the
+    /// cost is that a mistyped setting above becomes a provider nobody asked
+    /// for, which is refused at boot rather than ignored.
+    #[serde(flatten)]
+    pub providers: std::collections::BTreeMap<String, OAuthProviderConfig>,
+}
+
+impl Default for OAuthConfig {
+    fn default() -> Self {
+        OAuthConfig {
+            link_by_verified_email: true,
+            state_ttl_secs: 600,
+            success_redirect: "/".to_string(),
+            failure_redirect: String::new(),
+            token_delivery: "fragment".to_string(),
+            name_field: "display_name".to_string(),
+            avatar_field: "avatar_url".to_string(),
+            providers: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+impl OAuthConfig {
+    /// Whether any provider is usable — which is what mounts the routes.
+    pub fn enabled(&self) -> bool {
+        self.providers.values().any(OAuthProviderConfig::is_active)
+    }
+
+    /// The names of the providers that are on, in a stable order.
+    pub fn active_providers(&self) -> Vec<&str> {
+        self.providers
+            .iter()
+            .filter(|(_, p)| p.is_active())
+            .map(|(name, _)| name.as_str())
+            .collect()
+    }
+
+    /// `state_ttl_secs`, clamped to something a sign-in can actually happen in.
+    pub fn state_ttl(&self) -> u64 {
+        self.state_ttl_secs.clamp(60, 3600)
+    }
+}
+
+/// One provider's credentials, and the overrides an unknown provider needs.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct OAuthProviderConfig {
+    /// The client id the provider issued. An empty one leaves the provider off,
+    /// which is what lets a committed config name every provider and a
+    /// deployment supply only the credentials it has.
+    pub client_id: String,
+    /// The client secret. Required for every provider apiplant ships, all of
+    /// which are confidential clients.
+    pub client_secret: String,
+    /// Space-separated scopes, overriding the built-in default. The defaults
+    /// ask for the least that identifies somebody; widen this only for scopes
+    /// the app will actually use, since every one is another line on a consent
+    /// screen and another reason to press Cancel.
+    pub scopes: String,
+    /// Where the browser is sent to consent. Required for an unknown provider.
+    pub authorize_url: String,
+    /// Where the code is redeemed. Required for an unknown provider.
+    pub token_url: String,
+    /// Where the profile is read. Required for an unknown provider.
+    pub userinfo_url: String,
+    /// How to read that profile, for a provider apiplant does not ship:
+    /// `oidc` (default — standard `sub`/`email`/`email_verified`/`name`/
+    /// `picture` claims, which is what almost everything speaks today) or
+    /// `github` (GitHub's older shape).
+    pub style: String,
+    /// What the sign-in button should say. Defaults to the built-in label, or
+    /// to the provider's own name capitalised.
+    pub label: String,
+    /// The redirect URI registered with the provider. Empty (the default)
+    /// derives it — `<public_url><base_path>/auth/oauth/<provider>/callback` —
+    /// which is right unless something in front of this server rewrites paths.
+    pub redirect_uri: String,
+    /// Whether PKCE is used. Unset follows what the provider supports; X
+    /// *requires* it, GitHub does not offer it.
+    pub pkce: Option<bool>,
+    /// Set false to keep a fully credentialed provider switched off — the way
+    /// to take a sign-in button away for a while without deleting the secrets.
+    pub enabled: Option<bool>,
+    /// A logo for the sign-in button, as a URL a browser can fetch — usually a
+    /// file in [`public/`](PublicConfig), such as `/oauth/gitlab.svg`.
+    ///
+    /// apiplant draws GitHub, Google, LinkedIn and X itself, so this is for the
+    /// providers it does not ship: without it their button gets the provider's
+    /// initial on a plain tile, which works and looks like what it is.
+    ///
+    /// <https://github.com/edent/SuperTinyIcons> is a good place to get one —
+    /// several hundred brand marks, each a few hundred bytes of hand-drawn SVG,
+    /// MIT licensed. They are what apiplant's own four are drawn from. Save the
+    /// file into `public/` and point this at it.
+    pub icon: String,
+}
+
+impl OAuthProviderConfig {
+    /// Whether this block is complete enough to sign anybody in.
+    pub fn is_active(&self) -> bool {
+        self.enabled.unwrap_or(true) && !self.client_id.trim().is_empty()
     }
 }
 

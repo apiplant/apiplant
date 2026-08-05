@@ -9,11 +9,11 @@ default, and any of them can be extended by adding a same-named file in
 
 | Resource | Purpose | Key fields |
 |----------|---------|-----------|
-| `organization` | tenants | `name`, `slug` (unique) |
+| `organization` | tenants | `name`, `slug` (unique), `avatar_url` |
 | `membership` | joins users to organisations, carrying a per-org role | `user_id → user`, `organization_id → organization`, `role` |
-| `user` | accounts | `email` (unique), `password_hash` (hidden), `display_name` |
+| `user` | accounts | `email` (unique), `password_hash` (hidden), `display_name`, `avatar_url`, `email_placeholder` |
 | `api_key` | long-lived credentials | `name`, `token_hash` (hidden, unique), `owner_id → user` |
-| `oauth_connection` | linked third-party identities | `provider`, `provider_user_id`, `owner_id → user` |
+| `oauth_connection` | linked third-party identities | `provider`, `provider_user_id`, `provider_key` (unique), `owner_id → user`, and what the provider last said about them |
 | `invitation` | a pending invitation to an organisation, for an address that may not yet have an account | `email`, `role`, `token_hash` (hidden, unique), `organization_id`, `expires_at`, `accepted_at` |
 | `auth_token` | single-use tokens sent by email | `user_id → user`, `kind`, `token_hash` (hidden, unique), `expires_at`, `used_at` |
 
@@ -312,13 +312,203 @@ Roles are per-organisation. The built-in `membership` resource carries a
 member's `role`, so `role:admin` means **admin of the active organisation**.
 Create or update memberships through the API to assign roles.
 
-## OAuth
+## Signing in with somebody else's account
 
-The `oauth_connection` resource and the `auth.oauth_providers` list model
-third-party identities (a `provider` and `provider_user_id` linked to a user).
-**The provider redirect and callback handshake is not implemented yet**; this is
-the scaffolding for it. Password and API-key authentication are fully
-functional.
+Two credentials per provider, and nothing else:
+
+```toml
+# main.toml
+[oauth.github]
+client_id     = "${GITHUB_CLIENT_ID}"
+client_secret = "${GITHUB_CLIENT_SECRET}"
+
+[oauth.google]
+client_id     = "${GOOGLE_CLIENT_ID}"
+client_secret = "${GOOGLE_CLIENT_SECRET}"
+```
+
+apiplant ships **GitHub, Google, LinkedIn and X**, and knows for each of them
+the authorize URL, the token URL, where the profile lives, which scopes reach a
+verified address, whether it wants PKCE and whether it insists on the client
+secret as HTTP Basic — four things they disagree about, and the reason a
+handshake written once by hand is rarely written twice.
+
+Naming a provider mounts the endpoints below and adds the `oauth_state`
+[resource](resources.md). Naming none leaves an app with neither.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `<base>/auth/oauth` | the providers this deployment offers, each with the URL that starts it |
+| `GET` | `<base>/auth/oauth/{provider}/start` | **302** to the provider's consent screen |
+| `POST` | `<base>/auth/oauth/{provider}/start` | the same as JSON — and, with a session, this is how an account **links** a provider |
+| `GET` | `<base>/auth/oauth/{provider}/callback` | the redirect URI to register; finishes the sign-in |
+| `POST` | `<base>/auth/oauth/{provider}/callback` | the same from a body, for a front end with its own callback route |
+| `DELETE` | `<base>/auth/oauth/{provider}` | unlink, unless it is the last way into the account |
+
+### The redirect URI
+
+Derived, not configured:
+
+```
+<public_url><base_path>/auth/oauth/<provider>/callback
+```
+
+`apiplant run` prints the exact string for each provider on the way up — copy it
+into the provider's dashboard, which compares it byte for byte. Getting
+`[server] public_url` wrong behind a proxy or a tunnel is the single most
+common OAuth failure, and it is the only value that has to be right.
+
+### The dashboard already has it
+
+The built-in [admin dashboard](admin.md) reads `[oauth]` from the manifest and
+draws a button per provider — with its own mark — above the password form on
+both the sign-in and create-account tabs, and grows a *Linked accounts* card on
+*Your account* for connecting and disconnecting. There is nothing to switch on:
+configuring a provider is what puts it there.
+
+### The client side, in full
+
+```html
+<a href="/api/auth/oauth/github/start">Sign in with GitHub</a>
+```
+
+That is a working sign-in. The start endpoint redirects to the provider, the
+provider redirects back into the API, and the API sends the browser to
+`[oauth] success_redirect` with a session token — in the URL fragment by
+default, since a fragment never reaches a server and so stays out of access
+logs and `Referer` headers. A single-page app that would rather hold the
+browser itself uses the `POST` pair and gets the same handshake as JSON.
+
+The token is the same HS256 JWT `POST <base>/auth/login` issues, signed with the
+same `auth.jwt_secret` and carrying the same claims. Every permission, hook and
+`owner`-scoped query accepts it without knowing it came from GitHub.
+
+### Whose account is this?
+
+The one decision worth reading carefully. In order:
+
+1. **A connection already exists** — somebody signing in again. Keyed on the
+   provider's immutable id, never a username or an address, so changing either
+   changes nothing.
+2. **The flow was started from a session** — "connect my GitHub". Recorded when
+   the flow began, while the caller held the credential that proves whose
+   account it is, and never read from the callback.
+3. **A verified address matches an existing account** — the "registered with a
+   password, came back through Google" case. Governed by
+   `[oauth] link_by_verified_email`.
+4. **Otherwise a new account**, created through the same path
+   `POST <base>/auth/register` uses: the `user` model's `before_register`,
+   `before_create`, `after_create` and `after_register` hooks all fire, and the
+   account gets its own organisation. An OAuth sign-up is not a second kind of
+   registration with a second set of rules.
+
+Step 3 is safe **only** because the provider says it *verified* the address. An
+unverified one is never matched — if it were, anybody could set their address at
+a careless provider to somebody else's and sign in as them, which is how several
+real "sign in with" takeovers worked. A match that cannot be made automatically
+is refused with an answer that says what to do instead: sign in the way you
+already can, then link the provider from that session.
+
+`allow_registration = false` closes step 4 too. A provider button is not a side
+door into an app that has closed signup — but it still signs in the people who
+are already there.
+
+### Two more things it takes care of
+
+* **A provider with no email address.** X releases none to most apps, so those
+  accounts get a placeholder at `oauth.invalid` — a domain RFC 2606 reserves so
+  it can never resolve — and `email_placeholder` set, so "there is a string in
+  the email column" stops meaning "we can write to this person". An app with
+  `require_email_verification` on refuses such a provider at the door instead,
+  since an account it created could never sign in.
+* **Locking somebody out.** Unlinking the last connection from an account with
+  no password would make it permanently unreachable, so `DELETE
+  <base>/auth/oauth/{provider}` refuses that one and says so.
+
+### What lands on the account
+
+Three columns, all of them in the built-in `user` model, so a sign-in fills them
+in an app with no `models/users.toml` at all:
+
+| Field | Filled with |
+|-------|-------------|
+| `display_name` | the provider's name for them |
+| `avatar_url` | their picture |
+| `email_placeholder` | `true` when apiplant invented the address rather than being given one |
+
+The first two are written on **every** sign-in, not only the first: people
+change their name and their picture, and a copy that is only right on the day
+the account was created is worse than none. Which columns they are is
+configurable:
+
+```toml
+[oauth]
+name_field   = "display_name"   # "" to write no name
+avatar_field = "avatar_url"     # "" to write no picture
+```
+
+A model that does not declare a column simply does not get it filled, so
+removing one from `models/users.toml` is a complete way to opt out.
+
+`email_placeholder` is not configurable, and is in the built-in model rather
+than left to apps, because apiplant is the one *inventing* the value it
+describes. An app that has never heard of the flag is exactly the app that would
+otherwise mail an address the framework made up. It is also the one field here
+the framework reads: nothing is sent to an address at a `.invalid` domain, so a
+password reset or a confirmation for such an account is quietly not attempted
+rather than handed to a provider that cannot deliver it.
+
+The provider's own view of somebody — address, verified flag, name, picture,
+last sign-in — is kept on their `oauth_connection` row regardless. That resource
+is live and ordinary: `GET <base>/oauth_connection` is "my linked accounts",
+`owner`-scoped, so the question needs no filter and cannot answer anybody
+else's. It is what the dashboard's *Linked accounts* card reads.
+
+Its `delete` is `private`, though, and deliberately: `DELETE
+<base>/auth/oauth/{provider}` is the way to unlink, because that is the one that
+knows an account with no password and no other provider must keep this one. A
+`delete = "owner"` on the resource would be a second door beside that check with
+nothing behind it but the same row.
+
+### A provider apiplant does not ship
+
+Three URLs and the scopes it wants. Anything speaking OpenID Connect — which is
+most things — needs no code:
+
+```toml
+[oauth.gitlab]
+client_id     = "${GITLAB_CLIENT_ID}"
+client_secret = "${GITLAB_CLIENT_SECRET}"
+authorize_url = "https://gitlab.com/oauth/authorize"
+token_url     = "https://gitlab.com/oauth/token"
+userinfo_url  = "https://gitlab.com/oauth/userinfo"
+scopes        = "openid email profile"
+icon          = "/oauth/gitlab.svg"   # a file in public/
+```
+
+`icon` is the only line about appearance. apiplant draws GitHub, Google,
+LinkedIn and X itself — those are trademarks, drawn to their owners'
+guidelines, and a configured icon deliberately cannot replace them — while any
+other provider's button shows its initial on a plain tile until an image is
+named. [Super Tiny Icons](https://github.com/edent/SuperTinyIcons) is where to
+get one: several hundred brand marks, each a few hundred bytes of hand-drawn
+SVG, MIT licensed, and the source apiplant's own four are drawn from. Save the
+file into `public/` and point `icon` at it; both the sign-in page you write and
+the [dashboard](admin.md) will use it.
+
+### What it does not do
+
+* **Refresh tokens.** This signs people in; it never acts on their behalf
+  afterwards, so the access token is used once to read a profile and dropped.
+  An app that needs to keep calling a provider adds columns for them itself and
+  encrypts them at rest.
+* **`id_token` verification.** The profile is read from the userinfo endpoint
+  over a fresh TLS connection instead, which needs no signature check. An
+  `id_token` that arrived any other way would need full JWKS verification.
+* **Cookies.** Sessions are Bearer tokens here as everywhere else.
+
+Every setting is in [Configuration](configuration.md#oauth);
+[`examples/22-oauth`](../examples/22-oauth) is the whole thing running.
 
 ## Extending the user model
 

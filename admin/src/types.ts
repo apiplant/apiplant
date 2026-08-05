@@ -192,6 +192,37 @@ export interface AuthManifest {
   signup_fields: FieldManifest[];
   profile_fields: FieldManifest[];
   known_roles: string[];
+  /**
+   * Third-party sign-ins this deployment offers, in the order to draw them.
+   * Empty unless `main.toml` has an `[oauth.<provider>]` block with
+   * credentials, which is what keeps a sign-in screen from offering a button
+   * that would land on a 404.
+   */
+  oauth_providers: OAuthProviderManifest[];
+}
+
+export interface OAuthProviderManifest {
+  /** The name it is configured under: `github`, `google`, … */
+  provider: string;
+  /** What the button says. */
+  label: string;
+  /**
+   * Where the button goes, as a path under the API's base path. The endpoint
+   * answers with a redirect to the provider, so this is a plain link.
+   */
+  start_url: string;
+  /**
+   * False for a provider that releases no address — X. An account created
+   * through one carries a placeholder, which is worth saying out loud before
+   * somebody presses the button.
+   */
+  provides_email: boolean;
+  /**
+   * A logo the app supplied for a provider apiplant does not draw itself —
+   * `[oauth.<provider>] icon`, usually a path into `public/`. Empty means fall
+   * back to whatever the client shows for an unknown provider.
+   */
+  icon: string;
 }
 
 export interface AdminManifest {

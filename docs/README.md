@@ -105,6 +105,10 @@ my-app/
 * **Hooks** attach those functions to a resource's lifecycle (`before_create`,
   `after_list`, …) so custom logic can validate, rewrite or observe every CRUD
   operation.
+* **Signing in with GitHub, Google, LinkedIn or X** is two credentials in an
+  `[oauth.<provider>]` block: the redirect, the callback, PKCE, the state table
+  and the account matching are the framework's, and the session it issues is the
+  one `POST /auth/login` issues.
 * **Email** and a **cache** are optional services a function can reach: name a
   provider in `[email]` and a Redis in `[cache]`, and `ctx.send_email(…)` /
   `ctx.cache_get(…)` work. Neither is used by the framework itself.

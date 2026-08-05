@@ -24,7 +24,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use deno_core::{extension, op2, JsRuntime, OpState, PollEventLoopOptions, RuntimeOptions};
+use deno_core::{
+    extension, op2, ExtensionFileSource, JsRuntime, OpState, PollEventLoopOptions, RuntimeOptions,
+};
 
 /// How long one invocation may run before the isolate is terminated.
 ///
@@ -89,14 +91,38 @@ fn op_apiplant_host(state: &mut OpState, #[string] kind: &str, #[string] payload
         .unwrap_or_else(|_| r#"{"error":"the host stopped listening"}"#.to_string())
 }
 
+/// The specifier the bootstrap is registered and entered under.
+const BOOTSTRAP: &str = "ext:apiplant_js/bootstrap.js";
+
+/// The bootstrap itself, compiled into the binary.
+///
+/// It lives in `assets/` and arrives here through `include_str!` for one
+/// reason: `extension!`'s `esm = [dir …]` form does *not* embed the file. It
+/// expands to `ExtensionFileSource::loaded_during_snapshot`, which stores the
+/// build machine's absolute `CARGO_MANIFEST_DIR` path and reads it off disk when
+/// an isolate starts. That works in a checkout and nowhere else: a released
+/// binary looks for the CI runner's source tree, does not find it, and every
+/// TypeScript function fails to load while the rest of the server is fine. So
+/// the source is embedded here and installed over `esm_files` below.
+const BOOTSTRAP_SOURCE: &str = include_str!("../assets/bootstrap.js");
+
 extension!(
     apiplant_js,
     ops = [op_apiplant_host],
-    esm_entry_point = "ext:apiplant_js/bootstrap.js",
-    esm = [dir "src", "bootstrap.js"],
+    esm_entry_point = BOOTSTRAP,
     options = { current: Current },
     state = |state, options| state.put::<Current>(options.current),
 );
+
+/// The extension, with the bootstrap supplied as source rather than a path.
+fn extension(current: Current) -> deno_core::Extension {
+    let mut extension = apiplant_js::init(current);
+    extension.esm_files = std::borrow::Cow::Owned(vec![ExtensionFileSource::new_computed(
+        BOOTSTRAP,
+        BOOTSTRAP_SOURCE.into(),
+    )]);
+    extension
+}
 
 /// Start an isolate on its own thread with `code` already evaluated.
 ///
@@ -128,7 +154,7 @@ fn run(
 ) {
     let current: Current = Rc::new(RefCell::new(None));
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![apiplant_js::init(current.clone())],
+        extensions: vec![extension(current.clone())],
         // Serves `import … from "apiplant"` and refuses everything else.
         module_loader: Some(crate::module::Loader::shared()),
         ..Default::default()
@@ -371,5 +397,45 @@ struct WatchGuard<'a> {
 impl Drop for WatchGuard<'_> {
     fn drop(&mut self) {
         let _ = self.watchdog.signals.send(Signal::End);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bootstrap must travel *inside* the binary, not as a path to it.
+    ///
+    /// This is a regression test for a released binary that loaded no
+    /// TypeScript function at all: `extension!`'s `esm = [dir …]` form records
+    /// the build machine's absolute path and reads it when an isolate starts,
+    /// so every function failed on any machine that was not the CI runner. A
+    /// checkout cannot notice — the path is right there — which is why the
+    /// assertion is on the extension rather than on a working isolate.
+    #[test]
+    fn bootstrap_is_embedded_not_a_path() {
+        let extension = extension(Rc::new(RefCell::new(None)));
+
+        let bootstrap = extension
+            .esm_files
+            .iter()
+            .find(|file| file.specifier == BOOTSTRAP)
+            .expect("the extension must carry the bootstrap");
+
+        assert!(
+            bootstrap.is_runtime_loadable(),
+            "{BOOTSTRAP} is a build-machine path, so a released binary cannot load it",
+        );
+        for file in extension.esm_files.iter() {
+            assert!(file.is_runtime_loadable(), "{} is a path", file.specifier);
+        }
+    }
+
+    /// The entry point has to name a module the extension actually supplies;
+    /// getting this wrong fails only at isolate startup, in the same silent way.
+    #[test]
+    fn bootstrap_is_the_entry_point() {
+        let extension = extension(Rc::new(RefCell::new(None)));
+        assert_eq!(extension.esm_entry_point, Some(BOOTSTRAP));
     }
 }

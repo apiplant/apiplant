@@ -29,11 +29,15 @@ import {
   api,
   asRecord,
   asRecords,
+  avatarOf,
+  connectOAuth,
   currentOrganization,
+  currentUserAvatar,
   currentUserLabel,
   hasRole,
   manifest,
   notify,
+  oauthAvailable,
   organizationLabel,
   refreshSession,
   reportError,
@@ -42,6 +46,7 @@ import {
   session,
   setActiveOrganization,
 } from "../store";
+import { ProviderMark } from "../brand-icons";
 import type { ApiRecord, ResourceManifest } from "../types";
 
 /** A stand-in resource so the shared form machinery can edit a profile. */
@@ -120,10 +125,15 @@ export function AccountPage() {
           </div>
         </Card>
 
-        <Card>
+        <div class="space-y-4">
+          <Show when={oauthAvailable()}>
+            <LinkedAccountsCard />
+          </Show>
+
+          <Card>
           <CardHeader title="Signed in as" />
           <div class="flex items-center gap-3 px-5 py-5">
-            <Avatar name={currentUserLabel()} />
+            <Avatar name={currentUserLabel()} src={currentUserAvatar()} />
             <div class="min-w-0">
               <p class="truncate text-sm font-medium text-ink">{currentUserLabel()}</p>
               <p class="mt-0.5 text-xs text-muted">
@@ -133,9 +143,112 @@ export function AccountPage() {
               </p>
             </div>
           </div>
-        </Card>
+          </Card>
+        </div>
       </div>
     </>
+  );
+}
+
+/**
+ * The providers this account can sign in through.
+ *
+ * Both halves of the same list: what is connected, and what could be. The
+ * server refuses to remove the last way into an account — no password, no other
+ * provider — and says so, which is why this screen does not try to work that
+ * out for itself: it asks, and shows the answer.
+ */
+function LinkedAccountsCard() {
+  const providers = () => manifest()?.auth.oauth_providers ?? [];
+  const [connections, { refetch }] = createResource(async () =>
+    asRecords(await api("/oauth_connection?limit=50")),
+  );
+  const [busy, setBusy] = createSignal("");
+
+  const linked = (provider: string) =>
+    (connections() ?? []).find((row) => String(row.provider ?? "") === provider) ?? null;
+
+  const connect = async (provider: { provider: string; start_url: string }) => {
+    setBusy(provider.provider);
+    try {
+      // Leaves the page: the browser goes to the provider and comes back to
+      // `#/account`, so there is nothing after this to await.
+      await connectOAuth(provider);
+    } catch (error) {
+      reportError(error);
+      setBusy("");
+    }
+  };
+
+  const disconnect = async (provider: string) => {
+    setBusy(provider);
+    try {
+      await api(`/auth/oauth/${encodeURIComponent(provider)}`, { method: "DELETE" });
+      notify("success", `${provider} is no longer linked to your account.`);
+      void refetch();
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader title="Linked accounts" hint="Sign in with a provider instead of a password." />
+      <div class="divide-y divide-line">
+        <For each={providers()}>
+          {(provider) => {
+            const connection = () => linked(provider.provider);
+            return (
+              <div class="flex items-center gap-3 px-5 py-3.5">
+                <ProviderMark provider={provider.provider} label={provider.label} icon={provider.icon} />
+                <div class="min-w-0 flex-1">
+                  <p class="truncate text-[0.8125rem] font-medium text-ink">{provider.label}</p>
+                  <Show
+                    when={connection()}
+                    fallback={<p class="mt-0.5 text-xs text-faint">Not connected</p>}
+                  >
+                    {/* Whatever the provider last called them, which is the
+                        useful answer to "which account is this?" */}
+                    <p class="mt-0.5 truncate text-xs text-muted">
+                      {String(
+                        connection()!.email ??
+                          connection()!.display_name ??
+                          connection()!.provider_user_id ??
+                          "Connected",
+                      )}
+                    </p>
+                  </Show>
+                </div>
+                <Show
+                  when={connection()}
+                  fallback={
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      loading={busy() === provider.provider}
+                      onClick={() => void connect(provider)}
+                    >
+                      Connect
+                    </Button>
+                  }
+                >
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    loading={busy() === provider.provider}
+                    onClick={() => void disconnect(provider.provider)}
+                  >
+                    Disconnect
+                  </Button>
+                </Show>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </Card>
   );
 }
 
@@ -360,7 +473,7 @@ export function TeamPage() {
                 <For each={members()}>
                   {(member) => (
                     <li class="flex flex-wrap items-center gap-3 px-5 py-3">
-                      <Avatar name={memberName(member)} />
+                      <Avatar name={memberName(member)} src={avatarOf(asRecord(member.user))} />
                       <div class="min-w-0 flex-1">
                         <p class="truncate text-sm font-medium text-ink">{memberName(member)}</p>
                         <Show when={String(member.user_id ?? "") === session.userId}>
@@ -626,6 +739,7 @@ function InviteDialog(props: { open: boolean; roles: string[]; onClose: () => vo
 export function OrganizationPage() {
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
+  const [logo, setLogo] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [creating, setCreating] = createSignal(false);
 
@@ -633,6 +747,7 @@ export function OrganizationPage() {
     const current = currentOrganization();
     setName(typeof current?.name === "string" ? current.name : "");
     setSlug(typeof current?.slug === "string" ? current.slug : "");
+    setLogo(typeof current?.avatar_url === "string" ? current.avatar_url : "");
   });
 
   const mayEdit = createMemo(() => {
@@ -648,7 +763,11 @@ export function OrganizationPage() {
     try {
       await api(`/organization/${encodeURIComponent(String(current.id ?? ""))}`, {
         method: "PATCH",
-        body: { name: name().trim(), slug: slug().trim() || null },
+        body: {
+          name: name().trim(),
+          slug: slug().trim() || null,
+          avatar_url: logo().trim() || null,
+        },
       });
       await refreshSession();
       notify("success", "Organization updated.");
@@ -702,6 +821,21 @@ export function OrganizationPage() {
                   onInput={(event) => setSlug(event.currentTarget.value)}
                 />
               </Field>
+              {/* Shown beside the box because a URL is not a picture until
+                  something loads it, and a typo here is otherwise invisible
+                  until the workspace switcher draws it wrong. */}
+              <Field label="Logo" help="A URL to a square image. Left empty, the initials are used.">
+                <div class="flex items-center gap-3">
+                  <Avatar name={name() || organizationLabel(currentOrganization())} src={logo()} />
+                  <input
+                    class="input"
+                    disabled={!mayEdit()}
+                    placeholder="https://example.com/logo.png"
+                    value={logo()}
+                    onInput={(event) => setLogo(event.currentTarget.value)}
+                  />
+                </div>
+              </Field>
               <Show
                 when={mayEdit()}
                 fallback={
@@ -733,7 +867,11 @@ export function OrganizationPage() {
                         class="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-2/60"
                         onClick={() => void setActiveOrganization(id)}
                       >
-                        <Avatar name={organizationLabel(organization)} size="sm" />
+                        <Avatar
+                          name={organizationLabel(organization)}
+                          src={avatarOf(organization)}
+                          size="sm"
+                        />
                         <span class="min-w-0 flex-1 truncate text-sm text-ink">
                           {organizationLabel(organization)}
                         </span>

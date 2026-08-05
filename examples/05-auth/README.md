@@ -70,9 +70,10 @@ curl -s localhost:8099/api/user -H "x-api-key: $KEY"
 ## OAuth
 
 `oauth_connection` is a built-in resource that models linked third-party
-identities, and `auth.oauth_providers` lists which providers a deployment
-accepts. **The provider redirect/callback handshake is not implemented yet** —
-this is scaffolding. Password and API-key auth are complete.
+identities. The handshake itself is built in too: two credentials in an
+`[oauth.github]` block mount `<base>/auth/oauth/…`, and the session it issues is
+the same token this example's `POST /auth/login` returns.
+[`examples/22-oauth`](../22-oauth) is that, with all four providers.
 
 Details in [Authentication](../../docs/authentication.md).
 

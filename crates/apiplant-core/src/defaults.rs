@@ -12,6 +12,12 @@
 //! one with no `[email]` provider they simply stay empty: the endpoints that
 //! write to them are not mounted at all.
 //!
+//! Two sets are *conditional*, and for the same reason: they are machinery for
+//! a feature most apps do not turn on, and a table nobody ever writes to is
+//! noise in a dashboard. The `billing_*` resources arrive with a `[payments]`
+//! provider ([`billing_builtins`]), and `oauth_state` with an `[oauth]` one
+//! ([`oauth_builtins`]).
+//!
 //! Drop a `models/<name>.toml` with the same `name` to replace a built-in and
 //! add fields or tweak permissions while keeping the machinery working.
 
@@ -39,6 +45,14 @@ required = true
 [fields.slug]
 type = "string"
 unique = true
+
+# A logo, as a URL a browser can fetch. Nothing sets it — an organisation is not
+# handed to us by an identity provider the way a person is — so it is here for
+# an app to fill and for every interface to read: the dashboard's workspace
+# switcher shows it in place of the initials it would otherwise draw.
+[fields.avatar_url]
+type = "string"
+max_length = 1024
 "#;
 
 /// A user's membership in an organisation, carrying their role there. The
@@ -158,8 +172,41 @@ type = "timestamp"
 [fields.email_verified_at.admin]
 visible = false
 
+# What to call somebody, and what to show beside their name.
+#
+# Both are ordinary nullable columns nothing requires — an app that has no use
+# for either can leave them empty or drop them by replacing this model. They are
+# here because they are what almost every app wants and what every identity
+# provider hands over: a sign-in through [`[oauth]`](crate::config::OAuthConfig)
+# fills them in, so an account that arrives that way arrives with a name and a
+# picture rather than an email address and a blank.
 [fields.display_name]
 type = "string"
+
+[fields.avatar_url]
+type = "string"
+max_length = 1024
+
+# True when the address above is one apiplant invented rather than one somebody
+# gave it.
+#
+# A sign-in through a provider that releases no address — X, today — still has
+# to put *something* in the identity column, which is required and unique. It
+# writes `<provider>_<id>@oauth.invalid`, at a TLD RFC 2606 reserves so that it
+# can never resolve.
+#
+# This flag is here, in every app, because the framework is the one inventing
+# that value: fabricating an address and not recording that it was fabricated
+# leaves an app to find out by watching mail bounce. With it, "we have an
+# address for this person" stops being the same question as "there is a string
+# in the email column" — which is the question a welcome email, a newsletter
+# and a CSV export all actually mean to ask.
+[fields.email_placeholder]
+type = "boolean"
+default = false
+
+[fields.email_placeholder.admin]
+visible = false
 "#;
 
 /// An invitation to join an organisation, addressed to someone who may not have
@@ -305,31 +352,198 @@ required = true
 "#;
 
 /// Default `oauth_connection` resource (global) linking a user to a provider.
+///
+/// One row per (provider, account at that provider). Somebody may hold four of
+/// them, and signing in through any one reaches the same `user` — which is the
+/// whole point of the table: an account is not its GitHub account, it *has* one.
+///
+/// It is a live, ordinary resource: `GET <base>/oauth_connection` is how a
+/// client draws somebody's linked accounts, and it is `owner`-scoped, so that
+/// question needs no filter and cannot answer anybody else's.
+///
+/// The profile columns are refreshed on every sign-in, because people change
+/// their name and their picture. There is deliberately no access token and no
+/// refresh token here: `<base>/auth/oauth` authenticates people and never acts
+/// on their behalf afterwards, so the token is used once — to read the profile —
+/// and dropped. An app that does need to keep calling the provider adds those
+/// columns itself and encrypts them at rest; `hidden` keeps a value out of API
+/// responses, which is not the same as keeping it out of a database dump.
 pub const OAUTH_TOML: &str = r#"
 [resource]
 name = "oauth_connection"
 scope = "global"
 timestamps = true
 
+# Readable by whoever it belongs to — `GET <base>/oauth_connection` is "my
+# linked accounts", with no filter in the request saying so — and written by
+# nobody but the framework.
+#
+# `delete` is **private**, which is the one that looks wrong and is not:
+# removing a connection has an invariant that a row deletion cannot see. An
+# account with no password and no second provider becomes permanently
+# unreachable the moment its last connection goes, so unlinking is
+# `DELETE <base>/auth/oauth/{provider}`, which checks what else is left and
+# refuses the last one. Leaving `delete = "owner"` here would put a door beside
+# that check with nothing behind it but the same table.
 [permissions]
 list   = "owner"
 read   = "owner"
 create = "private"
 update = "private"
-delete = "owner"
+delete = "private"
 
 [fields.provider]
 type = "string"
 required = true
 
+# The provider's own immutable id for this person — GitHub's numeric id,
+# Google's `sub`, X's user id. Never a username: GitHub and X both let people
+# change theirs and let the freed name be taken by somebody else, so an account
+# keyed on one would hand the new owner the old owner's account.
 [fields.provider_user_id]
 type = "string"
 required = true
+
+# `provider:provider_user_id`, so the pair can carry a UNIQUE constraint — a
+# single column is what `unique` can express. It is what makes two simultaneous
+# first-time sign-ins from one GitHub account produce one user instead of two:
+# the loser's insert conflicts, and it reads back the winner's row rather than
+# creating a second account.
+[fields.provider_key]
+type = "string"
+unique = true
+max_length = 320
 
 [fields.owner_id]
 type = "reference"
 references = "user"
 required = true
+on_delete = "cascade"
+
+# What the provider last said about them. `email_verified` is the field the
+# account-matching rule hangs on, so it records what the *provider* claimed
+# rather than what this app would like to be true.
+[fields.email]
+type = "string"
+max_length = 320
+
+[fields.email_verified]
+type = "boolean"
+default = false
+
+[fields.display_name]
+type = "string"
+
+[fields.avatar_url]
+type = "string"
+max_length = 1024
+
+[fields.last_login_at]
+type = "timestamp"
+"#;
+
+/// The half-finished handshake: `oauth_state`.
+///
+/// Present only in an app with an `[oauth]` provider, because it is machinery
+/// and not domain: two requests, minutes apart, with a consent screen between
+/// them, and everything the second one must not take on trust from the browser
+/// waiting somewhere the browser cannot reach.
+///
+/// A cache with a TTL would do the same job in less space. A table is used
+/// because it survives a restart — a redeploy in the ninety seconds somebody
+/// spends reading a consent screen should not fail their sign-in — and because
+/// it needs no Redis to exist.
+pub const OAUTH_STATE_TOML: &str = r#"
+[resource]
+name = "oauth_state"
+scope = "global"
+timestamps = true
+
+# Machinery, like `auth_token`: rows appear for ninety seconds while somebody
+# reads a consent screen and are never worth looking at afterwards, so the
+# dashboard does not offer a screen for them.
+[admin]
+label = "OAuth sign-in"
+plural = "OAuth sign-ins"
+visible = false
+
+# Nothing may reach this table over the API — not even the person whose sign-in
+# it is. Every column on it is either a secret or a decision that stops being
+# safe the moment a client can change it, and its only reader is the callback
+# endpoint, which goes to the table directly.
+[permissions]
+list   = "private"
+read   = "private"
+create = "private"
+update = "private"
+delete = "private"
+
+[fields.provider]
+type = "string"
+required = true
+
+# SHA-256 of the `state` parameter, not the parameter. The value itself travels
+# in a URL, through browser history and the provider's logs; only its hash is
+# kept, so this table leaking does not let anybody finish a flow in progress.
+# SHA-256 rather than argon2 for the same reason an API key's hash is: the
+# callback looks the row up *by* this column.
+[fields.state_hash]
+type = "string"
+required = true
+unique = true
+hidden = true
+
+# The PKCE verifier, where the provider supports PKCE. Only its SHA-256 travels
+# with the authorize redirect, so intercepting that redirect — or the code that
+# comes back on it — is not enough to redeem anything.
+[fields.verifier]
+type = "string"
+hidden = true
+
+# Repeated verbatim in the token request, because the provider compares the two
+# and refuses on any difference. Recorded rather than recomputed so that a
+# config change mid-flow cannot strand a sign-in.
+[fields.redirect_uri]
+type = "string"
+max_length = 1024
+
+# Set when the flow was started by somebody already signed in: this is "connect
+# my GitHub", not "sign me in". It is decided here, while holding that account's
+# session, and never read from the callback — which is the difference between
+# linking an account you can prove is yours and linking any account whose id you
+# can name.
+[fields.link_user_id]
+type = "reference"
+references = "user"
+on_delete = "cascade"
+
+# Where to send the browser afterwards. Only ever a path on this site; see the
+# `return_to` handling in the oauth routes.
+[fields.return_to]
+type = "string"
+max_length = 1024
+
+# How the caller asked to be given the token, overriding `[oauth]
+# token_delivery` for this one flow. Empty means "however the app is
+# configured".
+#
+# It is recorded rather than read from the callback for the ordinary reason:
+# the callback is a request the provider makes, and nothing about it is the
+# app's word. A first-party client — the admin dashboard, say — knows how it
+# wants to receive a token, and this is where it says so.
+[fields.token_delivery]
+type = "string"
+max_length = 16
+
+[fields.expires_at]
+type = "timestamp"
+required = true
+
+# Stamped by the callback. A code may be redeemed once, and so may the state
+# that authorised it: a second callback carrying the same one is a double-click
+# or an attack, and is refused either way.
+[fields.used_at]
+type = "timestamp"
 "#;
 
 // --- billing ------------------------------------------------------------
@@ -799,6 +1013,18 @@ pub fn billing_builtins() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// The one resource an app gets for having an `[oauth]` provider.
+///
+/// Conditional for the same reason the billing tables are: `oauth_state` is
+/// pure machinery, empty except during a sign-in, and an app that signs nobody
+/// in through a third party has no use for a table in its dashboard that never
+/// holds a row. `oauth_connection` is *not* here — it is a built-in for every
+/// app, because "which accounts is this person known by" is a question worth
+/// having a shape for even before anybody answers it.
+pub fn oauth_builtins() -> Vec<(&'static str, &'static str)> {
+    vec![("oauth_state", OAUTH_STATE_TOML)]
+}
+
 /// Parse one built-in by its embedded TOML. Panics on a malformed built-in —
 /// that would be a bug in this crate, caught by the test below.
 pub fn parse_builtin(toml_src: &str) -> Resource {
@@ -813,7 +1039,11 @@ mod tests {
 
     #[test]
     fn all_builtins_parse() {
-        for (name, src) in builtins().into_iter().chain(billing_builtins()) {
+        for (name, src) in builtins()
+            .into_iter()
+            .chain(billing_builtins())
+            .chain(oauth_builtins())
+        {
             let r = parse_builtin(src);
             assert_eq!(r.meta.name, name);
         }

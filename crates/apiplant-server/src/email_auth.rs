@@ -368,6 +368,9 @@ pub async fn send_verification(
     user_id: Uuid,
     address: &str,
 ) -> Result<(), HttpResponse> {
+    if !deliverable(address) {
+        return Ok(());
+    }
     let ttl = state.app.config.auth.verification_ttl_secs;
     let plaintext = mint_token(state, user_id, KIND_VERIFICATION, ttl).await?;
     let message = emails::verification(
@@ -457,7 +460,7 @@ pub async fn forgot_password(state: State<AppState>, body: Json<Value>) -> HttpR
         .unwrap_or_default()
         .to_string();
 
-    if !address.is_empty() {
+    if !address.is_empty() && deliverable(&address) {
         if let Ok(Some(user_id)) = find_user_by_identity(&state, &address).await {
             let ttl = state.app.config.auth.password_reset_ttl_secs;
             match mint_token(&state, user_id, KIND_RESET, ttl).await {
@@ -913,6 +916,32 @@ async fn send(state: &AppState, message: apiplant_email::Message) -> Result<(), 
             Err(error(502, "could not send the email — try again shortly"))
         }
     }
+}
+
+/// Whether it is worth handing this address to a mailer.
+///
+/// `.invalid` is reserved by RFC 2606 precisely so that it can never resolve,
+/// which makes delivery to it not unlikely but impossible — it is the domain
+/// apiplant synthesises an address at when a provider gives none (see the
+/// `user` model's `email_placeholder`). Asking a provider to deliver there
+/// wastes a call and, in bulk, spends the sender's reputation on mail that
+/// cannot arrive.
+///
+/// Deliberately a fact about the address rather than a lookup of the flag: the
+/// two places this is asked have an address in hand and not a row, and "that
+/// domain cannot exist" is true however the address got there.
+fn deliverable(address: &str) -> bool {
+    let deliverable = !address
+        .rsplit_once('@')
+        .map(|(_, domain)| {
+            let domain = domain.trim().trim_end_matches('.').to_lowercase();
+            domain == "invalid" || domain.ends_with(".invalid")
+        })
+        .unwrap_or(false);
+    if !deliverable {
+        tracing::debug!("not mailing an address at a reserved `.invalid` domain");
+    }
+    deliverable
 }
 
 /// `202` with a message that says nothing about who exists.

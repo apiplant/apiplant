@@ -215,6 +215,19 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
     // Same again for the assistant: a test app that names an `[ai]` provider
     // gets `/ai/chat`, and one that doesn't gets no such route.
     let ai = apiplant_ai::Ai::from_config(&app.config.ai).expect("valid [ai]");
+    // And once more for sign-in providers: a test app with an `[oauth.…]`
+    // block gets the `/auth/oauth` routes and the `oauth_state` table, and one
+    // without gets neither.
+    crate::oauth_routes::check_resources(&app).expect("oauth resources are intact");
+    let oauth = apiplant_oauth::Providers::from_config(
+        &app.config.oauth,
+        &format!(
+            "{}{}/auth/oauth",
+            app.config.server.public_origin(),
+            app.config.server.base_path.trim_end_matches('/')
+        ),
+    )
+    .expect("valid [oauth]");
     let agent_ais = app
         .agents
         .values()
@@ -251,6 +264,7 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         // and the `billing_*` resources, and one that doesn't gets neither.
         payments,
         ai,
+        oauth: oauth.map(Arc::new),
         agent_ais: Arc::new(agent_ais),
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),
@@ -292,6 +306,7 @@ mod billing;
 mod email_auth;
 mod functions;
 mod hooks;
+mod oauth;
 mod permissions;
 mod resources;
 mod schema;

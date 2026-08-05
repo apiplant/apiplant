@@ -17,12 +17,15 @@ import {
   asRecord,
   manifest,
   notify,
+  oauthAvailable,
   persistSession,
   refreshSession,
   session,
+  startOAuth,
   syncRouteFromHash,
 } from "../store";
-import type { FieldManifest, ResourceManifest } from "../types";
+import { ProviderMark } from "../brand-icons";
+import type { FieldManifest, OAuthProviderManifest, ResourceManifest } from "../types";
 
 /**
  * Sign-up shares the resource form machinery, which wants a resource.
@@ -61,6 +64,50 @@ export function signupResource(fields: FieldManifest[]): ResourceManifest {
   };
 }
 
+/**
+ * The provider buttons, above the form.
+ *
+ * Above, because for anybody who has an account through one of them it is the
+ * whole screen — a password field they will never fill in should not be the
+ * first thing they read. The order is the order `[oauth]` names them in, so an
+ * app decides which one goes first by writing it first.
+ *
+ * Each button is a `<button>` and not an `<a>` even though the endpoint answers
+ * with a redirect, because the URL needs `return_to` and `token_delivery`
+ * appended for *this* page — see `startOAuth`.
+ */
+function ProviderButtons(props: { providers: OAuthProviderManifest[]; verb: string }) {
+  return (
+    <div class="space-y-2.5 px-5 pt-5">
+      <For each={props.providers}>
+        {(provider) => (
+          <button
+            type="button"
+            class="flex w-full items-center gap-2.5 rounded-lg border border-line-strong bg-surface px-3.5 py-2.5 text-[0.8125rem] font-medium text-ink transition-colors hover:bg-surface-2"
+            onClick={() => startOAuth(provider)}
+          >
+            <ProviderMark provider={provider.provider} label={provider.label} icon={provider.icon} />
+            <span>
+              {props.verb} with {provider.label}
+            </span>
+            {/* Said before the button is pressed rather than explained after
+                an account turns up with an address nobody can write to. */}
+            <Show when={!provider.provides_email}>
+              <span class="ml-auto text-[0.6875rem] font-normal text-faint">no email</span>
+            </Show>
+          </button>
+        )}
+      </For>
+
+      <div class="flex items-center gap-3 pt-1.5 text-[0.6875rem] uppercase tracking-wide text-faint">
+        <span class="h-px flex-1 bg-line" />
+        or
+        <span class="h-px flex-1 bg-line" />
+      </div>
+    </div>
+  );
+}
+
 export function AuthPage() {
   const current = () => manifest()!;
   const [mode, setMode] = createSignal<"signin" | "signup">("signin");
@@ -80,6 +127,16 @@ export function AuthPage() {
 
   // Two boxes when choosing a password, one when typing a known one.
   const passwords = createPasswordPair();
+
+  /**
+   * Offered only where they can work: a console built by `apiplant admin` and
+   * hosted on another origin has nowhere for the callback to land, so it shows
+   * the password form alone rather than a button that would strand somebody on
+   * an API URL. See `oauthAvailable`.
+   */
+  const providers = createMemo(() =>
+    oauthAvailable() ? (current().auth.oauth_providers ?? []) : [],
+  );
 
   const extras = createMemo(() => signupResource(current().auth.signup_fields));
   const extraDraft = createMutable<Draft>(createDraft(extras(), null));
@@ -235,6 +292,13 @@ export function AuthPage() {
                   Create account
                 </button>
               </div>
+            </Show>
+
+            <Show when={providers().length}>
+              <ProviderButtons
+                providers={providers()}
+                verb={mode() === "signin" ? "Sign in" : "Sign up"}
+              />
             </Show>
 
             <form class="space-y-4 px-5 py-5" onSubmit={submit}>

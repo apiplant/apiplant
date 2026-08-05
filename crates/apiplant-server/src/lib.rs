@@ -114,6 +114,39 @@ macro_rules! build_app {
                 );
         }
 
+        // Signing in with somebody else's account exists only where a
+        // provider is configured. The `GET` pair is a browser following a link
+        // — a redirect out and a redirect back — and the `POST` pair is the
+        // same handshake for a front end that would rather hold the browser
+        // itself; see `oauth_routes`.
+        if state.oauth_enabled() {
+            scope = scope
+                .route(
+                    "/auth/oauth",
+                    $crate::ntex_web::get().to($crate::oauth_routes::providers),
+                )
+                .route(
+                    "/auth/oauth/{provider}/start",
+                    $crate::ntex_web::get().to($crate::oauth_routes::start_redirect),
+                )
+                .route(
+                    "/auth/oauth/{provider}/start",
+                    $crate::ntex_web::post().to($crate::oauth_routes::start_json),
+                )
+                .route(
+                    "/auth/oauth/{provider}/callback",
+                    $crate::ntex_web::get().to($crate::oauth_routes::callback_redirect),
+                )
+                .route(
+                    "/auth/oauth/{provider}/callback",
+                    $crate::ntex_web::post().to($crate::oauth_routes::callback_json),
+                )
+                .route(
+                    "/auth/oauth/{provider}",
+                    $crate::ntex_web::delete().to($crate::oauth_routes::unlink),
+                );
+        }
+
         // Billing exists only where a provider does. The `billing_*`
         // resources are absent in the same case, so an app that takes no
         // money has neither the endpoints nor the tables.
@@ -274,6 +307,7 @@ mod emails;
 mod function_routes;
 pub mod functions;
 pub mod hooks;
+mod oauth_routes;
 mod openapi;
 mod response;
 mod sse;
@@ -620,6 +654,34 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         None => tracing::debug!("no payment provider configured"),
     }
 
+    // Sign-in with somebody else's account. Both failures here are startup
+    // failures on purpose: a provider missing its secret, or an app that
+    // replaced `oauth_connection` and dropped a column it needs, would
+    // otherwise surface as a 500 in front of the first person to press the
+    // button — and be discovered by them rather than by whoever deployed it.
+    oauth_routes::check_resources(&app).map_err(apiplant_core::Error::Message)?;
+    let callback_base = format!(
+        "{}{}/auth/oauth",
+        app.config.server.public_origin(),
+        app.config.server.base_path.trim_end_matches('/'),
+    );
+    let oauth = apiplant_oauth::Providers::from_config(&app.config.oauth, &callback_base)
+        .map_err(|e| apiplant_core::Error::Message(e.to_string()))?;
+    match &oauth {
+        Some(providers) => {
+            for provider in providers.iter() {
+                tracing::info!(
+                    "  oauth {} -> {}/auth/oauth/{}/start  (redirect URI: {})",
+                    provider.label,
+                    app.config.server.base_path,
+                    provider.key,
+                    provider.redirect_uri,
+                );
+            }
+        }
+        None => tracing::debug!("no oauth providers configured"),
+    }
+
     // 3. Load dynamic functions.
     let registry = FunctionRegistry::load(&app);
     for f in registry.iter() {
@@ -739,6 +801,7 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         cache,
         payments,
         ai,
+        oauth: oauth.map(Arc::new),
         agent_ais: Arc::new(agent_ais),
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),

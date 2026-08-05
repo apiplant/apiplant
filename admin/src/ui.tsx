@@ -223,7 +223,26 @@ export function HeadMark(props: { class?: string; src?: string | null }) {
 }
 
 /** Initials in a tinted circle — enough to tell people apart in a list. */
-export function Avatar(props: { name: string; size?: "sm" | "md" }) {
+/**
+ * Somebody — or something — in a circle: their picture when there is one, and
+ * their initials when there is not.
+ *
+ * `src` is whatever `avatar_url` holds, which for a person is usually the
+ * picture their identity provider had (see [OAuth]). A URL that fails to load
+ * falls back to the initials rather than leaving a broken image: the source is
+ * a third party's CDN, and those go away.
+ *
+ * [OAuth]: https://docs.rs/apiplant-oauth
+ */
+export function Avatar(props: { name: string; src?: string | null; size?: "sm" | "md" }) {
+  const [broken, setBroken] = createSignal(false);
+  // A changed `src` deserves a fresh try; otherwise one dead URL would poison
+  // the slot for whoever is shown in it next.
+  createEffect(() => {
+    props.src;
+    setBroken(false);
+  });
+
   const initials = () =>
     props.name
       .split(/[\s@._-]+/)
@@ -231,14 +250,27 @@ export function Avatar(props: { name: string; size?: "sm" | "md" }) {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() ?? "")
       .join("") || "?";
+  const size = () => (props.size === "sm" ? "h-6 w-6 text-[0.625rem]" : "h-8 w-8 text-xs");
+
   return (
-    <span
-      class={`inline-flex shrink-0 items-center justify-center rounded-full border border-accent-line bg-accent-soft font-semibold text-accent ${
-        props.size === "sm" ? "h-6 w-6 text-[0.625rem]" : "h-8 w-8 text-xs"
-      }`}
+    <Show
+      when={props.src && !broken()}
+      fallback={
+        <span
+          class={`inline-flex shrink-0 items-center justify-center rounded-full border border-accent-line bg-accent-soft font-semibold text-accent ${size()}`}
+        >
+          {initials()}
+        </span>
+      }
     >
-      {initials()}
-    </span>
+      <img
+        src={props.src!}
+        alt=""
+        loading="lazy"
+        onError={() => setBroken(true)}
+        class={`inline-block shrink-0 rounded-full border border-line object-cover ${size()}`}
+      />
+    </Show>
   );
 }
 

@@ -33,11 +33,24 @@ pub fn build(app: &App, functions: &FunctionRegistry, email_enabled: bool) -> Va
     let mut schemas = Map::new();
 
     // Resources → schemas + CRUD paths.
+    //
+    // A resource whose every action is `private` — `auth_token`, `oauth_state`:
+    // machinery the framework writes and nobody calls — contributes no
+    // operations, and a path entry with none under it is a heading in the docs
+    // page with nothing beneath it. Its schemas stay, since a hook's payload can
+    // still refer to one.
     for r in app.resources.values() {
         schemas.insert(read_schema_name(r), resource_read_schema(r));
         schemas.insert(input_schema_name(r), resource_input_schema(r));
-        paths.insert(format!("/{}", r.meta.name), collection_path(r));
-        paths.insert(format!("/{}/{{id}}", r.meta.name), item_path(r));
+
+        let collection = collection_path(r);
+        if has_operations(&collection) {
+            paths.insert(format!("/{}", r.meta.name), collection);
+        }
+        let item = item_path(r);
+        if has_operations(&item) {
+            paths.insert(format!("/{}/{{id}}", r.meta.name), item);
+        }
     }
 
     // Nested has_many collections: /parent/{id}/child for each reverse relation.
@@ -48,7 +61,11 @@ pub fn build(app: &App, functions: &FunctionRegistry, email_enabled: bool) -> Va
                 .into_iter()
                 .filter(|rf| rf.target == parent.meta.name)
                 .collect();
-            if related.is_empty() {
+            // A nested collection is a *list* of the child, so it answers to the
+            // child's `list` policy — and a private one has no endpoint here
+            // any more than it does at `/{child}`. Documenting it would promise
+            // a route that answers 404.
+            if related.is_empty() || child.permissions.list == Access::Private {
                 continue;
             }
             paths.insert(
@@ -88,6 +105,19 @@ pub fn build(app: &App, functions: &FunctionRegistry, email_enabled: bool) -> Va
     if auth.password_reset_enabled(email_enabled) {
         paths.insert("/auth/password/forgot".into(), auth_forgot_password_path());
         paths.insert("/auth/password/reset".into(), auth_reset_password_path());
+    }
+
+    // Signing in with somebody else's account, described only where a
+    // provider is configured — the same condition `build_app!` mounts the
+    // routes under.
+    if app.config.oauth.enabled() {
+        paths.insert("/auth/oauth".into(), oauth_providers_path(app));
+        paths.insert("/auth/oauth/{provider}/start".into(), oauth_start_path(app));
+        paths.insert(
+            "/auth/oauth/{provider}/callback".into(),
+            oauth_callback_path(app),
+        );
+        paths.insert("/auth/oauth/{provider}".into(), oauth_unlink_path(app));
     }
 
     // Billing, described only where a provider is configured — the same
@@ -301,6 +331,13 @@ fn ref_to(name: &str) -> Value {
 }
 
 // --- resource paths -------------------------------------------------------
+
+/// Whether a path object carries any operation at all, as against only the
+/// `parameters` every operation on it would share.
+fn has_operations(path: &Value) -> bool {
+    path.as_object()
+        .is_some_and(|entries| entries.keys().any(|key| key != "parameters"))
+}
 
 fn collection_path(r: &Resource) -> Value {
     let name = &r.meta.name;
@@ -842,6 +879,193 @@ fn auth_apikeys_path() -> Value {
                     }) } }
                 },
                 "401": { "description": "Authentication required" },
+            }
+        }
+    })
+}
+
+// --- signing in with somebody else's account ------------------------------
+//
+// Only described when `[oauth]` names a provider; see `build`.
+
+/// The path parameter every per-provider operation takes, listing the
+/// providers this deployment actually has — so the docs page offers a dropdown
+/// of what works here rather than a free-text box.
+fn provider_parameter(app: &App) -> Value {
+    json!([{
+        "name": "provider",
+        "in": "path",
+        "required": true,
+        "schema": {
+            "type": "string",
+            "enum": app.config.oauth.active_providers(),
+        },
+    }])
+}
+
+fn oauth_providers_path(_app: &App) -> Value {
+    json!({
+        "get": {
+            "tags": ["auth"],
+            "operationId": "listOAuthProviders",
+            "summary": "Which providers this deployment offers",
+            "description": "Anonymous: it is what a sign-in page reads before anybody has signed in. Each entry carries the URL that starts that provider's flow, so adding a provider is a config change and not a front-end change.",
+            "responses": {
+                "200": {
+                    "description": "The configured providers",
+                    "content": { "application/json": { "schema": json!({
+                        "type": "object",
+                        "properties": { "providers": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "provider": { "type": "string" },
+                                    "label": { "type": "string" },
+                                    "provides_email": { "type": "boolean", "description": "False for a provider that releases no email address — X. An account created through one has a placeholder address at `oauth.invalid`." },
+                                    "start_url": { "type": "string" },
+                                }
+                            }
+                        } }
+                    }) } }
+                }
+            }
+        }
+    })
+}
+
+fn oauth_start_path(app: &App) -> Value {
+    let mut redirect_parameters = provider_parameter(app);
+    if let Some(list) = redirect_parameters.as_array_mut() {
+        list.push(json!({
+            "name": "return_to", "in": "query", "required": false,
+            "schema": { "type": "string" },
+            "description": "A path on this site to land on afterwards. Anything else falls back to `[oauth] success_redirect`.",
+        }));
+    }
+    json!({
+        "get": {
+            "tags": ["auth"],
+            "operationId": "startOAuthRedirect",
+            "summary": "Begin a sign-in (redirects the browser)",
+            "description": "Answers `302` to the provider's consent screen. This is the URL to put in a link: `<a href=\"…/auth/oauth/github/start\">Sign in with GitHub</a>` is the entire client-side integration. `?return_to=/path` chooses where the browser lands afterwards, and is accepted only as a path on this site.",
+            "parameters": redirect_parameters,
+            "responses": {
+                "302": { "description": "Go and consent" },
+                "400": { "description": "This provider cannot be used here" },
+                "404": { "description": "No such provider is configured" },
+            }
+        },
+        "post": {
+            "tags": ["auth"],
+            "operationId": "startOAuth",
+            "summary": "Begin a sign-in (returns the URL)",
+            "description": "The same handshake for a client that holds the browser itself: navigate to `authorize_url`. **Called with a session, this links** — the provider is attached to the caller's account instead of signing anybody in, and that decision is recorded server-side rather than taken from the callback.",
+            "security": [{}, { "bearerAuth": [] }],
+            "parameters": provider_parameter(app),
+            "responses": {
+                "200": {
+                    "description": "Where to send the browser",
+                    "content": { "application/json": { "schema": json!({
+                        "type": "object",
+                        "properties": {
+                            "provider": { "type": "string" },
+                            "authorize_url": { "type": "string" },
+                            "state": { "type": "string" },
+                            "expires_in": { "type": "integer" },
+                            "linking": { "type": "boolean", "description": "True when a session started this flow, so finishing it links rather than signs in." },
+                        }
+                    }) } }
+                },
+                "400": { "description": "This provider cannot be used here" },
+                "404": { "description": "No such provider is configured" },
+            }
+        }
+    })
+}
+
+fn oauth_callback_path(app: &App) -> Value {
+    let mut redirect_parameters = provider_parameter(app);
+    if let Some(list) = redirect_parameters.as_array_mut() {
+        list.extend(
+            json!([
+                { "name": "code", "in": "query", "required": false, "schema": { "type": "string" } },
+                { "name": "state", "in": "query", "required": false, "schema": { "type": "string" } },
+                { "name": "error", "in": "query", "required": false, "schema": { "type": "string" },
+                  "description": "What the provider sends instead of a code when it refuses — `access_denied` when somebody pressed Cancel." },
+            ])
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
+        );
+    }
+    json!({
+        "get": {
+            "tags": ["auth"],
+            "operationId": "completeOAuthRedirect",
+            "summary": "Finish a sign-in (the registered redirect URI)",
+            "description": "This is the URL to register with the provider. It redeems the code, resolves the account, and answers `302` to the flow's landing page with the session token delivered as `[oauth] token_delivery` says — in the fragment by default, so it stays out of server logs. With `token_delivery = \"json\"` it answers with the body below instead.",
+            "parameters": redirect_parameters,
+            "responses": {
+                "302": { "description": "Signed in; go to the landing page" },
+                "400": { "description": "The provider refused, or that sign-in is no longer valid" },
+                "403": { "description": "Registration is disabled and this is a new account" },
+                "409": { "description": "That address or provider account belongs to somebody else" },
+                "502": { "description": "The provider could not be reached" },
+            }
+        },
+        "post": {
+            "tags": ["auth"],
+            "operationId": "completeOAuth",
+            "summary": "Finish a sign-in (from a body)",
+            "description": "For a front end with its own callback route: read `code` and `state` out of the query string the provider left you, and post them here. Always JSON.",
+            "requestBody": json_body(json!({
+                "type": "object",
+                "properties": {
+                    "code": { "type": "string" },
+                    "state": { "type": "string" },
+                    "error": { "type": "string" },
+                    "error_description": { "type": "string" },
+                },
+            })),
+            "parameters": provider_parameter(app),
+            "responses": {
+                "200": {
+                    "description": "Signed in",
+                    "content": { "application/json": { "schema": json!({
+                        "type": "object",
+                        "properties": {
+                            "token": { "type": "string", "description": "A session token, identical in kind to the one POST /auth/login returns." },
+                            "user": { "type": "object" },
+                            "provider": { "type": "string" },
+                            "created": { "type": "boolean", "description": "True when this sign-in created the account." },
+                            "linked": { "type": "boolean", "description": "True when it attached a provider to an account that was already signed in." },
+                        }
+                    }) } }
+                },
+                "400": { "description": "The provider refused, or that sign-in is no longer valid" },
+                "403": { "description": "Registration is disabled and this is a new account" },
+                "409": { "description": "That address or provider account belongs to somebody else" },
+                "502": { "description": "The provider could not be reached" },
+            }
+        }
+    })
+}
+
+fn oauth_unlink_path(app: &App) -> Value {
+    json!({
+        "delete": {
+            "tags": ["auth"],
+            "operationId": "unlinkOAuthProvider",
+            "summary": "Unlink a provider from your account",
+            "description": "Refuses the last one: an account with no password and no other provider would become permanently unreachable. Set a password or link a second provider first.",
+            "security": [{ "bearerAuth": [] }, { "apiKeyAuth": [] }],
+            "parameters": provider_parameter(app),
+            "responses": {
+                "200": { "description": "Unlinked" },
+                "401": { "description": "Authentication required" },
+                "404": { "description": "No such provider is linked here" },
+                "409": { "description": "It is the only way into this account" },
             }
         }
     })

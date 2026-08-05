@@ -11,6 +11,7 @@ use apiplant_cache::Cache;
 use apiplant_core::App;
 use apiplant_db::Db;
 use apiplant_email::Mailer;
+use apiplant_oauth::Providers;
 use apiplant_payments::Payments;
 use ntex::web::HttpRequest;
 use uuid::Uuid;
@@ -38,6 +39,10 @@ pub struct AppState {
     /// `/ai/chat` endpoint and a function's `chat` call; nothing else in the
     /// server talks to a model.
     pub ai: Option<Ai>,
+    /// The providers `[oauth]` switched on, when it named any. Behind the
+    /// `<base>/auth/oauth` endpoints and nothing else — no other path in the
+    /// server talks to an identity provider.
+    pub oauth: Option<Arc<Providers>>,
     /// Per-agent AI assistants whose config overrides the app-wide `[ai]`.
     pub agent_ais: Arc<HashMap<String, Ai>>,
     /// Everything served alongside the API: the dashboard and the public site.
@@ -366,6 +371,16 @@ impl AppState {
     /// so no interface offers a checkout that would land on a 404.
     pub fn payments_enabled(&self) -> bool {
         self.payments.is_some()
+    }
+
+    /// Whether anybody can sign in with a third-party account here.
+    ///
+    /// The `<base>/auth/oauth` routes are mounted on this and the `oauth_state`
+    /// table exists on it, so an app that configured no provider has neither
+    /// the endpoints nor the table — and the admin manifest says so, which is
+    /// what stops a dashboard offering a button that would land on a 404.
+    pub fn oauth_enabled(&self) -> bool {
+        self.oauth.is_some()
     }
 
     /// Whether this app has an assistant at all.

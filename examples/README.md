@@ -1,6 +1,6 @@
 # Examples
 
-Twenty-one self-contained apps, each adding one idea to the last. Every directory
+Twenty-two self-contained apps, each adding one idea to the last. Every directory
 is a complete app: point the binary at it and it runs.
 
 | # | Example | Adds |
@@ -26,6 +26,7 @@ is a complete app: point the binary at it and it runs.
 | 19 | [ai](19-ai) | an assistant: one `[ai]` provider, configured `agents/`, a chat endpoint that streams, a function in front of the model, live tokens in the admin action |
 | 20 | [streaming](20-streaming) | any function's second endpoint: `/stream`, sending the answer as it is produced and into the admin action view |
 | 21 | [docker](21-docker) | shipping it: the app inside `ghcr.io/apiplant/apiplant`, a compose file, config from the environment |
+| 22 | [oauth](22-oauth) | signing in with GitHub, Google, LinkedIn and X: four `[oauth.…]` blocks, two credentials each, and a sign-in page made of links |
 
 ## Running one
 
@@ -69,6 +70,11 @@ llama.cpp, vLLM or LM Studio, or `AI_ENDPOINT=http://localhost:11434` for
 Ollama. Example 19 runs against OpenAI or Anthropic instead by editing three
 lines. Each README says so, and each app boots with
 a clear error rather than a mystery if the service isn't there.
+
+Two more need something from outside: example 18 wants Stripe test keys, and
+example 22 wants an OAuth client id and secret from at least one of GitHub,
+Google, LinkedIn or X — its README says where to get them, and it boots and
+serves a sign-in page with none of them, showing no buttons until you do.
 
 ## Signing in
 
@@ -118,6 +124,7 @@ loads a fixture without starting a server. See [Seed data](../docs/seed.md).
 | 19-ai | `apiplant_ai` |
 | 20-streaming | `apiplant_streaming` |
 | 21-docker | `apiplant_docker` (in its own container) |
+| 22-oauth | `apiplant_oauth` |
 
 Separate databases keep the examples genuinely independent: example 05 redefines
 `user` to log in by username, which cannot share a table with the built-in
