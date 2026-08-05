@@ -33,7 +33,7 @@ next to it:
 
 ```bash
 # Linux x86_64 — swap the target triple for yours.
-curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.5.0-x86_64-unknown-linux-gnu.tar.gz \
+curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.6.0-x86_64-unknown-linux-gnu.tar.gz \
   | tar xz --strip-components=1
 sudo mv apiplant /usr/local/bin/
 ```
@@ -41,10 +41,10 @@ sudo mv apiplant /usr/local/bin/
 Or run the container image, which is published to the GitHub registry for
 `linux/amd64` and `linux/arm64`:
 
-The image tags carry no `v` prefix — `0.5.0`, `0.5`, or `latest`:
+The image tags carry no `v` prefix — `0.6.0`, `0.6`, or `latest`:
 
 ```bash
-docker pull ghcr.io/apiplant/apiplant:0.5.0   # or :0.5, or :latest
+docker pull ghcr.io/apiplant/apiplant:0.6.0   # or :0.6, or :latest
 docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 
