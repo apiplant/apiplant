@@ -2,7 +2,7 @@ name: release
 
 # Tag a version to cut a release:
 #
-#   git tag v0.4.0 && git push origin v0.4.0
+#   git tag v0.x.0 && git push origin v0.x.0
 #
 # That builds the `apiplant` binary for every supported platform, publishes a
 # multi-arch image to ghcr.io/apiplant/apiplant, and attaches the archives and
