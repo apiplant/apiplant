@@ -89,10 +89,14 @@ docker pull ghcr.io/apiplant/apiplant:0.6.0   # or :0.6, or :latest
 docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 
-The image carries the server only. Compiling `functions/*` needs the toolchain
-for whichever language you wrote them in, so run `apiplant build` before
-mounting the directory — TypeScript functions need nothing, they are transpiled
-and run in-process.
+The image carries the server only: glibc, libgcc and the binary, on
+`gcr.io/distroless/cc-debian12` — about 125MB, most of which is the binary.
+There is no shell and no package manager in it, so compiling `functions/*`
+happens elsewhere: run `apiplant build` before mounting the directory, or build
+in a stage that has the toolchain and copy the libraries in (see
+[`examples/21-docker`](examples/21-docker)). TypeScript functions need nothing,
+they are transpiled and run in-process. `apiplant init --from <repo>` is the
+other thing the image cannot do — it clones with `git`, which is not in there.
 
 Or build it yourself, which is the same thing the release does:
 
@@ -847,7 +851,8 @@ apiplant init my-app --from git@github.com:acme/template.git --branch v2
 
 It refuses a directory that already has anything in it (a bare `.git` aside),
 and a cloned template keeps none of its history. `run` takes `--build` to
-compile out-of-date sources first and `--seed` to load
+compile out-of-date sources first, `--watch` to rebuild and restart on every
+edit (see below), and `--seed` to load
 the app's fixture after migrating; `build` takes
 `--release` and `--force`; `admin` takes `--api <domain-or-base-url>` and
 optionally `--out <dir>`; `cli` takes a server address — a URL, a `host:port` or
@@ -858,6 +863,28 @@ a domain — or, failing that, an app directory whose `main.toml` names one;
 The command is always spelled out — `apiplant ./my-app` is an error that tells
 you to write `apiplant run ./my-app` — and an app directory that doesn't exist
 is refused rather than served as an empty app.
+
+### The development loop
+
+```bash
+apiplant run --watch ./my-app
+```
+
+Every write under the app directory — a model, `main.toml`, a function source,
+a seed file, something in `public/` — rebuilds what went stale and restarts the
+server. A *restart*, not a reload: a built function is a shared library the
+process has already loaded, and the only honest way to replace one is to
+replace the process. That also means there are no special cases — a new
+resource, a renamed field and a new function all arrive the same way.
+
+Build output is ignored (`.apiplant-build/`, `target/`, `node_modules/`, the
+compiled libraries themselves), so a build never triggers the next one, and a
+build that fails leaves the server down until the next edit rather than
+restarting into the same error. Changes are found by polling mtimes twice a
+second, which is what makes the same command work inside a container with the
+app bind-mounted from the host — see
+[`examples/21-docker`](examples/21-docker), whose `dev` service is exactly
+that.
 
 ### Scheduled jobs
 

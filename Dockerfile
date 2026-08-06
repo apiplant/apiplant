@@ -1,4 +1,4 @@
-# The apiplant server, built from source and shipped on a small Debian base.
+# The apiplant server, built from source and shipped on glibc and nothing else.
 #
 # The front-end builds are tracked in `crates/apiplant-assets/assets`, so no
 # pnpm stage is needed: a checkout compiles as-is.
@@ -35,20 +35,32 @@ COPY . .
 RUN cargo build --release --locked --bin apiplant
 
 
-FROM debian:bookworm-slim
-
-# ca-certificates: outbound HTTPS (email APIs, Stripe, AI providers) uses
-# webpki roots for verification but still needs the store for `git`.
-# git: `apiplant init --from <repo>` clones a template.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git \
-    && rm -rf /var/lib/apt/lists/*
+# The runtime is glibc, libgcc and this binary. Distroless rather than
+# `debian:bookworm-slim` because the binary needs nothing else and the
+# difference is most of the image: 252MB to ~125MB, the whole of it base.
+#
+# Not Alpine, and not `busybox:glibc`: V8 (via deno_core) ships prebuilt static
+# libraries for glibc targets only, and busybox's glibc is an unversioned image
+# to keep in step with whatever the builder above compiled against — the same
+# trade the base below makes, but maintained by somebody else.
+#
+# `cc` is the variant that carries libgcc (Rust's unwinder needs it) on top of
+# glibc, and it brings the CA store and the NSS modules with it, so outbound
+# HTTPS and resolving a database host by name both work. Swap the tag for
+# `:debug` to get a busybox shell in there when something needs poking at.
+FROM gcr.io/distroless/cc-debian12
 
 COPY --from=builder /src/target/release/apiplant /usr/local/bin/apiplant
 
-# Compiling `functions/*.rs` into loadable libraries needs a Rust toolchain,
-# which is not in this image — run `apiplant build` before mounting the app, or
-# use TypeScript functions, which are transpiled and run in-process.
+# What this image cannot do, both because there is no shell and no toolchain:
+#
+#   * `apiplant build` on `.rs`, `.c`, `.zig` or `.go` — those shell out to
+#     cargo, cc, zig and go. Build the app in a stage that has them and copy the
+#     libraries in (see `examples/21-docker`), or write functions in TypeScript,
+#     which is transpiled in-process and needs nothing.
+#   * `apiplant init --from <repo>` — that runs `git clone`, and git is not
+#     here. Scaffold on the host; the image is for running an app, not
+#     for starting one.
 
 WORKDIR /app
 

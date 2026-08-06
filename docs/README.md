@@ -54,10 +54,13 @@ docker pull ghcr.io/apiplant/apiplant:0.6.0   # or :0.6, or :latest
 docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 
-The image carries the server only. Compiling `functions/*` needs the toolchain
-for whichever language you wrote them in, so run `apiplant build` before
-mounting the directory — TypeScript functions need nothing, they are transpiled
-and run in-process.
+The image carries the server only: glibc, libgcc and the binary, on
+`gcr.io/distroless/cc-debian12`. There is no shell and no package manager in
+it, so compiling `functions/*` happens elsewhere — run `apiplant build` before
+mounting the directory, or build in a stage that has the toolchain and copy the
+libraries in. TypeScript functions need nothing, they are transpiled and run
+in-process; `apiplant init --from <repo>` needs `git`, which is not in the
+image.
 
 Or from crates.io, or from source:
 

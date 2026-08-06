@@ -13,6 +13,9 @@ Three files' worth of app is the payload; the runtime is a `FROM` line.
 docker compose up --build
 docker compose run --rm seed          # optional: the usual fixture
 open http://localhost:8080/api/docs
+
+docker compose --profile dev up dev   # the same app, rebuilt on every save
+open http://localhost:8081/api/docs
 ```
 
 ```bash
@@ -145,6 +148,37 @@ overwrites a row you changed.
 
 The compose file waits on Postgres' healthcheck rather than hoping. Without it
 the first `up` races the database's own initialisation and the app exits.
+
+## Developing inside the container
+
+The image above is the deployed shape: the app is copied in and never changes.
+The `dev` service is the other one — this directory mounted live, with the
+server rebuilding and restarting on every save:
+
+```bash
+docker compose --profile dev up dev
+open http://localhost:8081/api/docs
+```
+
+Edit `models/note.toml` or `functions/version.ts` on the host and watch the
+container restart with the change. It is `apiplant run /app --watch`, which
+polls for changes rather than waiting for inotify — a host editor's writes do
+not deliver filesystem events across a bind mount, so a watcher that subscribed
+to them would sit there doing nothing.
+
+Two things about it are worth knowing:
+
+* It builds from the **`functions` stage**, not the runtime image. Rebuilding
+  `status.rs` needs cargo, and the runtime image deliberately has no toolchain.
+  An app whose functions are all TypeScript can point `dev` straight at
+  `ghcr.io/apiplant/apiplant` — `.ts` is transpiled in-process.
+* It writes into the mounted directory: `functions/libstatus.so` and a
+  `.apiplant-build/` cache appear on the host, owned by the container's user.
+  Both are build output, and both are already in `.gitignore`.
+
+It publishes 8081 so it can run alongside the deployed shape on 8080, against
+the same database — which is the quickest way to see that the container you
+deploy and the container you develop in differ only in where the app came from.
 
 ## Scheduled work reuses this image
 

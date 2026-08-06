@@ -53,6 +53,43 @@ services:
       db:
         condition: service_healthy
 
+  # The development loop, on the same database: this app directory mounted into
+  # a container that rebuilds and restarts whenever you save.
+  #
+  #   docker compose --profile dev up dev     # http://localhost:8081/api/docs
+  #
+  # It is a profile, so `docker compose up` still brings up the deployed shape
+  # above and nothing else. Both can run at once — hence the second port.
+  dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      # The stage that has cargo *and* the apiplant binary. The runtime image
+      # ships no toolchain on purpose, so a watch over `.rs` functions has to
+      # run somewhere that can compile them; an app whose functions are all
+      # TypeScript can use `image: ghcr.io/apiplant/apiplant` here instead.
+      target: functions
+    # That stage is a plain `rust:` image, so it does not inherit the runtime
+    # image's entrypoint and has to name the binary itself.
+    entrypoint: ["apiplant"]
+    command: ["run", "/app", "--watch"]
+    ports:
+      - "8081:8080"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/apiplant_docker
+      JWT_SECRET: compose-secret-change-me
+      STORAGE_DIR: /data/uploads
+    volumes:
+      # The whole app directory, live. Edit `models/note.toml` or
+      # `functions/version.ts` on the host and the server inside restarts with
+      # the change — apiplant polls mtimes rather than waiting for inotify,
+      # which a bind mount does not deliver across the boundary.
+      - .:/app
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
   # One-shot: load the fixture, then exit. `docker compose run --rm seed`, or
   # `--profile seed up` to include it. Seeding is idempotent, so re-running it
   # never overwrites a row you changed.

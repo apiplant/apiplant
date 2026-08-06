@@ -164,7 +164,7 @@ export function Toggle(props: {
 }) {
   return (
     <label
-      class={`flex items-start gap-3 rounded-xl border border-line bg-surface-2/50 px-3 py-2.5 ${
+      class={`flex h-full items-center gap-3 rounded-xl border border-line bg-surface-2/50 px-3 py-2.5 ${
         props.disabled ? "opacity-60" : "cursor-pointer hover:border-line-strong"
       }`}
     >
@@ -174,7 +174,7 @@ export function Toggle(props: {
         aria-checked={props.checked}
         disabled={props.disabled}
         onClick={() => props.onChange(!props.checked)}
-        class={`mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+        class={`inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
           props.checked ? "border-accent-line bg-accent" : "border-line bg-surface-3"
         }`}
       >

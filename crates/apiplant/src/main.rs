@@ -25,6 +25,7 @@ mod cli;
 mod compile;
 mod init;
 mod studio;
+mod watch;
 
 use apiplant_core::App;
 use apiplant_server::admin;
@@ -48,6 +49,7 @@ options:
   --branch <REF>    (init) branch, tag or commit to clone (with --from)
   --name <NAME>     (init) the app's name in main.toml (default: the directory)
   --build           (run) compile any out-of-date function sources first
+  --watch           (run) rebuild and restart whenever the app directory changes
   --seed            (run) load the app's seed/ directory after migrating
   --release         (build) compile with optimisations
   --force           (build) accepted and ignored: `build` always rebuilds
@@ -75,6 +77,12 @@ binary and describes whichever app is being served, so you only need `admin` to
 host a copy on another origin. Switch the built-in one off with
 `[admin] enabled = false` in main.toml.
 
+`run --watch` is the development loop: it starts the server as a child process
+and restarts it — rebuilding first — whenever anything under the app directory
+is written. A restart, rather than a reload, because a built function is a
+shared library the server has already loaded and cannot put back. Changes are
+found by polling, so it also works over a container bind mount.
+
 `build` shells out to a toolchain per language — cargo for .rs, cc for .c, zig
 for .zig, go for .go — so whichever your functions use must be on PATH.
 TypeScript is the exception: .ts is transpiled in-process, so it needs nothing.
@@ -91,6 +99,7 @@ enum Command {
     Run {
         build_first: bool,
         seed: bool,
+        watch: bool,
     },
     Seed,
     Build {
@@ -148,6 +157,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
     let mut dir = None;
     let mut build_first = false;
     let mut seed = false;
+    let mut watch = false;
     let mut release = false;
     let mut force = false;
     let mut quiet = false;
@@ -218,6 +228,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             "-V" | "--version" => return Ok(Some(Args::version())),
             "version" if command.is_none() && dir.is_none() => return Ok(Some(Args::version())),
             "--build" => build_first = true,
+            "--watch" => watch = true,
             "--seed" => seed = true,
             "--release" => release = true,
             "--force" => force = true,
@@ -281,7 +292,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
 
     let command = match command {
         "init" => {
-            if build_first || seed || release || force || api.is_some() || out.is_some() {
+            if build_first || seed || watch || release || force || api.is_some() || out.is_some() {
                 return Err("`init` does not take run/build/admin flags".into());
             }
             if host.is_some() || port.is_some() {
@@ -310,8 +321,8 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             if from.is_some() || branch.is_some() || name.is_some() {
                 return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
             }
-            if build_first || seed {
-                return Err("`--build` and `--seed` only apply to `run`".into());
+            if build_first || seed || watch {
+                return Err("`--build`, `--watch` and `--seed` only apply to `run`".into());
             }
             if api.is_some() || out.is_some() {
                 return Err("`--api` and `--out` only apply to `admin`".into());
@@ -331,6 +342,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             }
             if build_first
                 || seed
+                || watch
                 || release
                 || force
                 || api.is_some()
@@ -352,7 +364,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             if from.is_some() || branch.is_some() || name.is_some() {
                 return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
             }
-            if build_first || seed || release || force || api.is_some() || out.is_some() {
+            if build_first || seed || watch || release || force || api.is_some() || out.is_some() {
                 return Err("`call` does not take run/build/admin flags".into());
             }
             if host.is_some() || port.is_some() {
@@ -375,7 +387,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             if from.is_some() || branch.is_some() || name.is_some() {
                 return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
             }
-            if build_first || seed || release || force {
+            if build_first || seed || watch || release || force {
                 return Err("`admin` does not take run/build flags".into());
             }
             if host.is_some() || port.is_some() {
@@ -390,7 +402,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             if from.is_some() || branch.is_some() || name.is_some() {
                 return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
             }
-            if build_first || seed || release || force || api.is_some() || out.is_some() {
+            if build_first || seed || watch || release || force || api.is_some() || out.is_some() {
                 return Err("`cli` takes a server address or an app directory".into());
             }
             if host.is_some() || port.is_some() {
@@ -407,7 +419,7 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
             if from.is_some() || branch.is_some() || name.is_some() {
                 return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
             }
-            if build_first || seed || release || force || api.is_some() || out.is_some() {
+            if build_first || seed || watch || release || force || api.is_some() || out.is_some() {
                 return Err("`studio` only takes `--host` and `--port`".into());
             }
             Command::Studio {
@@ -426,9 +438,13 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
                 || host.is_some()
                 || port.is_some()
             {
-                return Err("`run` only takes `--build` and `--seed`".into());
+                return Err("`run` only takes `--build`, `--watch` and `--seed`".into());
             }
-            Command::Run { build_first, seed }
+            Command::Run {
+                build_first,
+                seed,
+                watch,
+            }
         }
     };
     Ok(Some(Args {
@@ -599,7 +615,30 @@ async fn main() -> anyhow::Result<()> {
             seed_app(&app).await
         }
 
-        Command::Run { build_first, seed } => {
+        Command::Run {
+            // `--watch` builds on every restart, so an explicit `--build`
+            // alongside it is redundant rather than wrong.
+            build_first: _,
+            seed,
+            watch: true,
+        } => {
+            // The supervisor spends its life waiting and then killing a child,
+            // which is nothing like the single-threaded runtime ntex builds for
+            // serving — and the server it starts is a separate process anyway.
+            let dir = dir.to_path_buf();
+            std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(watch::supervise(&dir, seed))
+            })
+            .join()
+            .map_err(|_| anyhow::anyhow!("the watcher stopped unexpectedly"))?
+        }
+
+        Command::Run {
+            build_first, seed, ..
+        } => {
             if build_first {
                 compile::build(dir, compile::Options::default())?;
             } else {
@@ -902,6 +941,26 @@ mod tests {
             args(&["run", "--seed", "."]).command,
             Command::Run { seed: true, .. }
         ));
+        // `--watch` is `run`'s alone, and carries `--seed` along when asked.
+        assert!(matches!(
+            args(&["run", "--watch", "."]).command,
+            Command::Run {
+                watch: true,
+                seed: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            args(&["run", "--watch", "--seed", "."]).command,
+            Command::Run {
+                watch: true,
+                seed: true,
+                ..
+            }
+        ));
+        let err = parse(vec!["build".into(), "--watch".into()]).unwrap_err();
+        assert!(err.contains("only apply to `run`"), "{err}");
+        assert!(parse(vec!["check".into(), "--watch".into()]).is_err());
         assert!(matches!(args(&["seed", "."]).command, Command::Seed));
         // `--seed` loads a fixture into a database a server is about to use;
         // `seed` loads it and stops. Neither takes the other's flags.
