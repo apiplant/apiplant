@@ -56,6 +56,7 @@ import {
   syncRouteFromHash,
   toasts,
   verifySession,
+  systemResources,
   visibleAgents,
   visibleFunctions,
 } from "./store";
@@ -316,6 +317,7 @@ function TopBar(props: { onToggleNav: () => void }) {
 function Navigation(props: { onNavigate: () => void }) {
   const groups = createMemo(navigationGroups);
   const agents = createMemo(visibleAgents);
+  const system = createMemo(systemResources);
   // Actions live under one heading rather than one per `group`. A function's
   // group usually names the same area as a resource group ("Support"), and two
   // identical headings listing different things is confusing, so the group only
@@ -467,6 +469,25 @@ function Navigation(props: { onNavigate: () => void }) {
           >
             Your account
           </button>
+          {/* Plumbing tables — the queue, and anything else marked `System` —
+              belong here rather than among the app's own resources. */}
+          <For each={system()}>
+            {(resource) => (
+              <button
+                type="button"
+                class={item(
+                  isActive(
+                    (r) =>
+                      (r.kind === "resource" || r.kind === "record" || r.kind === "new") &&
+                      r.name === resource.name,
+                  ),
+                )}
+                onClick={() => go({ kind: "resource", name: resource.name })}
+              >
+                {resource.plural}
+              </button>
+            )}
+          </For>
         </div>
       </div>
     </nav>

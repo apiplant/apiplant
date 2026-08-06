@@ -212,6 +212,16 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
     setPage(0);
     setOwnerOnly(value === "mine");
   };
+  // The `list` note explains who may see this screen, which is worth saying
+  // when it is a limit on *you* ("Limited to records you created.") and noise
+  // when it is a role you already hold — you are looking at the list, so being
+  // told you need the role to look at it explains nothing.
+  const subtitle = createMemo(() => {
+    const policy = props.resource.permissions.list;
+    if (policy.role && hasRole(policy.role)) return undefined;
+    return policy.note;
+  });
+
   const clearFilters = () => {
     setPage(0);
     setSearch("");
@@ -223,7 +233,7 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
     <>
       <PageTitle
         title={props.resource.plural}
-        subtitle={props.resource.permissions.list.note}
+        subtitle={subtitle()}
       >
         <Show when={can(props.resource, "create")}>
           <Button variant="primary" onClick={() => navigate({ kind: "new", name: props.resource.name })}>

@@ -1059,9 +1059,17 @@ scope = "global"
 timestamps = true
 
 [admin]
-label = "Queued message"
-plural = "Queue"
-group = "Operations"
+label = "Background task"
+plural = "Background tasks"
+
+# "System" is a reserved group: the dashboard lists it down with the other
+# screens every app has whether or not it uses the feature — your account, the
+# team, the organization — rather than as a heading of its own among the app's
+# own resources. An app that never publishes a message still gets this table
+# (it is a built-in), and a top-level "Operations" section holding one
+# permanently empty list is the sort of thing that makes a dashboard look like
+# it belongs to somebody else's app.
+group = "System"
 
 # Spelled out rather than left to the defaults, because the questions this
 # screen answers are asked in a hurry: what is stuck, on which topic, for whom,

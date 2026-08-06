@@ -809,9 +809,21 @@ export function agentByName(name: string | null | undefined): AgentManifest | nu
   return manifest()?.agents.find((agent) => agent.name === name) ?? null;
 }
 
+/**
+ * The one group name the navigation treats specially.
+ *
+ * Resources in it are listed alongside Team, Organization and Your account
+ * rather than as a section of their own: they are the app's plumbing, present
+ * whether or not the app uses the feature behind them, and a heading of their
+ * own reads as though they were something the app is about.
+ */
+export const SYSTEM_GROUP = "System";
+
 /** Resources the navigation should list, grouped and ordered as configured. */
 export function navigationGroups(): { group: string | null; resources: ResourceManifest[] }[] {
-  const visible = (manifest()?.resources ?? []).filter(isResourceVisible);
+  const visible = (manifest()?.resources ?? []).filter(
+    (resource) => isResourceVisible(resource) && resource.group !== SYSTEM_GROUP,
+  );
   const groups = new Map<string | null, ResourceManifest[]>();
   for (const resource of visible) {
     const key = resource.group ?? null;
@@ -830,6 +842,13 @@ export function navigationGroups(): { group: string | null; resources: ResourceM
       return left.localeCompare(right);
     })
     .map(([group, resources]) => ({ group, resources }));
+}
+
+/** Resources in [`SYSTEM_GROUP`], for the settings section of the navigation. */
+export function systemResources(): ResourceManifest[] {
+  return (manifest()?.resources ?? [])
+    .filter((resource) => isResourceVisible(resource) && resource.group === SYSTEM_GROUP)
+    .sort((left, right) => left.order - right.order || left.plural.localeCompare(right.plural));
 }
 
 export function visibleFunctions(): FunctionManifest[] {

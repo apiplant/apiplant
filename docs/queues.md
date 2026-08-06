@@ -222,7 +222,9 @@ UPDATE apiplant_queue_message
 
 ### In the dashboard
 
-`queue_message` is in the admin dashboard under **Operations → Queue**, listing
+`queue_message` is in the admin dashboard under **Settings → Background tasks**
+— down with the other screens every app has, not among the app's own resources
+— listing
 topic, subscriber, status, attempts and timings, with `?search=` covering the
 topic, the subscriber and the error text — because the way somebody arrives here
 is usually with half a message from a log line.
