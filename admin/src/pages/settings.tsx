@@ -33,7 +33,9 @@ import {
   connectOAuth,
   currentOrganization,
   currentUserAvatar,
+  currentUserEmail,
   currentUserLabel,
+  emailOf,
   hasRole,
   manifest,
   notify,
@@ -133,7 +135,7 @@ export function AccountPage() {
           <Card>
           <CardHeader title="Signed in as" />
           <div class="flex items-center gap-3 px-5 py-5">
-            <Avatar name={currentUserLabel()} src={currentUserAvatar()} />
+            <Avatar name={currentUserLabel()} src={currentUserAvatar()} email={currentUserEmail()} />
             <div class="min-w-0">
               <p class="truncate text-sm font-medium text-ink">{currentUserLabel()}</p>
               <p class="mt-0.5 text-xs text-muted">
@@ -473,7 +475,11 @@ export function TeamPage() {
                 <For each={members()}>
                   {(member) => (
                     <li class="flex flex-wrap items-center gap-3 px-5 py-3">
-                      <Avatar name={memberName(member)} src={avatarOf(asRecord(member.user))} />
+                      <Avatar
+                        name={memberName(member)}
+                        src={avatarOf(asRecord(member.user))}
+                        email={emailOf(asRecord(member.user))}
+                      />
                       <div class="min-w-0 flex-1">
                         <p class="truncate text-sm font-medium text-ink">{memberName(member)}</p>
                         <Show when={String(member.user_id ?? "") === session.userId}>
@@ -577,7 +583,10 @@ export function TeamPage() {
             <For each={invitations()}>
               {(invitation) => (
                 <li class="flex flex-wrap items-center gap-3 px-5 py-3">
-                  <Avatar name={String(invitation.email ?? "?")} />
+                  <Avatar
+                    name={String(invitation.email ?? "?")}
+                    email={emailOf(invitation)}
+                  />
                   <div class="min-w-0 flex-1">
                     <p class="truncate text-sm font-medium text-ink">
                       {String(invitation.email ?? "")}

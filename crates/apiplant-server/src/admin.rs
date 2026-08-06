@@ -52,6 +52,10 @@ struct AdminManifest {
     app_name: String,
     /// URL of the app's own mark, when it configured one.
     logo: Option<String>,
+    /// Whether an account with no `avatar_url` may be drawn with its Gravatar,
+    /// off unless `[admin] gravatar` turns it on: the dashboard should not
+    /// hand addresses to a third party a deployment did not opt into.
+    gravatar: bool,
     api_base_url: String,
     docs_url: Option<String>,
     /// Present only when the dashboard may call the app's AI endpoint to help
@@ -542,6 +546,7 @@ fn build_manifest(
         title: format!("{app_name} admin"),
         app_name,
         logo: app.config.admin.logo.clone(),
+        gravatar: app.config.admin.gravatar,
         api_base_url,
         docs_url,
         ai_assistance: admin_ai_assistance_manifest(app),

@@ -728,6 +728,31 @@ export function avatarOf(record: ApiRecord | null | undefined): string | null {
   return typeof value === "string" && value ? value : null;
 }
 
+/**
+ * An email off any record, for accounts with no picture of their own: it is
+ * what [`Avatar`](./ui.tsx) hands to Gravatar. The identity field is tried
+ * first, since an application whose logins are email addresses keeps them
+ * there rather than in a second `email` column.
+ *
+ * Answers `null` unless `[admin] gravatar` is on, which is what keeps the
+ * lookups from happening at all in a deployment that did not ask for them.
+ */
+export function emailOf(record: ApiRecord | null | undefined): string | null {
+  const current = manifest();
+  if (!record || !current?.gravatar) return null;
+  const identityField = current.auth.identity_field;
+  const candidates = [identityField ? record[identityField] : null, record.email];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.includes("@")) return candidate;
+  }
+  return null;
+}
+
+/** The signed-in account's email, when their row has one. */
+export function currentUserEmail(): string | null {
+  return emailOf(session.profile);
+}
+
 // --- permissions -----------------------------------------------------------
 
 /**

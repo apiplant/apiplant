@@ -769,6 +769,7 @@ fn payment_error(e: apiplant_payments::PaymentsError) -> HttpResponse {
     match e {
         Request(message) => error(422, message),
         other => {
+            crate::telemetry::record_error("payments", &other);
             tracing::error!(error = %other, "a payments call failed");
             error(502, "the payment provider could not be reached")
         }

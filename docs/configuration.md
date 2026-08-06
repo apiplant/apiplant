@@ -49,6 +49,7 @@ path    = "/docs"            # where Swagger UI mounts (under base_path)
 enabled = true               # serve the built-in admin dashboard
 path    = "/admin"           # where it mounts (outside base_path)
 # logo  = "/logo.png"        # your logo instead of the apiplant one
+gravatar = false             # fall back to Gravatar for accounts with no avatar_url
 
 [public]
 enabled   = true             # serve `dir` at the site root when it exists
@@ -82,6 +83,14 @@ secret_key = "${STRIPE_SECRET_KEY}"
 [oauth.github]               # optional: sign in with GitHub, off unless credentialed
 client_id     = "${GITHUB_CLIENT_ID}"
 client_secret = "${GITHUB_CLIENT_SECRET}"
+
+[observability]              # optional: OpenTelemetry, off unless enabled
+enabled     = true
+environment = "production"
+[observability.logs]
+format = "json"              # pretty | compact | json
+[observability.otlp]
+endpoint = "http://collector:4318"   # OTLP/HTTP; unset keeps everything in-process
 
 [ai]                         # optional: a chat assistant, disabled unless named
 provider = "custom"          # none | openai | anthropic | custom
@@ -219,6 +228,15 @@ See [OpenAPI & Swagger UI](openapi.md).
 | `enabled` | `true` | Serve the admin dashboard. Every app has one: the interface is built into the `apiplant` binary and its manifest is derived from the app on boot, so there is nothing to generate. Set `false` for a deployment that should expose no operator console. |
 | `path` | `/admin` | Where it mounts. Outside `base_path`, so `/admin/` is unaffected when the API moves to `/api`. Normalised to start with `/` and not end with one. |
 | `logo` | unset | Image shown beside the app name, given as a URL the browser can fetch, usually a file in [`public/`](#public) such as `/logo.png`. Unset keeps the apiplant logo. |
+| `gravatar` | `false` | Draw an account that has no `avatar_url` with its [Gravatar](https://gravatar.com), looked up from the hash of its email address. Off by default: it is a request to a third party for every face the dashboard draws, and the hash of an address is enough to confirm a guess at it. An address with no Gravatar — or any picture that fails to load — falls back to the account's initials, which is also what happens with this left off. |
+
+Gravatar needs a **secure context**. The dashboard hashes the address with
+WebCrypto, and `crypto.subtle` is only exposed on `https://`, `localhost`, or
+`127.0.0.1` — so a dashboard opened on `http://0.0.0.0:8099/admin/`, or on a LAN
+address like `http://192.168.1.20:8099/admin/`, quietly draws initials no matter
+what this key says. Binding to `0.0.0.0` is fine; it is the address in the
+browser's URL bar that decides. Reach a local app through
+`http://localhost:8099/admin/` instead, and serve over HTTPS in production.
 
 `[admin.ai_assistance]` adds a small "fill with AI" helper to every writable
 text input and textarea in the dashboard, including the Markdown/HTML editor.
@@ -463,6 +481,129 @@ See [AI](ai.md).
 | `timeout_secs` | `300` | Per completion. Intentionally generous, since a long answer from a local model is slow rather than failed. |
 
 An unknown provider, or `custom` without an endpoint, fails the boot.
+
+## `[observability]`
+
+Logs, traces and metrics, over [OpenTelemetry]. Turning `enabled` on gives every
+request a span; adding an `[observability.otlp] endpoint` sends those spans and
+the request metrics to a collector. The two are separate on purpose — a
+deployment with no collector still gets structured, trace-correlated logs, which
+is most of the value for none of the infrastructure.
+
+OTLP is the only export format, because it is the one every backend speaks:
+point it at the [OpenTelemetry Collector], Jaeger, Tempo, Honeycomb, Datadog,
+Grafana Cloud, New Relic or anything else that accepts OTLP/HTTP on `:4318`.
+Transport is HTTP, not gRPC.
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `false` | Arms the section. Off means: log to the terminal as always, build no spans, export nothing. |
+| `service_name` | the app's `[app] name` | What this service is called in a trace. Falls back to `OTEL_SERVICE_NAME`, then the app name, then the directory name. |
+| `service_version` | the `apiplant` version | The build being traced. |
+| `environment` | *(unset)* | Exported as `deployment.environment.name` — the attribute every backend groups by first. |
+| `resource_attributes` | *(empty)* | Extra attributes on every span and metric: `{ region = "eu-west-1", tenant = "$TENANT" }`. |
+
+### `[observability.logs]`
+
+Applies whether or not `enabled` is set: a server writes logs before anyone asks
+it to be observable.
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `format` | `pretty` | `pretty` for a terminal, `compact` for a log file a person still reads, `json` for anything that parses the line. |
+| `level` | `info,apiplant=debug,ntex_server=warn` | The `RUST_LOG` filter used when the environment does not set one. **`RUST_LOG` always wins** — it is what you reach for inside a running container. |
+| `span_fields` | `true` | JSON only: include the current span's fields (route, method, trace id) on every line written inside it. This is what makes "every log line from the request that failed" a filter rather than a search. |
+
+### `[observability.traces]`
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `true` | Build spans. On even with no exporter — the trace id and error fields are worth having in the logs alone. |
+| `sample_ratio` | `1.0` | Fraction of root requests recorded. Sampling is parent-based, so a trace is kept or dropped whole and a request arriving with a `traceparent` follows its caller's decision. Out-of-range values clamp rather than silently sampling nothing. |
+| `response_header` | `true` | Return `X-Trace-Id` on every response, so a bug report becomes a lookup. |
+| `capture_headers` | *(empty)* | Request headers to copy onto the span, e.g. `["x-request-id"]`. `authorization`, `proxy-authorization`, `cookie`, `set-cookie` and `x-api-key` are **refused even if listed** — a captured credential is a credential in your log aggregator. |
+| `exclude_paths` | `["/_health"]` | Prefixes (under `base_path`) never traced. Health checks are noise you pay per span for. |
+
+### `[observability.metrics]`
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `true` | Needs an OTLP endpoint to go anywhere — metrics, unlike spans, are worth nothing in-process. |
+| `interval_secs` | `60` | How often measurements are pushed. |
+
+Two instruments, on the standard HTTP semantic conventions so a stock dashboard
+reads them without being taught your app:
+
+- `http.server.request.duration` (histogram, seconds), labelled by
+  `http.request.method`, `http.route` and `http.response.status_code`
+- `http.server.active_requests` (up-down counter)
+
+`http.route` is a template, not a path: `/products/7` and
+`/products/2f8a…` both report as `/products/{id}`. A metric labelled with row
+ids grows a time series per row, which is the standard way to turn a monitoring
+bill from tens of dollars into thousands.
+
+### `[observability.otlp]`
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `endpoint` | `$OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL of an OTLP/HTTP receiver; `/v1/traces` and `/v1/metrics` are appended. Unset in both places exports nothing. |
+| `protocol` | `http/protobuf` | Or `http/json` for a receiver that only speaks JSON. |
+| `headers` | *(empty)* | Sent with every export — where a vendor API key goes. Use `$VAR`. |
+| `timeout_secs` | `10` | Per export. The exporter drops a batch rather than blocking behind a collector that stopped answering. |
+
+The standard `OTEL_*` variables are read when the matching key is unset —
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
+— because that is how a sidecar-injected collector configures the pods around
+it, and an app should not need rebuilding to be scraped.
+
+### Errors and failures
+
+Every request span carries the OpenTelemetry HTTP attributes
+(`http.request.method`, `http.route`, `url.path`, `http.response.status_code`).
+A request that fails carries three more — `error.type`, `exception.type` and
+`exception.message` — and is marked `ERROR`, which is what a backend colours red
+and what an alert counts.
+
+Any `5xx` is marked failed even if nothing reported it, and the failures the
+server knows the shape of name themselves in `error.type`: `database`,
+`function_fault`, `function_panic`, `hook_fault`, `hook_panic`, `storage`,
+`queue_publish`, `payments`, `oauth_unreachable`. Group by that attribute and
+"the API is throwing 500s" becomes "one function is panicking".
+
+Rate limiting sits *inside* the tracing middleware, so a `429` is a traced,
+counted request: "we started refusing traffic at 14:02" is exactly what you want
+the graph to show.
+
+### A worked example
+
+Run a collector next to the app and look at traces in Jaeger:
+
+```toml
+[observability]
+enabled     = true
+environment = "production"
+service_name = "checkout-api"
+
+[observability.logs]
+format = "json"
+
+[observability.traces]
+sample_ratio = 1.0        # sample everything here; drop what you don't
+                          # want in the collector, where the outcome is known
+
+[observability.otlp]
+endpoint = "http://otel-collector:4318"
+headers  = { authorization = "$OTEL_TOKEN" }
+```
+
+Traces stop at the edge of a service that does not propagate context, so if
+requests reach this server through a gateway or another service, make sure it
+forwards the `traceparent` header — this server reads it, continues the caller's
+trace, and passes its own id back as `X-Trace-Id`.
+
+[OpenTelemetry]: https://opentelemetry.io
+[OpenTelemetry Collector]: https://opentelemetry.io/docs/collector/
 
 ## Environment variables
 

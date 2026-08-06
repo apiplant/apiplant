@@ -34,6 +34,7 @@ import {
   avatarOf,
   currentOrganization,
   currentUserAvatar,
+  currentUserEmail,
   currentUserLabel,
   agentByName,
   dismissToast,
@@ -290,7 +291,7 @@ function TopBar(props: { onToggleNav: () => void }) {
             class="rounded-full transition-opacity hover:opacity-80"
             aria-label="Account menu"
           >
-            <Avatar name={currentUserLabel()} src={currentUserAvatar()} />
+            <Avatar name={currentUserLabel()} src={currentUserAvatar()} email={currentUserEmail()} />
           </button>
         )}
       >

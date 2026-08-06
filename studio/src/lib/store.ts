@@ -53,6 +53,7 @@ import {
   type Resource,
   type ResourceEntry,
   type TomlTable,
+  type TomlValue,
 } from "./types";
 import { setView } from "./nav";
 import { rememberProject } from "./persistence";
@@ -516,6 +517,19 @@ function configTable(config: TomlTable, sectionPath: string, create: boolean): T
 }
 
 export function setConfigValue(section: string, key: string, value: string | number | boolean | undefined) {
+  writeConfig(section, key, value === "" ? undefined : value);
+  if (section === "payments" && key === "provider") syncBillingBuiltins();
+}
+
+/**
+ * Write one key, then delete every table the write left empty.
+ *
+ * The pruning is what keeps the file readable: a setting turned back to its
+ * default should leave no trace, not a `[observability.otlp]` header with
+ * nothing under it. Shared by every writer below, since a list and a map empty
+ * out exactly like a scalar does.
+ */
+function writeConfig(section: string, key: string, value: TomlValue | undefined) {
   if (!state.project) return;
   setState(
     "project",
@@ -528,7 +542,7 @@ export function setConfigValue(section: string, key: string, value: string | num
         table = next!;
         parents.push(table);
       }
-      if (value === undefined || value === "") delete table[key];
+      if (value === undefined) delete table[key];
       else table[key] = value;
       const segments = section.split(".");
       for (let i = segments.length - 1; i >= 0; i--) {
@@ -538,7 +552,59 @@ export function setConfigValue(section: string, key: string, value: string | num
     }),
   );
   syncConfigFile();
-  if (section === "payments" && key === "provider") syncBillingBuiltins();
+}
+
+/**
+ * A list-of-strings setting — `[observability.traces] capture_headers`.
+ *
+ * Values are trimmed and blanks dropped, so a form that edits them as one
+ * comma-separated line cannot write `["a", ""]`.
+ */
+export function configList(section: string, key: string): string[] {
+  const table = state.project ? configTable(state.project.config, section, false) : undefined;
+  const value = table?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+}
+
+export function setConfigList(section: string, key: string, values: string[]) {
+  const usable = values.map((value) => value.trim()).filter(Boolean);
+  // An empty list is not the same statement as an absent one for every key —
+  // `exclude_paths = []` really does mean "trace the health check too" — but
+  // the form has no way to say one and not the other, and the defaults are
+  // written to be the useful answer. Absent it is.
+  writeConfig(section, key, usable.length > 0 ? usable : undefined);
+}
+
+/** One entry of a string→string table, as a form edits it. */
+export interface ConfigEntry {
+  key: string;
+  value: string;
+}
+
+/**
+ * A map setting — `[observability] resource_attributes`, `[observability.otlp]
+ * headers`. Like `[queues.subscribe]`, it is read and written whole, because a
+ * key of the map is data rather than a known setting name.
+ */
+export function configEntries(section: string, key: string): ConfigEntry[] {
+  const table = state.project ? configTable(state.project.config, section, false) : undefined;
+  const value = table?.[key];
+  if (!isConfigTable(value)) return [];
+  return Object.entries(value)
+    .filter(([, item]) => typeof item === "string" || typeof item === "number" || typeof item === "boolean")
+    .map(([entryKey, item]) => ({ key: entryKey, value: String(item) }));
+}
+
+export function setConfigEntries(section: string, key: string, entries: ConfigEntry[]) {
+  const table: TomlTable = {};
+  for (const entry of entries) {
+    // A row mid-edit has a value and no name yet; it is not a setting until it
+    // has both, and writing it would produce `"" = "…"`.
+    if (!entry.key.trim()) continue;
+    table[entry.key.trim()] = entry.value;
+  }
+  writeConfig(section, key, Object.keys(table).length > 0 ? table : undefined);
 }
 
 /**

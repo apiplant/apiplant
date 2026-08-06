@@ -35,6 +35,7 @@ pub struct Config {
     pub payments: PaymentsConfig,
     pub ai: AiConfig,
     pub oauth: OAuthConfig,
+    pub observability: ObservabilityConfig,
 }
 
 /// What the app calls itself.
@@ -353,6 +354,24 @@ pub struct AdminConfig {
     /// Image shown in place of the apiplant mark, as a URL the browser can
     /// fetch — usually a file in `public/`. Unset keeps the apiplant mark.
     pub logo: Option<String>,
+    /// Fall back to [Gravatar] for an account with no `avatar_url` of its own,
+    /// using the hash of its email address (default false).
+    ///
+    /// Off by default because it is a request to a third party for every face
+    /// the dashboard draws, and the hash of an address is enough to confirm a
+    /// guess at it. A deployment that would rather not tell gravatar.com who
+    /// its users are should leave this alone; the dashboard falls back to
+    /// initials, which need nobody's help.
+    ///
+    /// Turning this on is not enough on its own: the dashboard hashes the
+    /// address with WebCrypto, which browsers only expose in a secure context.
+    /// Reached over plain http at anything other than `localhost` or
+    /// `127.0.0.1` — `http://0.0.0.0:8099/admin/`, a LAN address — there is no
+    /// `crypto.subtle` and every face falls back to initials. What the server
+    /// binds to does not matter; the address in the URL bar does.
+    ///
+    /// [Gravatar]: https://gravatar.com
+    pub gravatar: bool,
     /// Optional AI help for writing text in the admin dashboard.
     pub ai_assistance: AdminAiAssistanceConfig,
 }
@@ -386,6 +405,7 @@ impl Default for AdminConfig {
             enabled: true,
             path: "/admin".to_string(),
             logo: None,
+            gravatar: false,
             ai_assistance: AdminAiAssistanceConfig::default(),
         }
     }
@@ -1304,6 +1324,253 @@ impl AiConfig {
     }
 }
 
+/// Logs, traces and metrics — what the server says about itself, and where it
+/// says it.
+///
+/// Everything here is off-by-default except the logs, which every process has
+/// always written to the terminal. Turning `enabled` on does not by itself send
+/// anything anywhere: it arms the section, and an `[observability.otlp]`
+/// `endpoint` is what makes traces and metrics leave the process. Without one
+/// the spans are still built and still carried through the logs — so a
+/// deployment gets request ids and structured errors for free, and an OTLP
+/// collector only when it has somewhere to put the data.
+///
+/// ## Why OTLP and nothing else
+///
+/// OTLP is the wire format every backend now speaks — Jaeger, Tempo, Honeycomb,
+/// Datadog, New Relic, the OpenTelemetry Collector — so one exporter reaches
+/// all of them, and a deployment that wants something exotic points this at a
+/// Collector and translates there rather than here. The transport is HTTP
+/// (`:4318`), not gRPC: it goes through the `reqwest` client this binary
+/// already links, where gRPC would compile a second RPC stack for the same
+/// bytes.
+///
+/// ## Environment
+///
+/// The standard `OTEL_*` variables are read when the corresponding key is
+/// unset — `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
+/// `OTEL_SERVICE_NAME`, `OTEL_TRACES_SAMPLER_ARG` — because that is how a
+/// sidecar-injected collector configures the pods around it, and an app should
+/// not have to be rebuilt to be scraped.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ObservabilityConfig {
+    /// Arm the section. Off means: log to the terminal as always, build no
+    /// spans, export nothing.
+    pub enabled: bool,
+    /// What this service calls itself in a trace. Unset falls back to
+    /// `OTEL_SERVICE_NAME`, then to the app's name, then to `apiplant`.
+    pub service_name: Option<String>,
+    /// The build being traced. Unset falls back to the `apiplant` version,
+    /// which is right until an app starts shipping a version of its own.
+    pub service_version: Option<String>,
+    /// `production`, `staging`, … Exported as `deployment.environment.name`,
+    /// which is the attribute every backend groups by first.
+    pub environment: Option<String>,
+    /// Extra resource attributes attached to every span and metric —
+    /// `region`, `tenant`, `k8s.pod.name`. Values may reference the
+    /// environment like any other string here.
+    pub resource_attributes: BTreeMap<String, String>,
+    pub logs: LogsConfig,
+    pub traces: TracesConfig,
+    pub metrics: MetricsConfig,
+    pub otlp: OtlpConfig,
+}
+
+/// How the process writes to its own stdout.
+///
+/// This one applies whether or not `enabled` is set: a server writes logs
+/// before it has been told to be observable.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LogsConfig {
+    /// `pretty` (the default) for a terminal, `json` for anything that will
+    /// parse the line — a log shipper, `kubectl logs | jq`, CloudWatch.
+    pub format: LogFormat,
+    /// The `RUST_LOG` filter to use when the environment does not set one.
+    /// `RUST_LOG` always wins, because it is what someone reaches for while
+    /// debugging a running container.
+    pub level: String,
+    /// Include the current span's fields — request id, method, route — on
+    /// every line written inside it. This is what makes a JSON log searchable
+    /// by request without a trace backend.
+    pub span_fields: bool,
+}
+
+impl Default for LogsConfig {
+    fn default() -> Self {
+        LogsConfig {
+            format: LogFormat::Pretty,
+            // ntex logs a line per worker at INFO, which drowns out the
+            // startup output on machines with many cores.
+            level: "info,apiplant=debug,ntex_server=warn".to_string(),
+            span_fields: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    #[default]
+    Pretty,
+    /// One line per event, fields inline — the terminal format without the
+    /// indentation, for a log file a person still reads.
+    Compact,
+    /// One JSON object per line.
+    Json,
+}
+
+/// Distributed traces: one span per request, children for the work inside it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TracesConfig {
+    /// Build spans at all. On (with `[observability] enabled`) even when no
+    /// exporter is configured, because the request id and the error fields a
+    /// span carries are worth having in the logs alone.
+    pub enabled: bool,
+    /// Fraction of *root* requests recorded, `0.0`–`1.0`. This is *head*
+    /// sampling — the decision is made before the request runs, so it cannot
+    /// prefer the ones that will fail. Keeping every failure and a fraction of
+    /// the rest is tail sampling, which is a Collector processor's job, not
+    /// this server's: sample everything here and decide there.
+    ///
+    /// A sampled trace is sampled whole — a child never disagrees with its parent — and an
+    /// incoming `traceparent` decides for its own trace, so a request arriving
+    /// from an already-sampled caller is kept regardless of this number.
+    pub sample_ratio: f64,
+    /// Return the trace id to the caller as `X-Trace-Id`. What turns "it was
+    /// slow at 14:02" from a support ticket into a lookup.
+    pub response_header: bool,
+    /// Request headers to copy onto the span. Never include anything that
+    /// carries a credential — `authorization` and `cookie` are refused even if
+    /// they are listed here.
+    pub capture_headers: Vec<String>,
+    /// Paths that are never traced, matched as prefixes after `base_path`.
+    /// Health checks and asset requests are noise that costs money per span.
+    pub exclude_paths: Vec<String>,
+}
+
+impl Default for TracesConfig {
+    fn default() -> Self {
+        TracesConfig {
+            enabled: true,
+            sample_ratio: 1.0,
+            response_header: true,
+            capture_headers: Vec::new(),
+            exclude_paths: vec!["/_health".to_string()],
+        }
+    }
+}
+
+/// Metrics: the four numbers you page on, on the OpenTelemetry HTTP semantic
+/// conventions so a stock dashboard reads them without being taught the app.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MetricsConfig {
+    /// Record and export metrics. Needs an OTLP endpoint to go anywhere.
+    pub enabled: bool,
+    /// How often the accumulated measurements are pushed to the collector.
+    pub interval_secs: u64,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        MetricsConfig {
+            enabled: true,
+            interval_secs: 60,
+        }
+    }
+}
+
+/// Where the data goes.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OtlpConfig {
+    /// Base URL of an OTLP/HTTP receiver — `http://localhost:4318`, or a
+    /// vendor's ingest URL. The signal paths (`/v1/traces`, `/v1/metrics`) are
+    /// appended. Unset falls back to `OTEL_EXPORTER_OTLP_ENDPOINT`; unset in
+    /// both places exports nothing.
+    pub endpoint: Option<String>,
+    /// `http/protobuf` (the default, and what every collector accepts) or
+    /// `http/json` for a receiver that only speaks JSON.
+    pub protocol: OtlpProtocol,
+    /// Sent with every export request — this is where a vendor's API key goes.
+    /// Use `$VAR` rather than writing the key into a committed file.
+    pub headers: BTreeMap<String, String>,
+    /// How long one export may take before it is abandoned. The exporter drops
+    /// the batch rather than blocking the process behind a collector that has
+    /// stopped answering.
+    pub timeout_secs: u64,
+}
+
+impl Default for OtlpConfig {
+    fn default() -> Self {
+        OtlpConfig {
+            endpoint: None,
+            protocol: OtlpProtocol::HttpProtobuf,
+            headers: BTreeMap::new(),
+            timeout_secs: 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum OtlpProtocol {
+    #[default]
+    #[serde(rename = "http/protobuf")]
+    HttpProtobuf,
+    #[serde(rename = "http/json")]
+    HttpJson,
+}
+
+impl ObservabilityConfig {
+    /// The endpoint to export to, config first and then the environment.
+    ///
+    /// `None` means nothing is exported — which is a supported way to run:
+    /// spans still carry the logs, they simply stay in the process.
+    pub fn endpoint(&self) -> Option<String> {
+        self.otlp
+            .endpoint
+            .clone()
+            .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok())
+            .map(|e| e.trim().trim_end_matches('/').to_string())
+            .filter(|e| !e.is_empty())
+    }
+
+    /// The name this service reports itself under.
+    pub fn service_name(&self, app_name: &str) -> String {
+        self.service_name
+            .clone()
+            .or_else(|| std::env::var("OTEL_SERVICE_NAME").ok())
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| app_name.to_string())
+    }
+
+    /// Every header sent with an export, the config's merged over anything
+    /// `OTEL_EXPORTER_OTLP_HEADERS` supplied — the file is the more specific
+    /// statement, so it wins a collision.
+    pub fn export_headers(&self) -> BTreeMap<String, String> {
+        let mut headers = BTreeMap::new();
+        if let Ok(from_env) = std::env::var("OTEL_EXPORTER_OTLP_HEADERS") {
+            // `key=value,key=value`, as the OTel specification defines it.
+            for pair in from_env.split(',') {
+                if let Some((key, value)) = pair.split_once('=') {
+                    headers.insert(key.trim().to_string(), value.trim().to_string());
+                }
+            }
+        }
+        headers.extend(self.otlp.headers.clone());
+        headers
+    }
+
+    /// Whether anything at all is being collected.
+    pub fn is_active(&self) -> bool {
+        self.enabled && (self.traces.enabled || self.metrics.enabled)
+    }
+}
+
 impl Config {
     /// Load `main.toml` from an app directory, applying defaults for anything
     /// absent. A missing file is not an error.
@@ -1375,6 +1642,29 @@ impl Config {
         }
         if self.rate_limit.stale_after_secs == 0 {
             self.rate_limit.stale_after_secs = defaults.stale_after_secs;
+        }
+
+        // A ratio outside 0..1 is a typo for one of the ends — "10" for ten
+        // percent is the common one — and silently sampling nothing is the
+        // worst way to find out.
+        self.observability.traces.sample_ratio =
+            self.observability.traces.sample_ratio.clamp(0.0, 1.0);
+        if self.observability.metrics.interval_secs == 0 {
+            self.observability.metrics.interval_secs = MetricsConfig::default().interval_secs;
+        }
+        if self.observability.otlp.timeout_secs == 0 {
+            self.observability.otlp.timeout_secs = OtlpConfig::default().timeout_secs;
+        }
+        // Matched as prefixes against a path that always starts with `/`.
+        for path in &mut self.observability.traces.exclude_paths {
+            if !path.starts_with('/') {
+                *path = format!("/{path}");
+            }
+        }
+        // Header names are compared lowercase, because HTTP/2 sends them that
+        // way and a config written in `Title-Case` should still match.
+        for header in &mut self.observability.traces.capture_headers {
+            *header = header.trim().to_ascii_lowercase();
         }
 
         let admin = self.admin.path.trim_matches('/');
@@ -1725,5 +2015,96 @@ not_found = "oops.html"
             config.resolved_url(),
             "postgres://alice:secret@db:5433/plants"
         );
+    }
+
+    #[test]
+    fn observability_is_off_until_it_is_asked_for() {
+        let config = Config::default();
+        assert!(!config.observability.enabled);
+        assert!(!config.observability.is_active());
+        // Off, but the logs still have a format and a level — a process writes
+        // to its terminal before anyone configures monitoring.
+        assert_eq!(config.observability.logs.format, LogFormat::Pretty);
+        assert!(config.observability.logs.level.contains("info"));
+    }
+
+    #[test]
+    fn an_observability_section_is_read_whole() {
+        let dir = temp_dir("observability");
+        fs::write(
+            dir.join("main.toml"),
+            r#"
+[observability]
+enabled = true
+service_name = "checkout"
+environment = "production"
+resource_attributes = { region = "eu-west-1" }
+
+[observability.logs]
+format = "json"
+
+[observability.traces]
+sample_ratio = 0.25
+capture_headers = ["X-Request-Id"]
+exclude_paths = ["_health", "/metrics"]
+
+[observability.otlp]
+endpoint = "http://collector:4318/"
+protocol = "http/json"
+headers = { authorization = "Bearer t" }
+"#,
+        )
+        .unwrap();
+        let config = Config::load(&dir).unwrap();
+        let observability = &config.observability;
+
+        assert!(observability.is_active());
+        assert_eq!(observability.logs.format, LogFormat::Json);
+        assert_eq!(observability.otlp.protocol, OtlpProtocol::HttpJson);
+        // The trailing slash goes, because the signal path is appended to this.
+        assert_eq!(
+            observability.endpoint().as_deref(),
+            Some("http://collector:4318")
+        );
+        assert_eq!(observability.service_name("fallback"), "checkout");
+        assert_eq!(
+            observability.export_headers().get("authorization").unwrap(),
+            "Bearer t"
+        );
+        // Both spellings of an excluded path end up matchable against a
+        // request path, and a header is lowercased to match what HTTP/2 sends.
+        assert_eq!(observability.traces.exclude_paths, ["/_health", "/metrics"]);
+        assert_eq!(observability.traces.capture_headers, ["x-request-id"]);
+        assert_eq!(observability.traces.sample_ratio, 0.25);
+    }
+
+    #[test]
+    fn a_sample_ratio_outside_the_range_is_a_typo_for_one_of_the_ends() {
+        let dir = temp_dir("sampling");
+        fs::write(
+            dir.join("main.toml"),
+            "[observability.traces]\nsample_ratio = 10.0\n",
+        )
+        .unwrap();
+        // "10" meant "ten percent"; sampling nothing would be the worst
+        // possible reading of it, so it clamps to "everything" instead.
+        assert_eq!(
+            Config::load(&dir)
+                .unwrap()
+                .observability
+                .traces
+                .sample_ratio,
+            1.0
+        );
+    }
+
+    #[test]
+    fn the_app_name_is_the_service_name_when_nothing_else_says_otherwise() {
+        let observability = ObservabilityConfig::default();
+        assert!(
+            observability.endpoint().is_none()
+                || std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok()
+        );
+        assert_eq!(observability.service_name("my-app"), "my-app");
     }
 }

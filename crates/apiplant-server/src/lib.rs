@@ -264,6 +264,14 @@ macro_rules! build_app {
             &state.rate_limit,
         )));
 
+        // Outside the rate limiter, so a 429 is still counted and still
+        // traced: "we started refusing traffic at 14:02" is precisely the
+        // thing you want the graph to show, and a limiter that returns before
+        // the span exists is a limiter whose effects are invisible.
+        let scope = scope.wrap($crate::telemetry::Telemetry::new(::std::sync::Arc::clone(
+            &state.telemetry,
+        )));
+
         let mut app = $crate::ntex_web::App::new().state(state.clone());
 
         // Root-level routes answer for the configured domain only, exactly as
@@ -362,6 +370,7 @@ mod response;
 mod sse;
 mod state;
 mod storage_routes;
+pub mod telemetry;
 #[cfg(test)]
 mod tests;
 
@@ -890,6 +899,20 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         );
     }
 
+    let telemetry =
+        telemetry::TelemetryPolicy::build(&app.config.observability, &app.config.server.base_path);
+    if telemetry.is_active() {
+        tracing::info!(
+            traces = app.config.observability.traces.enabled,
+            metrics = app.config.observability.metrics.enabled,
+            "  observability -> {}",
+            app.config
+                .observability
+                .endpoint()
+                .unwrap_or_else(|| "in-process".to_string())
+        );
+    }
+
     let state = AppState {
         app: Arc::new(app),
         db,
@@ -904,6 +927,7 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         queue: queue.clone(),
         agent_ais: Arc::new(agent_ais),
         rate_limit: Arc::new(rate_limit),
+        telemetry: Arc::new(telemetry),
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),
         openapi_json: Arc::new(openapi_json),

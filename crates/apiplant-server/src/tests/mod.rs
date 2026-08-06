@@ -326,6 +326,13 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
     // functions say beside it: a test app that sets no limit gets a policy that
     // refuses nothing, and one that does gets 429s.
     let rate_limit = crate::rate_limit::RateLimitPolicy::build(&app, &functions);
+    // Also from the app's own config, so a test can assert on `X-Trace-Id`.
+    // Nothing is exported: no test installs a subscriber with an OTLP layer
+    // behind it, so the spans are built and dropped.
+    let telemetry = crate::telemetry::TelemetryPolicy::build(
+        &app.config.observability,
+        &app.config.server.base_path,
+    );
 
     AppState {
         app: Arc::new(app),
@@ -342,6 +349,7 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
         // and the `billing_*` resources, and one that doesn't gets neither.
         payments,
         ai,
+        telemetry: Arc::new(telemetry),
         oauth: oauth.map(Arc::new),
         queue,
         agent_ais: Arc::new(agent_ais),

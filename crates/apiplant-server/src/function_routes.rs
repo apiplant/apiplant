@@ -135,6 +135,7 @@ pub async fn invoke(
         // answer generically — it names internals the caller shouldn't see.
         Ok(Err(msg)) => match msg.strip_prefix(apiplant_abi::INTERNAL_ERROR_PREFIX) {
             Some(detail) => {
+                crate::telemetry::record_error("function_fault", detail);
                 tracing::error!(function = %name, detail, "function faulted");
                 error(500, "internal function error")
             }
@@ -143,6 +144,7 @@ pub async fn invoke(
         // Reached only if the *host* side of the blocking closure panicked;
         // panics inside the function are caught before they cross the ABI.
         Err(_) => {
+            crate::telemetry::record_error("function_panic", &name);
             tracing::error!(function = %name, "function task panicked");
             error(500, "internal function error")
         }
@@ -211,12 +213,14 @@ pub async fn stream(
             }
             Ok(Err(msg)) => match msg.strip_prefix(apiplant_abi::INTERNAL_ERROR_PREFIX) {
                 Some(detail) => {
+                    crate::telemetry::record_error("function_fault", detail);
                     tracing::error!(function = %name, detail, "streaming function faulted");
                     sse::failure("internal function error")
                 }
                 None => sse::failure(&msg),
             },
             Err(_) => {
+                crate::telemetry::record_error("function_panic", &name);
                 tracing::error!(function = %name, "streaming function task panicked");
                 sse::failure("internal function error")
             }

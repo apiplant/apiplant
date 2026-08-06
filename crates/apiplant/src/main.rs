@@ -464,15 +464,6 @@ fn looks_like_a_repository(argument: &str) -> bool {
 
 #[ntex::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                // ntex logs a line per worker at INFO, which drowns out our own
-                // startup output on machines with many cores.
-                .unwrap_or_else(|_| "info,apiplant=debug,ntex_server=warn".into()),
-        )
-        .init();
-
     let args = match parse(std::env::args().skip(1).collect()) {
         Ok(Some(args)) => args,
         Ok(None) => {
@@ -514,6 +505,26 @@ async fn main() -> anyhow::Result<()> {
         );
         std::process::exit(2);
     }
+
+    // Logging is configured from the app being run, so `main.toml` is read
+    // before anything else happens — twice, in effect, since `App::load` reads
+    // it again later. It is one small TOML file, and the alternative is either
+    // a startup that cannot be logged or a subscriber that has to be swapped
+    // out underneath a running process.
+    //
+    // A config that cannot be parsed does not stop this: the load that
+    // matters happens below and reports the error properly. Here it just
+    // means the defaults decide what that report looks like.
+    let config = apiplant_core::Config::load(dir).unwrap_or_default();
+    let service_name = config.app.name.clone().unwrap_or_else(|| {
+        dir.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "apiplant".to_string())
+    });
+    // Held to the end of `main`: dropping it flushes whatever the exporters
+    // are still holding, and the last batch before an exit is the one someone
+    // is going to want.
+    let _telemetry = apiplant_server::telemetry::init(&config.observability, &service_name);
 
     match args.command {
         Command::Init { from, branch, name } => {

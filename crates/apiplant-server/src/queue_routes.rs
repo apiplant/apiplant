@@ -70,6 +70,7 @@ pub async fn publish(
         // fault, and safe to explain) and a database failure (ours, and not).
         Err(apiplant_queue::QueueError::Request(message)) => error(400, message),
         Err(e) => {
+            crate::telemetry::record_error("queue_publish", &e);
             tracing::error!(error = %e, %topic, "could not queue a published message");
             error(500, "the message could not be queued")
         }

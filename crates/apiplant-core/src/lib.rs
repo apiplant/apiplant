@@ -16,8 +16,9 @@ pub mod schema;
 pub use agent::{Agent, AgentAiOverride, AgentMeta, AgentPermissions, AgentStorage, AgentTool};
 pub use app::{App, TlsPaths};
 pub use config::{
-    AiConfig, CacheConfig, Config, EmailConfig, PaymentsConfig, QueuesConfig, RateLimitConfig,
-    SmtpConfig, StorageConfig,
+    AiConfig, CacheConfig, Config, EmailConfig, LogFormat, LogsConfig, MetricsConfig,
+    ObservabilityConfig, OtlpConfig, OtlpProtocol, PaymentsConfig, QueuesConfig, RateLimitConfig,
+    SmtpConfig, StorageConfig, TracesConfig,
 };
 pub use env::{expand_document, parse_toml};
 pub use error::{Error, Result};

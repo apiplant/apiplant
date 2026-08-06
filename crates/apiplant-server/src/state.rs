@@ -62,6 +62,11 @@ pub struct AppState {
     /// `[rate_limit]` and every override beside it. Enforced by
     /// [`crate::rate_limit`], which wraps the whole API scope.
     pub rate_limit: Arc<crate::rate_limit::RateLimitPolicy>,
+    /// What is measured about a request and where it is sent, resolved on boot
+    /// from `[observability]`. Enforced by [`crate::telemetry`], which wraps
+    /// the API scope outside the rate limiter so a throttled request is still
+    /// a request that shows up in the numbers.
+    pub telemetry: Arc<crate::telemetry::TelemetryPolicy>,
     /// Everything served alongside the API: the dashboard and the public site.
     pub statics: Arc<Statics>,
     /// The admin manifest for this app, built on boot.

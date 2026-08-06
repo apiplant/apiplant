@@ -91,6 +91,7 @@ pub async fn upload(
         Err(e) => {
             // The caller gets a flat 500: a bucket name or a filesystem path in
             // an error body tells them about our deployment, not about theirs.
+            crate::telemetry::record_error("storage", &e);
             tracing::error!(error = %e, %key, "failed to store an upload");
             error(500, "the file could not be stored")
         }
@@ -119,6 +120,7 @@ pub async fn serve(req: HttpRequest, state: State<AppState>) -> HttpResponse {
             .body(object.bytes),
         Ok(None) => HttpResponse::NotFound().finish(),
         Err(e) => {
+            crate::telemetry::record_error("storage", &e);
             tracing::error!(error = %e, %key, "failed to read a stored file");
             HttpResponse::InternalServerError().finish()
         }

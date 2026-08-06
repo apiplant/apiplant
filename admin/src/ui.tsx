@@ -6,7 +6,15 @@
  * like the controls they already know.
  */
 
-import { For, Show, createEffect, createSignal, onCleanup, splitProps } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createResource,
+  createSignal,
+  onCleanup,
+  splitProps,
+} from "solid-js";
 import type { JSX, ParentProps } from "solid-js";
 import { Portal } from "solid-js/web";
 import { theme, toggleTheme } from "./theme";
@@ -224,24 +232,61 @@ export function HeadMark(props: { class?: string; src?: string | null }) {
 
 /** Initials in a tinted circle — enough to tell people apart in a list. */
 /**
+ * Gravatar's URL for an address: the SHA-256 of the trimmed, lowercased email.
+ * `d=404` asks Gravatar for a 404 instead of a generated placeholder when the
+ * address has no picture, so the `onError` path below can fall through to the
+ * initials rather than showing someone else's idea of a default face.
+ *
+ * Returns `null` where there is nothing to hash or no WebCrypto (`crypto.subtle`
+ * is only exposed on secure origins).
+ */
+async function gravatarUrl(email: string): Promise<string | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized.includes("@") || !globalThis.crypto?.subtle) return null;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+  const hash = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `https://www.gravatar.com/avatar/${hash}?d=404`;
+}
+
+/**
  * Somebody — or something — in a circle: their picture when there is one, and
  * their initials when there is not.
  *
  * `src` is whatever `avatar_url` holds, which for a person is usually the
- * picture their identity provider had (see [OAuth]). A URL that fails to load
- * falls back to the initials rather than leaving a broken image: the source is
- * a third party's CDN, and those go away.
+ * picture their identity provider had (see [OAuth]). With no `avatar_url` — or
+ * with one that fails to load, since the source is a third party's CDN and
+ * those go away — the `email` is tried against Gravatar, and initials are the
+ * last resort. Each source is only abandoned when the browser reports it dead,
+ * so a broken URL degrades instead of leaving a broken image.
  *
  * [OAuth]: https://docs.rs/apiplant-oauth
  */
-export function Avatar(props: { name: string; src?: string | null; size?: "sm" | "md" }) {
-  const [broken, setBroken] = createSignal(false);
-  // A changed `src` deserves a fresh try; otherwise one dead URL would poison
-  // the slot for whoever is shown in it next.
+export function Avatar(props: {
+  name: string;
+  src?: string | null;
+  email?: string | null;
+  size?: "sm" | "md";
+}) {
+  const [gravatar] = createResource(
+    () => props.email?.trim() || null,
+    (email) => gravatarUrl(email),
+  );
+  // Sources in order of preference. Gravatar joins the list once its hash is
+  // computed, which is a tick or two after first paint.
+  const sources = () => [props.src, gravatar()].filter((url): url is string => !!url);
+
+  const [attempt, setAttempt] = createSignal(0);
+  // A changed subject deserves a fresh try; otherwise one dead URL would poison
+  // the slot for whoever is shown in it next. Deliberately not tracking
+  // `gravatar()`: it arriving late must not restart an already-failed `src`.
   createEffect(() => {
     props.src;
-    setBroken(false);
+    props.email;
+    setAttempt(0);
   });
+  const current = () => sources()[attempt()];
 
   const initials = () =>
     props.name
@@ -254,7 +299,7 @@ export function Avatar(props: { name: string; src?: string | null; size?: "sm" |
 
   return (
     <Show
-      when={props.src && !broken()}
+      when={current()}
       fallback={
         <span
           class={`inline-flex shrink-0 items-center justify-center rounded-full border border-accent-line bg-accent-soft font-semibold text-accent ${size()}`}
@@ -264,10 +309,10 @@ export function Avatar(props: { name: string; src?: string | null; size?: "sm" |
       }
     >
       <img
-        src={props.src!}
+        src={current()!}
         alt=""
         loading="lazy"
-        onError={() => setBroken(true)}
+        onError={() => setAttempt((index) => index + 1)}
         class={`inline-block shrink-0 rounded-full border border-line object-cover ${size()}`}
       />
     </Show>

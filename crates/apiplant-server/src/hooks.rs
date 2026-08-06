@@ -342,6 +342,7 @@ async fn invoke(
         // it is the hook that is broken, not the request.
         Ok(Err(message)) => match message.strip_prefix(apiplant_abi::INTERNAL_ERROR_PREFIX) {
             Some(detail) => {
+                crate::telemetry::record_error("hook_fault", detail);
                 tracing::error!(hook = %hook_name, detail, "hook faulted");
                 Err(error(500, "hook failed"))
             }
@@ -350,6 +351,7 @@ async fn invoke(
         // Reached only if the *host* side of the blocking closure panicked;
         // panics inside the hook are caught before they cross the ABI.
         Err(_) => {
+            crate::telemetry::record_error("hook_panic", &hook_name);
             tracing::error!(hook = %hook_name, "hook task panicked");
             Err(error(500, "hook failed"))
         }

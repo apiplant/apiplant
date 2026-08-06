@@ -35,11 +35,13 @@ pub fn db_error(e: apiplant_db::Error) -> HttpResponse {
             } else if lower.contains("not-null") || lower.contains("not null") {
                 error(400, "a required field is missing")
             } else {
+                crate::telemetry::record_error("database", &msg);
                 tracing::error!(error = %msg, "database error");
                 error(500, "internal error")
             }
         }
         other => {
+            crate::telemetry::record_error("database", &other);
             tracing::error!(error = %other, "database error");
             error(500, "internal error")
         }

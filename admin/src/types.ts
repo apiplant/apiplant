@@ -232,6 +232,12 @@ export interface AdminManifest {
   app_name: string;
   /** The app's own mark, when configured; otherwise the apiplant one is used. */
   logo: string | null;
+  /**
+   * Whether an account with no `avatar_url` may fall back to its Gravatar.
+   * Off unless `[admin] gravatar` turns it on, since it means a request to a
+   * third party for every face drawn; initials are the fallback either way.
+   */
+  gravatar?: boolean;
   api_base_url: string;
   docs_url: string | null;
   ai_assistance?: AdminAiAssistanceManifest;

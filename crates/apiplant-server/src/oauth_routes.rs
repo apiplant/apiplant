@@ -1151,6 +1151,7 @@ fn oauth_error(error: apiplant_oauth::Error) -> HttpResponse {
         }
         Error::Unreachable { ref provider, .. } => {
             let provider = provider.clone();
+            crate::telemetry::record_error("oauth_unreachable", &error);
             tracing::error!(%error, "oauth provider could not be reached");
             crate::response::error(
                 502,

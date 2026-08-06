@@ -2,7 +2,11 @@ import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import {
   CONFIG_PATH,
   allFunctionNames,
+  configEntries,
+  configList,
   configValue,
+  setConfigEntries,
+  setConfigList,
   ensureMainToml,
   fileText,
   setConfigFromToml,
@@ -11,7 +15,7 @@ import {
   studio,
   subscriptions,
 } from "../lib/store";
-import type { Subscription } from "../lib/store";
+import type { ConfigEntry, Subscription } from "../lib/store";
 import { setView, view } from "../lib/nav";
 import {
   Badge,
@@ -30,7 +34,7 @@ import {
 
 /** A section id, or the raw-file tab that always sits last. */
 type TabId = string;
-type FieldKind = "text" | "number" | "select" | "textarea" | "boolean";
+type FieldKind = "text" | "number" | "select" | "textarea" | "boolean" | "list";
 
 interface ConfigField {
   key: string;
@@ -41,6 +45,14 @@ interface ConfigField {
   hint?: string;
   /** Writes to another table than the section's own — `[email.smtp]` under Email. */
   section?: string;
+  /**
+   * What the server does with this key absent, for a switch whose default is
+   * `true`. Without it an unset key draws as off, which reads as "this is
+   * disabled" about something the server has switched on. Toggling back to the
+   * default deletes the key rather than writing it, so the file keeps saying
+   * nothing about a setting nobody changed.
+   */
+  defaultOn?: boolean;
   /**
    * Heading this field sits under inside its section. Fields carrying the same
    * group are shown together, in the order the group is first named; a field
@@ -322,6 +334,183 @@ function aiFields(): ConfigField[] {
 }
 
 /** The `main.toml` sections the studio edits as forms. */
+const LOG_FORMATS = [
+  { value: "pretty", label: "pretty" },
+  { value: "compact", label: "compact" },
+  { value: "json", label: "json" },
+] as const;
+
+const OTLP_PROTOCOLS = [
+  { value: "http/protobuf", label: "http/protobuf" },
+  { value: "http/json", label: "http/json" },
+] as const;
+
+/**
+ * `[observability]`, in the order somebody sets it up.
+ *
+ * Logs come first and are always shown, because they are the half that works
+ * with nothing switched on: a server writes to its terminal whether or not
+ * anybody is collecting traces. Everything below them is hidden until
+ * `enabled`, since a sample ratio for spans nobody is building is a question
+ * with no meaning.
+ */
+function observabilityFields(): ConfigField[] {
+  const enabled = configValue("observability", "enabled") === true;
+
+  const always: ConfigField[] = [
+    {
+      key: "enabled",
+      label: "observability enabled",
+      kind: "boolean" as const,
+      hint: "Gives every request a span and an X-Trace-Id, and lets the logs carry its trace id. Nothing leaves the process until an OTLP endpoint is set below.",
+    },
+    {
+      section: "observability.logs",
+      key: "format",
+      label: "log format",
+      group: "Logs",
+      kind: "select" as const,
+      options: LOG_FORMATS,
+      hint: "`pretty` for a terminal, `json` for anything that parses the line. This one applies whether or not observability is enabled.",
+    },
+    {
+      section: "observability.logs",
+      key: "level",
+      label: "log level",
+      group: "Logs",
+      placeholder: "info,apiplant=debug,ntex_server=warn",
+      kind: "text" as const,
+      hint: "Used only when RUST_LOG is unset — the environment always wins, so a running container can be turned up without editing this.",
+    },
+    {
+      section: "observability.logs",
+      key: "span_fields",
+      label: "span fields on every json line",
+      group: "Logs",
+      kind: "boolean" as const,
+      defaultOn: true,
+      hint: "JSON only. Puts the request's route, method and trace id on every line written during it — which is what makes “every line from the request that failed” a filter.",
+    },
+  ];
+
+  if (!enabled) return always;
+
+  return [
+    ...always,
+    {
+      key: "service_name",
+      label: "service name",
+      group: "Service identity",
+      kind: "text" as const,
+      hint: "What this service is called in a trace. Unset uses OTEL_SERVICE_NAME, then the app's name.",
+    },
+    {
+      key: "service_version",
+      label: "service version",
+      group: "Service identity",
+      kind: "text" as const,
+      hint: "The build being traced. Unset reports the apiplant version.",
+    },
+    {
+      key: "environment",
+      label: "environment",
+      group: "Service identity",
+      placeholder: "production",
+      kind: "text" as const,
+      hint: "Exported as deployment.environment.name — the attribute most backends group by first.",
+    },
+    {
+      section: "observability.traces",
+      key: "enabled",
+      label: "build spans",
+      group: "Traces",
+      kind: "boolean" as const,
+      defaultOn: true,
+      hint: "On even with no collector: the trace id and the error fields a span carries are worth having in the logs alone.",
+    },
+    {
+      section: "observability.traces",
+      key: "sample_ratio",
+      label: "sample ratio",
+      group: "Traces",
+      placeholder: "1.0",
+      kind: "number" as const,
+      hint: "Fraction of root requests recorded, 0–1. A request that arrives with a traceparent follows its caller instead. Keeping every failure and a fraction of the rest is tail sampling — a collector's job, not this server's.",
+    },
+    {
+      section: "observability.traces",
+      key: "response_header",
+      label: "return X-Trace-Id",
+      group: "Traces",
+      kind: "boolean" as const,
+      defaultOn: true,
+      hint: "Hands the trace id back to the caller, so a bug report becomes a lookup rather than a search by timestamp.",
+    },
+    {
+      section: "observability.traces",
+      key: "exclude_paths",
+      label: "never trace",
+      group: "Traces",
+      placeholder: "/_health",
+      kind: "list" as const,
+      hint: "Path prefixes, under base_path. Comma-separated. Health checks are noise you pay for per span. Empty here uses the default, /_health.",
+    },
+    {
+      section: "observability.traces",
+      key: "capture_headers",
+      label: "capture request headers",
+      group: "Traces",
+      placeholder: "x-request-id",
+      kind: "list" as const,
+      hint: "Copied onto the span. Comma-separated. authorization, cookie and x-api-key are refused even if named — a captured credential is a credential in your log aggregator.",
+    },
+    {
+      section: "observability.metrics",
+      key: "enabled",
+      label: "record metrics",
+      group: "Metrics",
+      kind: "boolean" as const,
+      defaultOn: true,
+      hint: "http.server.request.duration and http.server.active_requests, labelled by a route template so a busy table does not become a time series per row. Needs an endpoint below to go anywhere.",
+    },
+    {
+      section: "observability.metrics",
+      key: "interval_secs",
+      label: "push interval (seconds)",
+      group: "Metrics",
+      placeholder: "60",
+      kind: "number" as const,
+    },
+    {
+      section: "observability.otlp",
+      key: "endpoint",
+      label: "collector endpoint",
+      group: "OTLP export",
+      placeholder: "http://localhost:4318",
+      kind: "text" as const,
+      hint: "Any OTLP/HTTP receiver — the OpenTelemetry Collector, Jaeger, Tempo, Honeycomb, Datadog, Grafana Cloud. /v1/traces and /v1/metrics are appended. Empty falls back to OTEL_EXPORTER_OTLP_ENDPOINT, and unset in both places keeps everything in-process.",
+    },
+    {
+      section: "observability.otlp",
+      key: "protocol",
+      label: "protocol",
+      group: "OTLP export",
+      kind: "select" as const,
+      options: OTLP_PROTOCOLS,
+      hint: "Every collector accepts http/protobuf. Transport is HTTP either way — there is no gRPC exporter.",
+    },
+    {
+      section: "observability.otlp",
+      key: "timeout_secs",
+      label: "export timeout (seconds)",
+      group: "OTLP export",
+      placeholder: "10",
+      kind: "number" as const,
+      hint: "A batch is dropped rather than blocking the process behind a collector that stopped answering.",
+    },
+  ];
+}
+
 const SECTIONS: ConfigSection[] = [
   {
     id: "application",
@@ -407,6 +596,14 @@ const SECTIONS: ConfigSection[] = [
         group: "Authentication",
         kind: "boolean" as const,
         hint: "Whether anybody may create an account for themselves.",
+      },
+      {
+        section: "admin",
+        key: "gravatar",
+        label: "gravatar avatars",
+        group: "Admin dashboard",
+        kind: "boolean" as const,
+        hint: "Off by default. When on, an account with no avatar_url is drawn with its Gravatar, which means a request to gravatar.com for every face. Initials are the fallback either way.",
       },
       { section: "docs", key: "enabled", label: "swagger ui enabled", group: "API documentation", kind: "boolean" as const },
       {
@@ -687,6 +884,12 @@ const SECTIONS: ConfigSection[] = [
     hint: "The backing provider for /ai/chat, configured agents, and ctx.chat inside functions.",
     fields: aiFields,
   },
+  {
+    id: "observability",
+    title: "Observability",
+    hint: "What the server says about itself: structured logs, OpenTelemetry traces and HTTP metrics, exported over OTLP to any collector.",
+    fields: observabilityFields,
+  },
 ];
 
 /**
@@ -730,6 +933,16 @@ function groupedFields(section: ConfigSection): FieldGroup[] {
 /** Where a field's value lives — its own table when it names one. */
 function fieldSection(section: ConfigSection, field: ConfigField): string {
   return field.section ?? section.id;
+}
+
+/**
+ * Whether a switch draws as on: the value when the key is set, and otherwise
+ * what the server would do without it.
+ */
+function switchIsOn(table: string, field: ConfigField): boolean {
+  const current = configValue(table, field.key);
+  if (typeof current === "boolean") return current;
+  return field.defaultOn === true;
 }
 
 function selectDefaultValue(field: ConfigField): string {
@@ -790,6 +1003,45 @@ function AccessField(props: {
         />
       </Show>
     </div>
+  );
+}
+
+/**
+ * A list of strings, edited as one comma-separated line.
+ *
+ * A row-per-entry editor would be the richer control, but these lists are two
+ * or three short tokens — header names, path prefixes — and a line of them is
+ * quicker to read and quicker to change than a stack of inputs.
+ *
+ * The text is held locally while it is being typed: splitting on every
+ * keystroke would drop the comma the moment it is pressed, and the caret with
+ * it. It is written through on each edit all the same, so nothing waits for a
+ * blur to be saved.
+ */
+function ListField(props: { table: string; field: string; placeholder?: string }) {
+  const saved = createMemo(() => configList(props.table, props.field).join(", "));
+  const [typed, setTyped] = createSignal<string | null>(null);
+  // Anything that changes the list elsewhere — the TOML tab, a project reload —
+  // ends the local edit, so the box never disagrees with the file.
+  createEffect(() => {
+    saved();
+    setTyped(null);
+  });
+
+  return (
+    <TextInput
+      mono
+      value={typed() ?? saved()}
+      placeholder={props.placeholder}
+      onInput={(value) => {
+        setTyped(value);
+        setConfigList(
+          props.table,
+          props.field,
+          value.split(",").map((item) => item.trim()),
+        );
+      }}
+    />
   );
 }
 
@@ -925,6 +1177,106 @@ function SubscriptionsCard() {
   );
 }
 
+/**
+ * A string→string table, edited as rows.
+ *
+ * Its own card for the same reason `[queues.subscribe]` has one: the *keys* are
+ * data, not a fixed set of settings, so there is no field list to render. Used
+ * twice — resource attributes and export headers — which is why it takes the
+ * table and key rather than knowing either.
+ */
+function EntriesCard(props: {
+  title: string;
+  hint: string;
+  table: string;
+  field: string;
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+  empty: string;
+  addLabel: string;
+}) {
+  const saved = createMemo(() => configEntries(props.table, props.field));
+  // A row is not a setting until it has a name, so a blank one has nowhere to
+  // live in the config until then. It waits here instead of vanishing as it is
+  // typed into.
+  const [pending, setPending] = createSignal<ConfigEntry[]>([]);
+  const rows = createMemo(() => [...saved(), ...pending()]);
+
+  const commit = (index: number, next: ConfigEntry) => {
+    const count = saved().length;
+    if (index < count) {
+      const draft = saved().map((entry, i) => (i === index ? next : entry));
+      // Renaming a row to nothing would silently drop it; keep it pending.
+      if (!next.key.trim()) {
+        setPending((current) => [...current, next]);
+        setConfigEntries(props.table, props.field, draft.filter((_, i) => i !== index));
+        return;
+      }
+      setConfigEntries(props.table, props.field, draft);
+      return;
+    }
+    const at = index - count;
+    if (next.key.trim()) {
+      setPending((current) => current.filter((_, i) => i !== at));
+      setConfigEntries(props.table, props.field, [...saved(), next]);
+      return;
+    }
+    setPending((current) => current.map((row, i) => (i === at ? next : row)));
+  };
+
+  const remove = (index: number) => {
+    const count = saved().length;
+    if (index < count) setConfigEntries(props.table, props.field, saved().filter((_, i) => i !== index));
+    else setPending((current) => current.filter((_, i) => i !== index - count));
+  };
+
+  return (
+    <Card>
+      <CardHeader title={props.title} hint={props.hint} />
+      <div class="space-y-3 px-4 py-4">
+        <Show
+          when={rows().length > 0}
+          fallback={<p class="text-xs leading-relaxed text-muted">{props.empty}</p>}
+        >
+          <For each={rows()}>
+            {(row, index) => (
+              <div class="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                <Labelled label="key">
+                  <TextInput
+                    mono
+                    value={row.key}
+                    placeholder={props.keyPlaceholder}
+                    onInput={(value) => commit(index(), { ...row, key: value })}
+                  />
+                </Labelled>
+                <Labelled label="value" hint={index() === 0 ? "$VAR reads the environment" : undefined}>
+                  <TextInput
+                    mono
+                    value={row.value}
+                    placeholder={props.valuePlaceholder}
+                    onInput={(value) => commit(index(), { ...row, value })}
+                  />
+                </Labelled>
+                <Button variant="ghost" size="sm" onClick={() => remove(index())}>
+                  Remove
+                </Button>
+              </div>
+            )}
+          </For>
+        </Show>
+
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setPending((current) => [...current, { key: "", value: "" }])}
+        >
+          {props.addLabel}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 export function ConfigPage() {
   const [draft, setDraft] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -1043,9 +1395,18 @@ export function ConfigPage() {
                             fallback={
                               <div class="sm:col-span-2">
                                 <Switch
-                                  checked={configValue(fieldSection(section(), field), field.key) === true}
+                                  checked={switchIsOn(fieldSection(section(), field), field)}
                                   label={field.label}
-                                  onChange={(value) => setConfigValue(fieldSection(section(), field), field.key, value)}
+                                  onChange={(value) =>
+                                    setConfigValue(
+                                      fieldSection(section(), field),
+                                      field.key,
+                                      // Back to the server's own default writes
+                                      // nothing, so the file only records what
+                                      // this app actually changed.
+                                      field.defaultOn && value ? undefined : value,
+                                    )
+                                  }
                                 />
                                 <Show when={field.hint}>
                                   <p class="mt-1 text-[0.6875rem] leading-relaxed text-faint">{field.hint}</p>
@@ -1054,6 +1415,9 @@ export function ConfigPage() {
                             }
                           >
                             <Labelled label={field.label} hint={field.hint}>
+                              <Show
+                                when={field.kind === "list"}
+                                fallback={
                               <Show
                                 when={
                                   (section().id === "ai" && field.key === "access") ||
@@ -1123,6 +1487,14 @@ export function ConfigPage() {
                                   fallback={section().id === "ai" ? "authenticated" : "private"}
                                 />
                               </Show>
+                                }
+                              >
+                                <ListField
+                                  table={fieldSection(section(), field)}
+                                  field={field.key}
+                                  placeholder={field.placeholder}
+                                />
+                              </Show>
                             </Labelled>
                           </Show>
                         )}
@@ -1135,6 +1507,29 @@ export function ConfigPage() {
 
             <Show when={section().id === "queues"}>
               <SubscriptionsCard />
+            </Show>
+
+            <Show when={section().id === "observability" && configValue("observability", "enabled") === true}>
+              <EntriesCard
+                title="Resource attributes"
+                hint="Attached to every span and metric this service reports, beside its name and version."
+                table="observability"
+                field="resource_attributes"
+                keyPlaceholder="region"
+                valuePlaceholder="eu-west-1"
+                empty="None. Add one where a backend needs to tell this deployment apart from another running the same build — region, cluster, tenant."
+                addLabel="Add attribute"
+              />
+              <EntriesCard
+                title="Export headers"
+                hint="Sent with every export request. This is where a vendor's ingest key goes — write it as $VAR so the key itself stays out of the file."
+                table="observability.otlp"
+                field="headers"
+                keyPlaceholder="authorization"
+                valuePlaceholder="$OTEL_TOKEN"
+                empty="None. A collector on your own network usually needs none; a hosted backend needs its API key."
+                addLabel="Add header"
+              />
             </Show>
 
             <Show when={section().id === "application"}>

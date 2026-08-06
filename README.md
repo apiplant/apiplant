@@ -74,7 +74,7 @@ next to it:
 
 ```bash
 # Linux x86_64 — swap the target triple for yours.
-curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.6.0-x86_64-unknown-linux-gnu.tar.gz \
+curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.7.0-x86_64-unknown-linux-gnu.tar.gz \
   | tar xz --strip-components=1
 sudo mv apiplant /usr/local/bin/
 ```
@@ -82,10 +82,10 @@ sudo mv apiplant /usr/local/bin/
 Or run the container image, which is published to the GitHub registry for
 `linux/amd64` and `linux/arm64`:
 
-The image tags carry no `v` prefix — `0.6.0`, `0.6`, or `latest`:
+The image tags carry no `v` prefix — `0.7.0`, `0.7`, or `latest`:
 
 ```bash
-docker pull ghcr.io/apiplant/apiplant:0.6.0   # or :0.6, or :latest
+docker pull ghcr.io/apiplant/apiplant:0.7.0   # or :0.7, or :latest
 docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 
@@ -114,6 +114,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Resources](docs/resources.md) | defining resources, field types & options, migrations |
 | [Permissions](docs/permissions.md) | access levels, per-action policies, ownership, org roles |
 | [Rate limiting](docs/configuration.md#rate_limit) | `[rate_limit]` app-wide, per resource action, per function |
+| [Observability](docs/configuration.md#observability) | `[observability]` — OpenTelemetry traces & metrics, JSON logs, OTLP export |
 | [Seed data](docs/seed.md) | `seed/` — the rows an app starts with, in TOML or CSV |
 | [Multitenancy](docs/multitenancy.md) | organisations, memberships, automatic per-tenant isolation |
 | [Relationships](docs/relationships.md) | references, `has_many`, expansion, filtering, `on_delete` |
@@ -333,6 +334,39 @@ behind a proxy, set `trust_proxy_headers = true` and have the proxy overwrite
 `X-Forwarded-For`. Answers carry `X-RateLimit-Limit`, `-Remaining` and `-Reset`;
 a refusal is `429` with `Retry-After`. See
 [Configuration → `[rate_limit]`](docs/configuration.md#rate_limit).
+
+## Observability
+
+Off until asked for, then one line gives every request a span, structured logs
+that carry its trace id, and an `X-Trace-Id` the caller can quote back:
+
+```toml
+# main.toml
+[observability]
+enabled = true
+
+[observability.logs]
+format = "json"
+```
+
+Point it at any OTLP collector — Jaeger, Tempo, Honeycomb, Datadog, Grafana
+Cloud, the OpenTelemetry Collector — and the traces and metrics leave the
+process:
+
+```toml
+[observability.otlp]
+endpoint = "http://otel-collector:4318"
+headers  = { authorization = "$OTEL_TOKEN" }
+```
+
+Spans follow the OpenTelemetry HTTP conventions, continue an incoming
+`traceparent` so a trace does not stop at this service, and name what went
+wrong when something does: a 500 is marked `ERROR` and carries an `error.type`
+of `database`, `function_panic`, `hook_fault` and so on. Metrics are
+`http.server.request.duration` and `http.server.active_requests`, labelled by a
+route *template* (`/products/{id}`) rather than a path, so a busy table does not
+become a time series per row. See
+[Configuration → `[observability]`](docs/configuration.md#observability).
 
 ## Multitenancy
 
