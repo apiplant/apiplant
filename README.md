@@ -29,23 +29,31 @@ $ apiplant run ./my-app
 On macOS or Linux with [Homebrew](https://brew.sh):
 
 ```bash
+brew tap apiplant/tap
 brew install apiplant/tap/apiplant
 ```
 
-On Arch Linux, from the AUR — the package installs the released binary, so it
-works on both `x86_64` and `aarch64`:
+On Arch Linux, from the pacman repository:
 
 ```bash
-paru -S apiplant-bin   # or yay, or makepkg -si
+curl -sSfL https://apiplant.github.io/pacman/apiplant.gpg -o /tmp/apiplant.gpg
+keyid=$(gpg --show-keys --with-colons /tmp/apiplant.gpg | awk -F: '/^pub:/ { print $5; exit }')
+sudo pacman-key --add /tmp/apiplant.gpg
+sudo pacman-key --finger "$keyid"
+sudo pacman-key --lsign-key "$keyid"
+printf '\n[apiplant]\nSigLevel = Required DatabaseOptional\nServer = https://apiplant.github.io/pacman/$arch\n' \
+  | sudo tee -a /etc/pacman.conf > /dev/null
+
+sudo pacman -Sy apiplant-bin
 ```
 
 On Debian or Ubuntu, from the apt repository — `amd64` and `arm64`, and it
 depends on nothing:
 
 ```bash
-curl -sSfL https://apiplant.github.io/apt/apiplant-archive-keyring.gpg \
+curl -sSfL https://apt.apiplant.com/apiplant-archive-keyring.gpg \
   | sudo tee /usr/share/keyrings/apiplant.gpg > /dev/null
-echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apiplant.github.io/apt stable main" \
+echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apt.apiplant.com stable main" \
   | sudo tee /etc/apt/sources.list.d/apiplant.list > /dev/null
 
 sudo apt update && sudo apt install apiplant
@@ -57,11 +65,11 @@ distribution upgrade.
 
 Or take the `.deb` from a
 [release](https://github.com/apiplant/apiplant/releases) without adding the
-repository, if you would rather pin a version:
+repository, if you would rather pin a version or cannot use the apt repository:
 
 ```bash
-curl -sSfLO https://github.com/apiplant/apiplant/releases/latest/download/apiplant_0.6.1-1_amd64.deb
-sudo dpkg -i apiplant_0.6.1-1_amd64.deb
+curl -sSfLO https://github.com/apiplant/apiplant/releases/latest/download/apiplant_0.7.0-1_amd64.deb
+sudo dpkg -i apiplant_0.7.0-1_amd64.deb
 ```
 
 Either way it needs glibc 2.35 — Debian 12 (bookworm) or newer, Ubuntu 22.04 or

@@ -394,23 +394,79 @@ function Install() {
     <section id="install" class="mx-auto w-full max-w-6xl px-5 py-12 sm:py-16">
       <h2 class="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Install</h2>
       <p class="mt-3 max-w-2xl leading-relaxed text-muted">
-        A release is one executable with no runtime to install beside it. Take the prebuilt
-        binary, or run the image — building from source is the slowest of the three.
+        Use Homebrew, pacman or apt when your platform has it. Otherwise take the prebuilt
+        binary, or run the image — building from source is the slowest path.
       </p>
 
-      {/* Three cards, but two columns at md would leave the third orphaned, so
-          it spans the row there and only breaks into thirds at lg. `min-w-0` on
-          every card because a grid item defaults to `min-width: auto` — without
-          it a long command sets the column's width instead of scrolling. */}
-      <div class="mt-8 grid gap-4 sm:mt-10 md:grid-cols-2 lg:grid-cols-3">
+      {/* `min-w-0` on every card because a grid item defaults to
+          `min-width: auto` — without it a long command sets the column's width
+          instead of scrolling. */}
+      <div class="mt-8 grid gap-4 sm:mt-10 md:grid-cols-2 xl:grid-cols-4">
         <div class="flex min-w-0 flex-col rounded-2xl border border-accent-line bg-surface p-5 sm:p-6">
           <div class="flex items-center gap-2">
             <span class="font-mono text-xs text-accent">01</span>
             <Badge tone="accent">Recommended</Badge>
           </div>
-          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">
-            Download the binary
-          </h3>
+          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Use a package manager</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">
+            The quickest path on macOS, Arch, Debian and Ubuntu.
+          </p>
+
+          <div class="mt-5 space-y-4">
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-faint">
+                macOS / Homebrew
+              </p>
+              <div class="space-y-2">
+                <CopyLine block command="brew tap apiplant/tap" />
+                <CopyLine block command="brew install apiplant/tap/apiplant" />
+              </div>
+            </div>
+
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-faint">
+                Arch Linux / pacman
+              </p>
+              <div class="space-y-2">
+                <CopyLine block command="curl -sSfL https://apiplant.github.io/pacman/apiplant.gpg -o /tmp/apiplant.gpg" />
+                <CopyLine
+                  block
+                  command={`keyid=$(gpg --show-keys --with-colons /tmp/apiplant.gpg | awk -F: '/^pub:/ { print $5; exit }') && sudo pacman-key --add /tmp/apiplant.gpg && sudo pacman-key --finger "$keyid" && sudo pacman-key --lsign-key "$keyid"`}
+                />
+                <CopyLine
+                  block
+                  command={`printf '\\n[apiplant]\\nSigLevel = Required DatabaseOptional\\nServer = https://apiplant.github.io/pacman/$arch\\n' | sudo tee -a /etc/pacman.conf > /dev/null`}
+                />
+                <CopyLine block command="sudo pacman -Sy apiplant-bin" />
+              </div>
+            </div>
+
+            <div>
+              <p class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-faint">
+                Debian / Ubuntu
+              </p>
+              <div class="space-y-2">
+                <CopyLine
+                  block
+                  command="curl -sSfL https://apt.apiplant.com/apiplant-archive-keyring.gpg | sudo tee /usr/share/keyrings/apiplant.gpg > /dev/null"
+                />
+                <CopyLine
+                  block
+                  command='echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apt.apiplant.com stable main" | sudo tee /etc/apt/sources.list.d/apiplant.list > /dev/null'
+                />
+                <CopyLine block command="sudo apt update && sudo apt install apiplant" />
+              </div>
+              <p class="mt-2 text-xs leading-relaxed text-faint">
+                Or pin a release with{" "}
+                <code class="font-mono text-[0.9em]">sudo dpkg -i apiplant_0.7.0-1_amd64.deb</code>.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6">
+          <span class="font-mono text-xs text-accent">02</span>
+          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Download the binary</h3>
           <p class="mt-2 text-sm leading-relaxed text-muted">
             Unpack it anywhere on your <code class="font-mono text-[0.9em]">PATH</code> and run it.
             Every archive ships with a matching{" "}
@@ -454,7 +510,7 @@ function Install() {
         </div>
 
         <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6">
-          <span class="font-mono text-xs text-accent">02</span>
+          <span class="font-mono text-xs text-accent">03</span>
           <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Run the image</h3>
           <p class="mt-2 text-sm leading-relaxed text-muted">
             Multi-arch (amd64 and arm64) on the GitHub registry. Mount your app directory at{" "}
@@ -476,8 +532,8 @@ function Install() {
           </p>
         </div>
 
-        <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6 md:col-span-2 lg:col-span-1">
-          <span class="font-mono text-xs text-faint">03</span>
+        <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6">
+          <span class="font-mono text-xs text-faint">04</span>
           <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Build from source</h3>
           <p class="mt-2 text-sm leading-relaxed text-muted">
             The last resort: this compiles the whole dependency tree. Worth it only if

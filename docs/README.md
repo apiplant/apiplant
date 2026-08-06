@@ -34,6 +34,46 @@ lifecycle hooks, introducing one concept at a time.
 
 ## Install
 
+On macOS with [Homebrew](https://brew.sh):
+
+```bash
+brew tap apiplant/tap
+brew install apiplant/tap/apiplant
+```
+
+On Arch Linux, from the pacman repository:
+
+```bash
+curl -sSfL https://apiplant.github.io/pacman/apiplant.gpg -o /tmp/apiplant.gpg
+keyid=$(gpg --show-keys --with-colons /tmp/apiplant.gpg | awk -F: '/^pub:/ { print $5; exit }')
+sudo pacman-key --add /tmp/apiplant.gpg
+sudo pacman-key --finger "$keyid"
+sudo pacman-key --lsign-key "$keyid"
+printf '\n[apiplant]\nSigLevel = Required DatabaseOptional\nServer = https://apiplant.github.io/pacman/$arch\n' \
+  | sudo tee -a /etc/pacman.conf > /dev/null
+
+sudo pacman -Sy apiplant-bin
+```
+
+On Debian or Ubuntu, from the apt repository:
+
+```bash
+curl -sSfL https://apt.apiplant.com/apiplant-archive-keyring.gpg \
+  | sudo tee /usr/share/keyrings/apiplant.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apt.apiplant.com stable main" \
+  | sudo tee /etc/apt/sources.list.d/apiplant.list > /dev/null
+
+sudo apt update && sudo apt install apiplant
+```
+
+`apt upgrade` then picks up future releases. If you would rather pin a version,
+or cannot use the repository, install a release package directly:
+
+```bash
+curl -sSfLO https://github.com/apiplant/apiplant/releases/latest/download/apiplant_0.7.0-1_amd64.deb
+sudo dpkg -i apiplant_0.7.0-1_amd64.deb
+```
+
 Prebuilt binaries for Linux (x86_64, aarch64) and macOS (Apple silicon) are
 attached to every [release](https://github.com/apiplant/apiplant/releases), each
 with a `.sha256` next to it:

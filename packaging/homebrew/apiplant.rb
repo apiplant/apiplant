@@ -9,8 +9,9 @@ class Apiplant < Formula
   license any_of: ["MIT", "Apache-2.0"]
 
   # There are no bottles: the release archives *are* the binaries, so the
-  # formula only unpacks what the workflow already built for each platform.
-  # macOS x86_64 is absent because the release does not build it.
+  # formula only unpacks what the tagged workflow already built for each
+  # platform. packaging/local-release.sh can add extra host-built assets later,
+  # but this template stays aligned with the CI release matrix.
   on_macos do
     on_arm do
       url "https://github.com/apiplant/apiplant/releases/download/v@VERSION@/apiplant-v@VERSION@-aarch64-apple-darwin.tar.gz"

@@ -1,29 +1,58 @@
 # Packaging
 
-Four package definitions live here. The first three are templates: the
-`homebrew`, `aur` and `debian` jobs in
+Four package definitions live here. The `homebrew`, `pacman` and `debian` jobs
+in
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) substitute
 the `@VERSION@`, `@SHA_*@` and `@ARCH@` placeholders with the tag's version and
 the checksums of the archives that release just built, then publish the result.
-None of them compiles anything — they all install the binaries the `binaries`
-job already produced, which is what keeps the packages and the release
-byte-identical.
+None of the definitions compiles the project from source — they all install the
+binaries the `binaries` job already produced, which is what keeps the packages
+and the release byte-identical. The pacman job is the exception in shape, not
+in content: it consumes the same `aur/PKGBUILD` to repackage those archives as
+native Arch packages and publish a repository database.
 
 | File | Publishes to | Installs |
 | --- | --- | --- |
 | `homebrew/apiplant.rb` | `apiplant/homebrew-tap`, as `Formula/apiplant.rb` | macOS arm64, Linux x86_64 and aarch64 |
-| `aur/PKGBUILD` | `aur.archlinux.org/apiplant-bin.git` | Linux x86_64 and aarch64 |
+| `aur/PKGBUILD` | kept as the source for pacman packaging; AUR publishing paused | Linux x86_64 and aarch64 |
 | `debian/control` | the release itself, as `.deb` assets | Debian/Ubuntu amd64 and arm64 |
-| `apt/apt-ftparchive.conf` | `apiplant/apt`, served by GitHub Pages | the same `.deb`s, over `apt install` |
+| `apt/apt-ftparchive.conf` | `apiplant/apt`, served at `apt.apiplant.com` | the same `.deb`s, over `apt install` |
 
-The Homebrew and AUR jobs run *after* `release`, because the formula and the
-PKGBUILD reference the release assets by URL and would checksum a 404
-otherwise. Each is guarded on its credential being present, so a fork — or this
-repository before the setup below is done — skips it rather than failing the
-release. The Debian job is the other way round: the `.deb`s carry the binary
-rather than pointing at it, so they are built first and `release` attaches them
-alongside the archives. It needs no credential and always runs. The `apt` job
-then takes those same `.deb`s and folds them into the repository.
+Arch has two distribution paths from the same manifest. The AUR entry is just
+the PKGBUILD; the pacman repository uses that same PKGBUILD to build signed
+`.pkg.tar.zst` archives and then indexes them with `repo-add`. There is no
+second package manifest to keep in sync.
+
+The Homebrew and pacman jobs run *after* `release`, because the formula, the
+PKGBUILD and the pacman package build all reference the release assets by URL
+and would checksum a 404 otherwise. Each publish job is guarded on its
+credential being present, so a fork — or this repository before the setup below
+is done — skips it rather than failing the release. The Debian job is the other
+way round: the `.deb`s carry the binary rather than pointing at it, so they are
+built first and `release` attaches them alongside the archives. It needs no
+credential and always runs. The `apt` job then takes those same `.deb`s and
+folds them into the repository.
+
+For one-off builds outside CI, run [`local-release.sh`](local-release.sh). It
+compiles apiplant for the host platform, writes release-shaped artifacts into
+`dist/local-release/`, uploads any missing assets to the tagged GitHub release,
+and, when the matching credentials are present, syncs the package repository
+that serves that platform:
+
+```bash
+./packaging/local-release.sh
+```
+
+On macOS it builds the release archive for the host CPU and, if the tag exists
+and `HOMEBREW_TAP_TOKEN` is set, uploads the archive and rewrites the tap
+formula from the release's available assets — which is how an extra platform
+such as macOS Intel can be added without waiting for CI support.
+
+On Linux x86_64 and aarch64 it also builds the `.deb` and pacman package for
+the host architecture, uploads the `.deb` to the GitHub release, and, if the
+version is not already present, updates `apt.apiplant.com` and
+`apiplant.github.io/pacman` using `APT_REPO_TOKEN` / `APT_GPG_PRIVATE_KEY` and
+`PACMAN_REPO_TOKEN` / `PACMAN_GPG_PRIVATE_KEY`.
 
 ## One-time setup
 
@@ -35,20 +64,77 @@ scoped to that one repository with `Contents: read and write`, or a GitHub App
 installation token. The default `GITHUB_TOKEN` cannot be used: it is scoped to
 this repository only.
 
-**AUR.** Register an account on [aur.archlinux.org](https://aur.archlinux.org),
-add an SSH public key to it, and submit the package once by hand:
+**AUR.** Publishing is paused. The AUR is currently rejecting package updates,
+so the workflow no longer pushes `PKGBUILD` or `.SRCINFO` there. Keep
+`aur/PKGBUILD` anyway: the pacman packaging flow and the local release script
+both consume it.
 
-```bash
-git clone ssh://aur@aur.archlinux.org/apiplant-bin.git
-cd apiplant-bin
-# render PKGBUILD for the current release, then:
-makepkg --printsrcinfo > .SRCINFO
-git add PKGBUILD .SRCINFO && git commit -m "apiplant 0.6.1" && git push
+**pacman repo.** Create a public repository `apiplant/pacman` and serve it as
+static files — GitHub Pages is enough. The workflow pushes to it when the
+repository secret `PACMAN_REPO_TOKEN` is present. A conventional layout is one
+directory per architecture:
+
+```text
+pacman/
+├── x86_64/
+│   ├── apiplant.db.tar.zst
+│   ├── apiplant.db.tar.zst.sig
+│   ├── apiplant.files.tar.zst
+│   ├── apiplant.files.tar.zst.sig
+│   ├── apiplant-bin-0.7.0-1-x86_64.pkg.tar.zst
+│   └── apiplant-bin-0.7.0-1-x86_64.pkg.tar.zst.sig
+└── aarch64/
+    ├── apiplant.db.tar.zst
+    ├── apiplant.db.tar.zst.sig
+    ├── apiplant.files.tar.zst
+    ├── apiplant.files.tar.zst.sig
+    ├── apiplant-bin-0.7.0-1-aarch64.pkg.tar.zst
+    └── apiplant-bin-0.7.0-1-aarch64.pkg.tar.zst.sig
 ```
 
-The first push is what creates the package; after that the workflow keeps it up
-to date. Set the repository secret `AUR_SSH_KEY` to the matching **private** key
-(the whole PEM, including the header and footer lines).
+The package itself still comes from `aur/PKGBUILD`; the repository is the
+published result of building it once per architecture and then running
+`repo-add` over the output directory. The workflow does both automatically:
+
+```bash
+# build natively on x86_64 and aarch64 runners
+makepkg --cleanbuild --clean --force --nodeps
+
+# then, in the publish job
+gpg --batch --yes --detach-sign --local-user "$keyid" repo/$arch/*.pkg.tar.zst
+repo-add --include-sigs repo/$arch/apiplant.db.tar.zst repo/$arch/*.pkg.tar.zst
+gpg --batch --yes --detach-sign --local-user "$keyid" repo/$arch/apiplant.db
+gpg --batch --yes --detach-sign --local-user "$keyid" repo/$arch/apiplant.files
+```
+
+Set two secrets for it: `PACMAN_REPO_TOKEN` and `PACMAN_GPG_PRIVATE_KEY`. If
+the key has a passphrase, set `PACMAN_GPG_PASSPHRASE` too. If the token is set
+without the key, the job fails loudly rather than publishing an unsigned
+repository.
+
+The job exports the signing key's **public** half as `apiplant.gpg`. Users add
+it to pacman's keyring once, then locally sign it:
+
+```bash
+curl -sSfL https://apiplant.github.io/pacman/apiplant.gpg -o /tmp/apiplant.gpg
+keyid=$(gpg --show-keys --with-colons /tmp/apiplant.gpg | awk -F: '/^pub:/ { print $5; exit }')
+sudo pacman-key --add /tmp/apiplant.gpg
+sudo pacman-key --finger "$keyid"
+sudo pacman-key --lsign-key "$keyid"
+```
+
+Then they add the repository to `pacman.conf`:
+
+```bash
+printf '\n[apiplant]\nSigLevel = Required DatabaseOptional\nServer = https://apiplant.github.io/pacman/$arch\n' \
+  | sudo tee -a /etc/pacman.conf > /dev/null
+```
+
+With that in place, installation is the ordinary pacman flow:
+
+```bash
+sudo pacman -Sy apiplant-bin
+```
 
 **Debian.** Nothing to set up — there is no repository to push to and no
 credential to hold. The packages are release assets, installed with `dpkg -i`.
@@ -57,10 +143,9 @@ credential to hold. The packages are release assets, installed with `dpkg -i`.
 
 1. Create a public repository `apiplant/apt` and enable GitHub Pages on it
    (Settings → Pages → deploy from branch, root of `main`). It can be empty;
-   the job creates `pool/` and `dists/`. The published URL becomes
-   `https://apiplant.github.io/apt` — put a `CNAME` file in the repository if
-   you later want `apt.apiplant.com`, and change the URL in the top-level
-   README to match.
+   the job creates `pool/` and `dists/`. Keep a `CNAME` file with
+   `apt.apiplant.com` in that repository, so GitHub Pages serves the archive at
+   `https://apt.apiplant.com`.
 2. Generate a signing key and keep it. It signs every release from here on, and
    replacing it means every user re-installing the keyring, so back the private
    key up somewhere that is not a CI secret:
@@ -86,9 +171,9 @@ because an unsigned `Release` is one apt refuses to use.
 The `signed-by` form, which is what the top-level README documents:
 
 ```bash
-curl -sSfL https://apiplant.github.io/apt/apiplant-archive-keyring.gpg \
+curl -sSfL https://apt.apiplant.com/apiplant-archive-keyring.gpg \
   | sudo tee /usr/share/keyrings/apiplant.gpg > /dev/null
-echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apiplant.github.io/apt stable main" \
+echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apt.apiplant.com stable main" \
   | sudo tee /etc/apt/sources.list.d/apiplant.list > /dev/null
 sudo apt update && sudo apt install apiplant
 ```
@@ -104,7 +189,7 @@ apt is heading and keeps the key with the source that uses it:
 ```
 # /etc/apt/sources.list.d/apiplant.sources
 Types: deb
-URIs: https://apiplant.github.io/apt
+URIs: https://apt.apiplant.com
 Suites: stable
 Components: main
 Signed-By: /usr/share/keyrings/apiplant.gpg
@@ -153,13 +238,14 @@ and leave only `dists/` on Pages.
 
 ## Changing a package
 
-Edit the template here, never the copy in the tap or the AUR repository — the
-next release overwrites those. To check a PKGBUILD change without cutting a
-release, render it against a version that is already published and build it:
+Edit the template here, never the copy in the tap — the next release
+overwrites it — and treat `aur/PKGBUILD` as the shared source for pacman too.
+To check an Arch packaging change without cutting a release, render it against
+a version that is already published and build it:
 
 ```bash
-sed -e 's/@VERSION@/0.6.1/g' \
-    -e "s/@SHA_LINUX_X86_64@/$(curl -sSfL https://github.com/apiplant/apiplant/releases/download/v0.6.1/apiplant-v0.6.1-x86_64-unknown-linux-gnu.tar.gz | sha256sum | cut -d' ' -f1)/" \
+sed -e 's/@VERSION@/0.7.0/g' \
+    -e "s/@SHA_LINUX_X86_64@/$(curl -sSfL https://github.com/apiplant/apiplant/releases/download/v0.7.0/apiplant-v0.7.0-x86_64-unknown-linux-gnu.tar.gz | sha256sum | cut -d' ' -f1)/" \
     -e 's/@SHA_LINUX_ARM64@/SKIP/' \
     aur/PKGBUILD > /tmp/PKGBUILD
 (cd /tmp && makepkg -f)

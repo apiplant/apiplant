@@ -371,11 +371,11 @@ jobs:
             with `curl`, clear the quarantine flag before running it:
             `xattr -d com.apple.quarantine ./apiplant`.
 
-  # Both package definitions point at the release archives by URL, so they can
-  # only be published once the release exists — hence `needs: release` rather
-  # than running alongside it. Each job is guarded on its credential: a fork,
-  # or this repository before the secrets are set, skips it instead of failing
-  # the run.
+  # The Homebrew formula, the AUR PKGBUILD and the pacman packages all point at
+  # the release archives by URL, so they can only be published once the
+  # release exists — hence `needs: release` rather than running alongside it.
+  # Each publish job is guarded on its credential: a fork, or this repository
+  # before the secrets are set, skips it instead of failing the run.
   homebrew:
     name: homebrew tap
     needs: release
@@ -431,6 +431,74 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "apiplant $version"
           git push
+
+  # Arch packaging has two outputs from the same PKGBUILD: the AUR metadata,
+  # and a pacman repository of built packages. The packages themselves need one
+  # native build per architecture so the archive metadata matches the target.
+  pacman-packages:
+    name: pacman package (${{ matrix.arch }})
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    container: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-22.04
+          - arch: aarch64
+            os: ubuntu-22.04-arm
+    steps:
+      - name: Install the packaging tools
+        run: pacman -Sy --noconfirm --needed ca-certificates
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Render the PKGBUILD
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sha() { sha256sum "dist/apiplant-${GITHUB_REF_NAME}-$1.tar.gz" | cut -d' ' -f1; }
+
+          mkdir -p /tmp/pkg
+          sed \
+            -e "s/@VERSION@/$version/g" \
+            -e "s/@SHA_LINUX_X86_64@/$(sha x86_64-unknown-linux-gnu)/" \
+            -e "s/@SHA_LINUX_ARM64@/$(sha aarch64-unknown-linux-gnu)/" \
+            packaging/aur/PKGBUILD > /tmp/pkg/PKGBUILD
+
+          if grep -qE '@[A-Z_]+@' /tmp/pkg/PKGBUILD; then
+            echo "::error::unsubstituted placeholder in the PKGBUILD" >&2
+            grep -nE '@[A-Z_]+@' /tmp/pkg/PKGBUILD >&2
+            exit 1
+          fi
+
+      - name: Build the package
+        run: |
+          useradd -m builder
+          chown -R builder /tmp/pkg
+          su builder -c 'cd /tmp/pkg && makepkg --cleanbuild --clean --force --nodeps'
+
+          pkg=$(echo /tmp/pkg/*.pkg.tar.zst)
+          case "$pkg" in
+            *"-${{ matrix.arch }}.pkg.tar.zst") ;;
+            *)
+              echo "::error::package archive does not match ${{ matrix.arch }}: $pkg" >&2
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pacman-package-${{ matrix.arch }}
+          path: /tmp/pkg/*.pkg.tar.zst
+          if-no-files-found: error
 
   # The apt repository is cumulative: the whole pool is cloned, the new
   # packages are added to it, and every index is regenerated over the result.
@@ -560,75 +628,98 @@ jobs:
           git commit -m "apiplant $version"
           git push
 
-  aur:
-    name: aur package
-    needs: release
+  # The pacman repository is cumulative too, but its database only references
+  # the newest build of each package name. New package files are copied into
+  # the architecture directory, signed, and added to the repository database.
+  pacman:
+    name: pacman repository
+    needs: [release, pacman-packages]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    # makepkg only exists on Arch, and `--printsrcinfo` is what keeps .SRCINFO
-    # honest — writing it by hand is how AUR packages drift from their PKGBUILD.
     container: archlinux:base-devel
     env:
-      AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+      PACMAN_REPO_TOKEN: ${{ secrets.PACMAN_REPO_TOKEN }}
     steps:
-      - name: Install git and openssh
-        run: pacman -Sy --noconfirm --needed git openssh
-
-      - uses: actions/checkout@v4
+      - name: Install the archive tools
+        run: pacman -Sy --noconfirm --needed git gnupg ca-certificates
 
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: binary-*
-          merge-multiple: true
+          pattern: pacman-package-*
+          merge-multiple: false
 
-      - name: Render the PKGBUILD
-        if: env.AUR_SSH_KEY != ''
+      - name: Import the signing key
+        if: env.PACMAN_REPO_TOKEN != ''
+        env:
+          GPG_KEY: ${{ secrets.PACMAN_GPG_PRIVATE_KEY }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          sha() { sha256sum "dist/apiplant-${GITHUB_REF_NAME}-$1.tar.gz" | cut -d' ' -f1; }
-
-          mkdir -p /tmp/pkg
-          sed \
-            -e "s/@VERSION@/$version/g" \
-            -e "s/@SHA_LINUX_X86_64@/$(sha x86_64-unknown-linux-gnu)/" \
-            -e "s/@SHA_LINUX_ARM64@/$(sha aarch64-unknown-linux-gnu)/" \
-            packaging/aur/PKGBUILD > /tmp/pkg/PKGBUILD
-
-          if grep -qE '@[A-Z_]+@' /tmp/pkg/PKGBUILD; then
-            echo "::error::unsubstituted placeholder in the PKGBUILD" >&2
-            grep -nE '@[A-Z_]+@' /tmp/pkg/PKGBUILD >&2
+          if [ -z "$GPG_KEY" ]; then
+            echo "::error::PACMAN_REPO_TOKEN is set but PACMAN_GPG_PRIVATE_KEY is not" >&2
             exit 1
           fi
+          printf '%s\n' "$GPG_KEY" | gpg --batch --import
+          gpg --list-secret-keys --with-colons \
+            | awk -F: '/^sec:/ { print $5; exit }' > /tmp/keyid
+          test -s /tmp/keyid
 
-      # makepkg refuses to run as root even to print .SRCINFO, so it runs as an
-      # unprivileged user over the same directory.
-      - name: Generate .SRCINFO
-        if: env.AUR_SSH_KEY != ''
+      - name: Add the packages to the pool
+        if: env.PACMAN_REPO_TOKEN != ''
         run: |
-          useradd -m builder
-          chown -R builder /tmp/pkg
-          su builder -c 'cd /tmp/pkg && makepkg --printsrcinfo > .SRCINFO'
-          grep -q '^pkgbase = apiplant-bin' /tmp/pkg/.SRCINFO
+          git clone --depth 1 \
+            "https://x-access-token:${PACMAN_REPO_TOKEN}@github.com/apiplant/pacman.git" repo
 
-      - name: Push to the AUR
-        if: env.AUR_SSH_KEY != ''
+          mkdir -p repo/x86_64 repo/aarch64
+          cp dist/pacman-package-x86_64/*.pkg.tar.zst repo/x86_64/
+          cp dist/pacman-package-aarch64/*.pkg.tar.zst repo/aarch64/
+
+      - name: Sign, index and publish
+        if: env.PACMAN_REPO_TOKEN != ''
+        working-directory: repo
+        env:
+          GPG_PASSPHRASE: ${{ secrets.PACMAN_GPG_PASSPHRASE }}
         run: |
           version="${GITHUB_REF_NAME#v}"
+          keyid=$(cat /tmp/keyid)
 
-          mkdir -p ~/.ssh
-          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
-          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes"
+          set --
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            set -- --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE"
+          fi
 
-          git clone ssh://aur@aur.archlinux.org/apiplant-bin.git aur
-          cp /tmp/pkg/PKGBUILD /tmp/pkg/.SRCINFO aur/
+          sign() {
+            rm -f "$1.sig"
+            if [ -n "$GPG_PASSPHRASE" ]; then
+              gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+                --local-user "$keyid" --detach-sign "$1"
+            else
+              gpg --batch --yes --local-user "$keyid" --detach-sign "$1"
+            fi
+          }
 
-          cd aur
-          git config user.name "Federico Rampazzo"
-          git config user.email "federico@apiplant.com"
-          git add PKGBUILD .SRCINFO
+          for arch in x86_64 aarch64; do
+            pkgs=$(printf '%s\n' "$PWD/$arch"/*.pkg.tar.zst)
+            for pkg in $pkgs; do
+              sign "$pkg"
+            done
+
+            repo-add --include-sigs "$arch/apiplant.db.tar.zst" $pkgs
+            sign "$arch/apiplant.db"
+            sign "$arch/apiplant.files"
+          done
+
+          gpg --armor --export "$keyid" > apiplant.gpg
+          touch .nojekyll
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
           git diff --cached --quiet && exit 0
           git commit -m "apiplant $version"
           git push
+
+  # AUR publishing is paused for now: the AUR is rejecting package updates
+  # while under attack. Keep packaging/aur/PKGBUILD in-tree because the pacman
+  # packaging flow consumes the same manifest, but do not push to the AUR.
+  # aur:
+  #   ...
