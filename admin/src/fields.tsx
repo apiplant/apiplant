@@ -11,7 +11,16 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Button, Field, Spinner, Toggle } from "./ui";
 import { MarkupEditor } from "./markup";
-import { api, asRecord, asRecords, reportError, resourceByName, session, uploadFile } from "./store";
+import {
+  api,
+  asRecord,
+  asRecords,
+  includeOrgContext,
+  reportError,
+  resourceByName,
+  session,
+  uploadFile,
+} from "./store";
 import type { ApiRecord, FieldManifest, JsonValue, ResourceManifest } from "./types";
 
 /** A form's working copy: every value held as the string (or boolean) the
@@ -524,7 +533,7 @@ export function ReferencePicker(props: {
     try {
       const record = asRecord(
         await api(`/${target.name}/${encodeURIComponent(current)}`, {
-          org: target.scope === "organization",
+          org: includeOrgContext(target, "read"),
         }),
       );
       setSelected(record);
@@ -554,7 +563,7 @@ export function ReferencePicker(props: {
         setResults(
           asRecords(
             await api(`/${target.name}?${params.toString()}`, {
-              org: target.scope === "organization",
+              org: includeOrgContext(target, "list"),
             }),
           ),
         );

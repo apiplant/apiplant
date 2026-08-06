@@ -40,6 +40,7 @@ import {
   asRecords,
   can,
   hasRole,
+  includeOrgContext,
   navigate,
   notify,
   reportError,
@@ -54,33 +55,6 @@ const PAGE_SIZE = 25;
  *  "Acme Ltd" where the column holds a uuid. */
 function expandParam(resource: ResourceManifest): string {
   return resource.relations.map((relation) => relation.relation).join(",");
-}
-
-/**
- * Whether this request should carry `X-Organization`.
- *
- * Always, for an org-scoped resource: the header is what selects the tenant.
- *
- * On a *global* resource there is no tenant to select, but a policy may still
- * be answered against the caller's organisation — `role:<name>` asks whether
- * you hold that role in the one you are acting in, and cannot be answered
- * without knowing which. `requires_org` on the manifest is the server's own
- * verdict on that, so the two sides cannot drift; deriving it again from the
- * policy string here is how they would.
- *
- * Then one case the flag does not cover, because it is about widening rather
- * than permitting: under `owner`, an admin is shown the whole organisation's
- * rows instead of only their own, which the server can only do when it knows
- * which organisation that is.
- */
-function includeOrgContext(
-  resource: ResourceManifest,
-  action: "list" | "read" | "create" | "update" | "delete",
-): boolean {
-  if (resource.scope === "organization") return true;
-  if (!session.organizationId) return false;
-  const policy = resource.permissions[action];
-  return policy.requires_org || (hasRole("admin") && policy.value === "owner");
 }
 
 // --- list ------------------------------------------------------------------
@@ -836,7 +810,9 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
       return asRecords(
         await api(
           `/${key.parentName}/${encodeURIComponent(key.parent)}/${child.name}?${params.toString()}`,
-          { org: child.scope === "organization" },
+          // The nested endpoint authorizes the *child*'s list policy, so the
+          // header it needs is the child's, not the parent's.
+          { org: includeOrgContext(child, "list") },
         ),
       );
     },

@@ -1,0 +1,24 @@
+# Both organisations have points in Bologna. `/api/municipality/{bologna}/
+# collection_point` is one URL that answers with two different lists, depending
+# on the organisation the caller is acting in.
+
+[[row]]
+id = "acme-porta-mazzini"
+organization_id = "acme"
+label = "Porta Mazzini"
+municipality_id = "bologna"
+active = true
+
+[[row]]
+id = "acme-via-emilia"
+organization_id = "acme"
+label = "Via Emilia"
+municipality_id = "modena"
+active = false
+
+[[row]]
+id = "globex-piazza-verdi"
+organization_id = "globex"
+label = "Piazza Verdi"
+municipality_id = "bologna"
+active = true

@@ -396,6 +396,24 @@ type = "string"
     assert_eq!(nested_resp.status().as_u16(), 200);
     assert_eq!(read_json(nested_resp).await.as_array().unwrap().len(), 1);
 
+    // A nested collection is the flat list with one more filter, so `?expand=`
+    // has to mean the same thing there — the admin's related lists ask for it.
+    let nested_expand_resp = test::call_service(
+        &app,
+        bearer(
+            test::TestRequest::get().uri(&format!("/api/post/{post_id}/comment?expand=post,owner")),
+            &alice_token,
+        )
+        .header("x-organization", org_a_id.as_str())
+        .to_request(),
+    )
+    .await;
+    assert_eq!(nested_expand_resp.status().as_u16(), 200);
+    let nested_expanded = read_json(nested_expand_resp).await;
+    let nested_comment = &nested_expanded.as_array().unwrap()[0];
+    assert_eq!(nested_comment["post"]["id"], post_id);
+    assert_eq!(nested_comment["owner"]["id"], alice_id);
+
     let org_b_posts_resp = test::call_service(
         &app,
         bearer(

@@ -1,0 +1,26 @@
+# A shared reference table: the same list of places for everybody, so it is
+# `global` — no tenant column, no isolation, one row per municipality.
+#
+# It is the *parent* of two different nested collections, one global and one
+# org-scoped, which is the whole point of this example.
+
+[resource]
+name = "municipality"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "role:admin"      # editing the shared table is an administrator's job
+update = "role:admin"
+delete = "role:admin"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.region]
+type = "string"
+
+[fields.population]
+type = "integer"

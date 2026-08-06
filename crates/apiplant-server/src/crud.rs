@@ -725,9 +725,22 @@ pub async fn nested_list(
         Err(resp) => return resp,
     }
 
-    let rows = match state.db.list(child, &filters, &sort, limit, offset).await {
+    let result = match state.db.list(child, &filters, &sort, limit, offset).await {
         Ok(rows) => rows,
         Err(e) => return db_error(e),
+    };
+
+    // `?expand=` means the same thing here as on the flat list, and against the
+    // child's relations — the rows are the child's.
+    let relations = expand_list(&params);
+    let rows = if relations.is_empty() {
+        result
+    } else {
+        let mut rows = result.as_array().cloned().unwrap_or_default();
+        if let Err(resp) = expand_relations(&state, child, &caller, &mut rows, &relations).await {
+            return resp;
+        }
+        serde_json::Value::Array(rows)
     };
 
     match hooks::run(&state, child, HookEvent::AfterList, &hook_req, rows.clone()).await {

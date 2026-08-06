@@ -1,0 +1,28 @@
+# Org-scoped (the default — no `scope` line). Each organisation has its own
+# depots, and they are the parent of the org-scoped nested collection below.
+#
+# `municipality_id` points at the *global* table: a shared reference row is
+# perfectly allowed to be pointed at from inside a tenant.
+
+[resource]
+name = "depot"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "role:admin"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.municipality_id]
+type       = "reference"
+references = "municipality"
+required   = true
+on_delete  = "restrict"     # a municipality in use cannot be deleted
+
+[fields.capacity]
+type = "integer"

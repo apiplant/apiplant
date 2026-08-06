@@ -1,0 +1,31 @@
+# The mixed case: an org-scoped child hanging off a *global* parent —
+# `GET /api/municipality/{id}/collection_point`.
+#
+# Both organisations put collection points in the same municipality, and the
+# same URL answers differently depending on who asks, because the child's
+# tenant filter still applies. A shared parent does not make its children
+# shared.
+
+[resource]
+name = "collection_point"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "role:admin"
+
+[fields.label]
+type     = "string"
+required = true
+
+[fields.municipality_id]
+type       = "reference"
+references = "municipality"
+required   = true
+on_delete  = "restrict"
+
+[fields.active]
+type    = "boolean"
+default = true

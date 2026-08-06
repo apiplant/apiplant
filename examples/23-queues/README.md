@@ -162,3 +162,6 @@ The row is kept, with the reason. Nothing deletes a dead letter.
 [`docs/queues.md`](../../docs/queues.md) — the delivery guarantee and what it
 means for your handlers, the full `[queues]` reference, and what this is
 deliberately not.
+
+**Next:** [24 · Nested resources](../24-nested-resources) takes the nested
+collections of example 03 across the scope boundary of example 04.

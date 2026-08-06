@@ -90,4 +90,6 @@ Creating a row that points at a missing parent returns `400`.
 
 Details in [Relationships](../../docs/relationships.md).
 
-**Next:** [04 · Multitenancy](../04-multitenancy) isolates data per organisation.
+**Next:** [04 · Multitenancy](../04-multitenancy) isolates data per organisation;
+[24 · Nested resources](../24-nested-resources) then takes these nested
+collections across that boundary.

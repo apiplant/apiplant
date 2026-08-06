@@ -1,6 +1,6 @@
 # Examples
 
-Twenty-two self-contained apps, each adding one idea to the last. Every directory
+Twenty-four self-contained apps, each adding one idea to the last. Every directory
 is a complete app: point the binary at it and it runs.
 
 | # | Example | Adds |
@@ -28,6 +28,7 @@ is a complete app: point the binary at it and it runs.
 | 21 | [docker](21-docker) | shipping it: the app inside `ghcr.io/apiplant/apiplant`, a compose file, config from the environment |
 | 22 | [oauth](22-oauth) | signing in with GitHub, Google, LinkedIn and X: four `[oauth.…]` blocks, two credentials each, and a sign-in page made of links |
 | 23 | [queues](23-queues) | background work on Postgres alone: `publish` from a function, `[queues.subscribe]` to a topic, a model announcing its own writes, retries and a dead-letter |
+| 24 | [nested-resources](24-nested-resources) | `/{parent}/{id}/{child}` across scopes: a global child, an org-scoped child of a global parent, `?via=`, and why a global resource can still need `X-Organization` |
 
 ## Running one
 
@@ -127,6 +128,7 @@ loads a fixture without starting a server. See [Seed data](../docs/seed.md).
 | 21-docker | `apiplant_docker` (in its own container) |
 | 22-oauth | `apiplant_oauth` |
 | 23-queues | `apiplant_queues` |
+| 24-nested-resources | `apiplant_nested` |
 
 Separate databases keep the examples genuinely independent: example 05 redefines
 `user` to log in by username, which cannot share a table with the built-in

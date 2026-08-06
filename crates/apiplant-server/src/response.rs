@@ -19,7 +19,17 @@ pub fn db_error(e: apiplant_db::Error) -> HttpResponse {
             let msg = dberr.to_string();
             let lower = msg.to_lowercase();
             if lower.contains("foreign key") {
-                error(400, "references a record that does not exist")
+                // Both directions of a foreign key land here, and they mean
+                // opposite things: pointing at a row that is not there, or
+                // deleting a row that is still pointed at (`on_delete =
+                // "restrict"`). Postgres names the offending statement —
+                // "insert or update on table …" for the first, "update or
+                // delete on table …" for the second — so it says which.
+                if lower.contains("delete on table") || lower.contains("still referenced from") {
+                    error(400, "other records still reference this one")
+                } else {
+                    error(400, "references a record that does not exist")
+                }
             } else if lower.contains("unique") || lower.contains("duplicate key") {
                 error(409, "a record with these values already exists")
             } else if lower.contains("not-null") || lower.contains("not null") {

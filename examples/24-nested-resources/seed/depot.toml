@@ -1,0 +1,23 @@
+# Org-scoped, so every row names its tenant. Both organisations keep a depot in
+# Bologna: the shared municipality is the same row, the depots are not.
+
+[[row]]
+id = "acme-bologna"
+organization_id = "acme"
+name = "Acme Bologna"
+municipality_id = "bologna"
+capacity = 500
+
+[[row]]
+id = "acme-modena"
+organization_id = "acme"
+name = "Acme Modena"
+municipality_id = "modena"
+capacity = 220
+
+[[row]]
+id = "globex-bologna"
+organization_id = "globex"
+name = "Globex Bologna"
+municipality_id = "bologna"
+capacity = 800

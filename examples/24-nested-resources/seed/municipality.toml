@@ -1,0 +1,20 @@
+# Global, so no `organization_id` here — one list of places, shared by Acme and
+# Globex alike.
+
+[[row]]
+id = "bologna"
+name = "Bologna"
+region = "Emilia-Romagna"
+population = 390000
+
+[[row]]
+id = "modena"
+name = "Modena"
+region = "Emilia-Romagna"
+population = 185000
+
+[[row]]
+id = "trento"
+name = "Trento"
+region = "Trentino"
+population = 118000
