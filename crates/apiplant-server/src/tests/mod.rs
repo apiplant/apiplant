@@ -243,6 +243,20 @@ async fn load_state(root: &Path) -> AppState {
 }
 
 async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState {
+    load_state_configured(
+        root,
+        functions
+            .into_iter()
+            .map(|f| (f, "{}".to_string()))
+            .collect(),
+    )
+    .await
+}
+
+/// The same, for a test that needs a function's `functions/<name>.toml` — its
+/// per-deployment config, which is also where a function's own rate limit is
+/// declared.
+async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, String)>) -> AppState {
     let app = App::load(root).unwrap();
     let db = Db::connect(&app.config.database.resolved_url(), 8)
         .await
@@ -250,8 +264,8 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
     apiplant_db::migrate(db.connection(), &app).await.unwrap();
 
     let mut functions_registry = FunctionRegistry::load(&app);
-    for function in functions {
-        functions_registry.register(function, "{}".to_string());
+    for (function, config_json) in functions {
+        functions_registry.register(function, config_json);
     }
     let functions = functions_registry;
     // Built from the app's own `[email]` section, exactly as `run` does, so a
@@ -308,6 +322,10 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
     // Real, like the storage above: `queue_message` is a built-in, so the test
     // database has the table and a test that publishes actually writes a row.
     let queue = apiplant_queue::Queue::new(&db, &app);
+    // Real, from the app's own `[rate_limit]` and whatever its models and
+    // functions say beside it: a test app that sets no limit gets a policy that
+    // refuses nothing, and one that does gets 429s.
+    let rate_limit = crate::rate_limit::RateLimitPolicy::build(&app, &functions);
 
     AppState {
         app: Arc::new(app),
@@ -327,6 +345,7 @@ async fn load_state_with(root: &Path, functions: Vec<BoxedFunction>) -> AppState
         oauth: oauth.map(Arc::new),
         queue,
         agent_ais: Arc::new(agent_ais),
+        rate_limit: Arc::new(rate_limit),
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),
         openapi_json: Arc::new(serde_json::to_string(&spec).unwrap()),
@@ -369,8 +388,9 @@ mod functions;
 mod hooks;
 mod oauth;
 mod permissions;
+mod queues;
+mod rate_limit;
 mod resources;
 mod schema;
 mod serving;
-mod queues;
 mod storage;

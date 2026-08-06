@@ -1957,12 +1957,11 @@ mod tests {
     /// two must not be confused for each other in either direction.
     #[test]
     fn a_delivery_is_read_from_the_hook_slot_and_a_resource_hook_is_not_one() {
-        let delivery = MockHost::success("{}", "", serde_json::json!([])).with_hook(
-            serde_json::json!({
+        let delivery =
+            MockHost::success("{}", "", serde_json::json!([])).with_hook(serde_json::json!({
                 "event": "message", "topic": "order.paid", "message_id": "m-3",
                 "subscriber": "fulfil_order", "attempts": 3, "principal_id": "u1"
-            }),
-        );
+            }));
         let delivery = HostApi_TO::from_value(delivery, TD_Opaque);
         let ctx = Context::__new(&delivery, (), String::new(), None);
 
@@ -1973,9 +1972,8 @@ mod tests {
         // The field a handler branches on to stay idempotent.
         assert_eq!(got.attempts, 3);
 
-        let hook = MockHost::success("{}", "u1", serde_json::json!([])).with_hook(
-            serde_json::json!({ "event": "after_create", "resource": "post" }),
-        );
+        let hook = MockHost::success("{}", "u1", serde_json::json!([]))
+            .with_hook(serde_json::json!({ "event": "after_create", "resource": "post" }));
         let hook = HostApi_TO::from_value(hook, TD_Opaque);
         let ctx = Context::__new(&hook, (), "u1".into(), None);
         assert!(ctx.delivery().is_none());

@@ -36,6 +36,10 @@ allow_registration = true         # enable POST /auth/register
 # allow_invitations          = true
 # allow_password_reset       = true
 
+[rate_limit]                 # optional: how often one client may call; off by default
+default             = "100/1m"  # every endpoint, unless something narrower says otherwise
+trust_proxy_headers = false  # true only behind a proxy that writes X-Forwarded-For
+
 [docs]
 enabled = true               # serve OpenAPI spec + Swagger UI
 path    = "/docs"            # where Swagger UI mounts (under base_path)
@@ -137,6 +141,66 @@ explicit `true` still requires a provider, since otherwise every new account
 would be locked behind a confirmation that cannot be delivered.
 
 See [Authentication](authentication.md) for the flows themselves.
+
+## `[rate_limit]`
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `true` | The kill switch. `false` drops every limit — this section's, the resources' and the functions' — without editing any of them. |
+| `default` | `"off"` | The rule every endpoint gets unless a resource or a function names its own. `"off"` limits nothing, which is why an app that says nothing here is limited nowhere. |
+| `trust_proxy_headers` | `false` | Read the client address from `X-Forwarded-For` / `X-Real-IP` instead of the peer socket. |
+| `cleanup_interval_secs` | `60` | How often tracked clients are swept for buckets nobody is using. |
+| `stale_after_secs` | `600` | How long a client's bucket is kept after their last request. |
+
+A rule is written `"<requests>/<window>"`: `"100/1m"`, `"30/30s"`, `"1000/1h"`,
+`"5/1d"`, or the bare-seconds form `"100/60"`. Two words stand in for a number —
+`"off"` lifts the limit and `"inherit"` defers to the level above. Anything else
+fails the load, naming the file: a rate limit that quietly parsed as "no limit"
+is the one failure mode worth being noisy about.
+
+Three levels decide, narrowest last:
+
+```toml
+# main.toml — everything, unless something says otherwise
+[rate_limit]
+default = "100/1m"
+```
+
+```toml
+# models/order.toml — this resource, per action
+[rate_limit]
+all    = "60/1m"
+create = "5/1m"    # expensive, so stricter
+list   = "off"     # cached upstream, so unlimited
+```
+
+```toml
+# functions/summarise.toml — this function, both its endpoints
+rate_limit = "10/1m"
+```
+
+A function's limit lives in its config file rather than in its manifest because
+the manifest is compiled into the library: how often a deployment lets people
+call a function is the deployment's decision, and it should not need a rebuild.
+
+A limited response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and
+`X-RateLimit-Reset`; a refused one is `429` with `Retry-After` beside them.
+Limits apply to the API only — the admin dashboard's own assets and the
+`public/` site are files, and counting a page's images against the allowance for
+its data is how a limit set for an API ends up breaking a browser.
+
+### Who "one client" is
+
+The peer socket address, which a caller cannot forge. Behind a reverse proxy
+that is the *proxy's* address for every request — one bucket for everybody,
+throttling all callers together — so a deployment behind one has to set
+`trust_proxy_headers = true` **and** make sure the proxy overwrites
+`X-Forwarded-For` rather than appending to it. Trusting that header with nothing
+in front of the server hands every caller their own limit for the price of a
+header line, which is the same as having none.
+
+Buckets live in the process, so each replica limits against its own count: two
+replicas behind a load balancer allow roughly twice `default` between them.
 
 ## `[docs]`
 

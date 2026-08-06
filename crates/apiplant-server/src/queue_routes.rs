@@ -34,8 +34,8 @@ pub async fn publish(
     // Matches every other `private` endpoint in the framework: not forbidden,
     // absent. Probing must not reveal which topics an app has.
     let missing = "this app does not accept published messages";
-    if let Err(response) = crate::access::check(&state, &req, &to_function_access(&access), missing)
-        .await
+    if let Err(response) =
+        crate::access::check(&state, &req, &to_function_access(&access), missing).await
     {
         return response;
     }
@@ -108,7 +108,10 @@ mod tests {
             to_function_access(&Access::Role("admin".into())),
             FunctionAccess::Role("admin".into())
         );
-        assert_eq!(to_function_access(&Access::Private), FunctionAccess::Private);
+        assert_eq!(
+            to_function_access(&Access::Private),
+            FunctionAccess::Private
+        );
         // `owner` names a column on a row; a topic hasn't got one, so it closes
         // the door rather than meaning something arbitrary.
         assert_eq!(to_function_access(&Access::Owner), FunctionAccess::Private);

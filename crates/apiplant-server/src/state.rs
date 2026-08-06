@@ -58,6 +58,10 @@ pub struct AppState {
     /// Behind a function's `publish`, the `<base>/queues/{topic}` endpoint and
     /// a resource's `[publish]` declarations.
     pub queue: Queue,
+    /// How often one client may call each endpoint, resolved on boot from
+    /// `[rate_limit]` and every override beside it. Enforced by
+    /// [`crate::rate_limit`], which wraps the whole API scope.
+    pub rate_limit: Arc<crate::rate_limit::RateLimitPolicy>,
     /// Everything served alongside the API: the dashboard and the public site.
     pub statics: Arc<Statics>,
     /// The admin manifest for this app, built on boot.

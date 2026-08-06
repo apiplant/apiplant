@@ -464,6 +464,19 @@ greeting = "Bonjour"
 `ctx.config().greeting` is then `"Bonjour"`. A missing file yields
 `Config::default()`.
 
+The same file is where a function's rate limit is written:
+
+```toml
+# functions/greet.toml
+rate_limit = "10/1m"   # or "off" to lift the app-wide limit for this function
+```
+
+It lives here rather than in the manifest because the manifest is compiled into
+the library: how often a deployment lets people call a function is the
+deployment's decision, and it should not need a rebuild. The plain endpoint and
+`/stream` are the same function, so they share one allowance. Unset inherits the
+app-wide [`[rate_limit]`](configuration.md#rate_limit).
+
 Config is per **function**, not per library: a library exporting
 `post_before_create` and `post_before_update` reads
 `functions/post_before_create.toml` and `functions/post_before_update.toml`, so

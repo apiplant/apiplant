@@ -53,6 +53,13 @@ abi_stable = "0.11"
 # features across the graph, so narrowing this list changes nothing.
 tokio = { version = "1", features = ["full"] }
 ntex = { version = "2", features = ["tokio", "rustls"] }
+# Token buckets for `[rate_limit]`. Pinned to the 0.2 line, which is the one
+# built against ntex 2 — 0.3 tracks ntex 3, and taking it would compile a
+# second copy of the whole web stack for a bucket of tokens. The middleware
+# that selects a bucket per route is ours (`apiplant-server::rate_limit`), and
+# so is the client-address lookup: the peer socket unless the deployment says
+# a proxy in front of it writes `X-Forwarded-For`.
+ntex-ratelimiter = { version = "0.2", default-features = false, features = ["tokio"] }
 
 # Database (sea-query for dynamic schema/queries, sea-orm for the pool + executor)
 sea-orm = { version = "1.1", default-features = false, features = [

@@ -515,7 +515,10 @@ impl Queue {
         let request: Value = serde_json::from_str(request)
             .map_err(|e| QueueError::Request(format!("not JSON: {e}")))?;
 
-        let op = request.get("op").and_then(Value::as_str).unwrap_or("publish");
+        let op = request
+            .get("op")
+            .and_then(Value::as_str)
+            .unwrap_or("publish");
         match op {
             "publish" => {
                 let topic = request
@@ -524,10 +527,7 @@ impl Queue {
                     .ok_or_else(|| QueueError::Request("`topic` is required".into()))?;
                 // A publish with no message is a signal, and a signal is a
                 // perfectly good message — `{}` rather than an error.
-                let message = request
-                    .get("message")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
+                let message = request.get("message").cloned().unwrap_or_else(|| json!({}));
                 let publication = self.publish(topic, &message, published_by).await?;
                 Ok(serde_json::to_value(publication).unwrap_or(Value::Null))
             }
@@ -569,11 +569,7 @@ fn topic_array(topics: &[String]) -> SqlValue {
 /// from a request, but it is still the one thing here that is pasted into a
 /// statement rather than bound — so it is checked rather than trusted.
 fn quote(ident: &str) -> Result<String, QueueError> {
-    if ident.is_empty()
-        || !ident
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if ident.is_empty() || !ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(QueueError::Backend(format!(
             "`{ident}` is not a usable table name"
         )));
@@ -614,7 +610,10 @@ mod tests {
 
     #[test]
     fn only_identifiers_can_be_interpolated_as_a_table() {
-        assert_eq!(quote("apiplant_queue_message").unwrap(), "\"apiplant_queue_message\"");
+        assert_eq!(
+            quote("apiplant_queue_message").unwrap(),
+            "\"apiplant_queue_message\""
+        );
         assert!(quote("").is_err());
         assert!(quote("queue\"; DROP TABLE x --").is_err());
         assert!(quote("public.queue").is_err());
@@ -663,7 +662,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.subscribers("order.paid"), ["fulfil"]);
-        assert_eq!(config.subscribers("user.signed_up"), ["welcome", "crm_sync"]);
+        assert_eq!(
+            config.subscribers("user.signed_up"),
+            ["welcome", "crm_sync"]
+        );
         // A topic with no subscriber is not a subscription.
         assert!(config.subscribers("ignored").is_empty());
         assert!(config.subscribers("never.declared").is_empty());

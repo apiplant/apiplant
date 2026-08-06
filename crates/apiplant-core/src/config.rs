@@ -24,6 +24,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
+    pub rate_limit: RateLimitConfig,
     pub docs: DocsConfig,
     pub admin: AdminConfig,
     pub public: PublicConfig,
@@ -251,6 +252,64 @@ impl AuthConfig {
     /// Whether password reset is offered.
     pub fn password_reset_enabled(&self, email_enabled: bool) -> bool {
         self.allow_password_reset.unwrap_or(email_enabled) && email_enabled
+    }
+}
+
+/// How many requests one client may make, before the API starts answering
+/// `429 Too Many Requests`.
+///
+/// Off until asked for: `default = "off"` means an app that says nothing here
+/// is limited nowhere, and an upgrade cannot start refusing traffic that used
+/// to be served. Naming a rate switches it on for every endpoint at once:
+///
+/// ```toml
+/// [rate_limit]
+/// default = "100/1m"
+/// ```
+///
+/// A resource narrows or lifts that per action in its own `[rate_limit]`
+/// section, and a function does the same with a `rate_limit` key in its
+/// `functions/<name>.toml` — see [`crate::RateLimits`].
+///
+/// ## Who "one client" is
+///
+/// The peer socket address, which a caller cannot forge. Behind a reverse
+/// proxy that is the *proxy's* address for every request — one bucket for
+/// everybody, throttling all callers together — so a deployment behind one has
+/// to set `trust_proxy_headers = true` and make sure the proxy *overwrites*
+/// `X-Forwarded-For` rather than appending to it. Trusting that header with
+/// nothing in front of the server hands every caller their own rate limit for
+/// the price of a header line, which is the same as having none.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RateLimitConfig {
+    /// Turn every limit off — the app's, the resources' and the functions' —
+    /// without deleting what they say. The switch to flip while an incident is
+    /// being diagnosed.
+    pub enabled: bool,
+    /// The rule every endpoint gets unless something narrower says otherwise.
+    /// `"off"` (the default) limits nothing.
+    pub default: crate::schema::RateLimitRule,
+    /// Read the client address from `X-Forwarded-For` / `X-Real-IP` when
+    /// present, instead of the peer socket. Only true behind a proxy you
+    /// control; see the section note above.
+    pub trust_proxy_headers: bool,
+    /// How often the tracked clients are swept for buckets nobody has used.
+    pub cleanup_interval_secs: u64,
+    /// How long a client's bucket is kept after their last request. Bounds
+    /// what a flood of one-request-each addresses can cost in memory.
+    pub stale_after_secs: u64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        RateLimitConfig {
+            enabled: true,
+            default: crate::schema::RateLimitRule::Off,
+            trust_proxy_headers: false,
+            cleanup_interval_secs: 60,
+            stale_after_secs: 600,
+        }
     }
 }
 
@@ -826,7 +885,9 @@ impl QueuesConfig {
     /// times, doubling each time and capped at an hour so a poisoned message
     /// doesn't schedule itself past the retention sweep.
     pub fn retry_delay_secs(&self, attempts: u32) -> u64 {
-        let doubling = 1u64.checked_shl(attempts.saturating_sub(1)).unwrap_or(u64::MAX);
+        let doubling = 1u64
+            .checked_shl(attempts.saturating_sub(1))
+            .unwrap_or(u64::MAX);
         self.retry_backoff_secs
             .saturating_mul(doubling)
             .min(60 * 60)
@@ -1303,6 +1364,17 @@ impl Config {
 
         if !self.docs.path.starts_with('/') {
             self.docs.path = format!("/{}", self.docs.path);
+        }
+
+        // A zero sweep interval is a timer that fires forever; a zero staleness
+        // discards every bucket the moment it is written, which is the same as
+        // having no rate limit at all. Neither is what `0` was meant to say.
+        let defaults = RateLimitConfig::default();
+        if self.rate_limit.cleanup_interval_secs == 0 {
+            self.rate_limit.cleanup_interval_secs = defaults.cleanup_interval_secs;
+        }
+        if self.rate_limit.stale_after_secs == 0 {
+            self.rate_limit.stale_after_secs = defaults.stale_after_secs;
         }
 
         let admin = self.admin.path.trim_matches('/');

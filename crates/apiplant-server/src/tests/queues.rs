@@ -11,7 +11,10 @@ use apiplant_queue::Queue;
 
 /// A handler that records what it was given and succeeds.
 fn recorder(_host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result<String, String> {
-    HANDLED.lock().unwrap().push((hook.to_string(), input.to_string()));
+    HANDLED
+        .lock()
+        .unwrap()
+        .push((hook.to_string(), input.to_string()));
     Ok(json!({ "ok": true }).to_string())
 }
 
@@ -35,7 +38,11 @@ fn handled(topic: &str) -> Vec<(Value, Value)> {
 }
 
 /// A handler that always fails, for the retry and dead-letter paths.
-fn always_fails(_host: &HostApi_TO<'_, RBox<()>>, _hook: &str, _input: &str) -> Result<String, String> {
+fn always_fails(
+    _host: &HostApi_TO<'_, RBox<()>>,
+    _hook: &str,
+    _input: &str,
+) -> Result<String, String> {
     Err("the downstream service is down".to_string())
 }
 
@@ -141,7 +148,12 @@ async fn a_published_message_is_recorded_claimed_handled_and_marked_done() {
     assert_eq!(done[0]["status"], "done");
 
     // And a second claim finds nothing: a handled message is not re-delivered.
-    assert!(subscriber.queue.claim("test-worker").await.unwrap().is_empty());
+    assert!(subscriber
+        .queue
+        .claim("test-worker")
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// One row per subscriber, so a failing handler cannot drag its neighbour into
@@ -191,8 +203,14 @@ retry_backoff_secs = 0
         crate::queues::handle_for_test(&subscriber, delivery).await;
     }
     let after_one = rows(&state).await;
-    let welcome = after_one.iter().find(|r| r["subscriber"] == "send_welcome").unwrap();
-    let crm = after_one.iter().find(|r| r["subscriber"] == "sync_crm").unwrap();
+    let welcome = after_one
+        .iter()
+        .find(|r| r["subscriber"] == "send_welcome")
+        .unwrap();
+    let crm = after_one
+        .iter()
+        .find(|r| r["subscriber"] == "sync_crm")
+        .unwrap();
     assert_eq!(welcome["status"], "done");
     assert_eq!(crm["status"], "pending", "a failure goes back to pending");
     assert!(crm["error"].as_str().unwrap().contains("down"));
@@ -318,14 +336,19 @@ required = true
 
     let deleted = test::call_service(
         &app,
-        test::TestRequest::delete().uri(&format!("/api/note/{id}")).to_request(),
+        test::TestRequest::delete()
+            .uri(&format!("/api/note/{id}"))
+            .to_request(),
     )
     .await;
     assert_eq!(deleted.status(), 204);
 
     let queued = rows(&state).await;
     assert_eq!(queued.len(), 2);
-    let deleted_msg = queued.iter().find(|r| r["topic"] == "note.deleted").unwrap();
+    let deleted_msg = queued
+        .iter()
+        .find(|r| r["topic"] == "note.deleted")
+        .unwrap();
     // Nothing subscribes to `note.deleted`, so it is recorded and finished —
     // and the delete still returned 204 either way.
     assert_eq!(deleted_msg["subscriber"], "");
@@ -355,7 +378,10 @@ async fn the_publish_endpoint_is_off_by_default_and_gated_when_on() {
     let root = temp_dir("queue-http-on");
     write_files(
         &root,
-        &[("main.toml", &main_toml(&db.url, "publish = \"authenticated\"\n"))],
+        &[(
+            "main.toml",
+            &main_toml(&db.url, "publish = \"authenticated\"\n"),
+        )],
     );
     let state = load_state(&root).await;
     let app = init_http_app!(state.clone());
@@ -376,7 +402,10 @@ async fn the_publish_endpoint_is_off_by_default_and_gated_when_on() {
         ),
     )
     .await;
-    let token = read_json(registration).await["token"].as_str().unwrap().to_string();
+    let token = read_json(registration).await["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let accepted = test::call_service(
         &app,
@@ -471,7 +500,11 @@ retry_backoff_secs = 20
     );
     let state = load_state_with(
         &root,
-        vec![test_function("always_fails", Visibility::Private, always_fails)],
+        vec![test_function(
+            "always_fails",
+            Visibility::Private,
+            always_fails,
+        )],
     )
     .await;
 
@@ -494,7 +527,12 @@ retry_backoff_secs = 20
     crate::queues::handle_for_test(&subscriber, claimed[0].clone()).await;
 
     // Failed, and scheduled for the backoff rather than the poll interval.
-    let due = state.queue.next_due().await.unwrap().expect("a retry is due");
+    let due = state
+        .queue
+        .next_due()
+        .await
+        .unwrap()
+        .expect("a retry is due");
     assert!(
         (18..=21).contains(&due),
         "expected the 20s backoff, got {due}s"
@@ -635,10 +673,15 @@ type = "string"
     );
 
     let app = App::load(&root).unwrap();
-    let conn = Db::connect(&app.config.database.resolved_url(), 4).await.unwrap();
+    let conn = Db::connect(&app.config.database.resolved_url(), 4)
+        .await
+        .unwrap();
     apiplant_db::migrate(conn.connection(), &app).await.unwrap();
     let queue = Queue::new(&conn, &app);
-    queue.publish("a.topic", &json!({ "x": 1 }), "").await.unwrap();
+    queue
+        .publish("a.topic", &json!({ "x": 1 }), "")
+        .await
+        .unwrap();
 
     let found = conn
         .raw_json("SELECT topic FROM my_own_queue", &[])

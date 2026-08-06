@@ -130,6 +130,37 @@ enabled = false
 be created only by an authenticated caller with `create` on `user`, or by a
 hook.
 
+### How often anyone may call
+
+`[rate_limit]` is off until asked for — an app that says nothing there is
+limited nowhere, which is the right default for an upgrade and the wrong one for
+an exposed deployment. Anything reachable without credentials is worth a rule,
+starting with the endpoints that cost something to answer:
+
+```toml
+[rate_limit]
+default = "100/1m"
+```
+
+```toml
+# models/user.toml — registration, the one endpoint anonymous callers can write
+# rows through
+[rate_limit]
+create = "5/1h"
+```
+
+Two things it is not. It is **not** a defence against a distributed flood: the
+buckets live in this process, so each replica limits against its own count, and
+an attacker with many addresses gets one allowance per address. That belongs in
+front of the server. And a limit counts *requests*, not work — an expensive
+listing and a health check cost the same token.
+
+Behind a proxy, set `trust_proxy_headers = true` and make sure the proxy
+overwrites `X-Forwarded-For`; without it every request arrives from the proxy's
+own address and all callers share one bucket. With it, and with nothing actually
+in front of the server, any caller can write themselves a fresh address per
+request. See [Configuration → `[rate_limit]`](configuration.md#rate_limit).
+
 ### Database credentials
 
 `[database]` defaults to `postgres:postgres@localhost`, which exists to make the

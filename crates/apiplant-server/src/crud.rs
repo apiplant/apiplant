@@ -1208,8 +1208,7 @@ pub async fn delete(
         discard_empty_organization(&state, org).await;
     }
 
-    let response = match hooks::run(&state, r, HookEvent::AfterDelete, &hook_req, payload()).await
-    {
+    let response = match hooks::run(&state, r, HookEvent::AfterDelete, &hook_req, payload()).await {
         // A replacement turns the usual empty `204` into a `200` with a body.
         Ok(Some(replacement)) => ok(&replacement),
         Ok(None) => HttpResponse::NoContent().finish(),

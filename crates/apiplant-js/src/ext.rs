@@ -254,7 +254,10 @@ async fn op_apiplant_fetch(
         });
     }
 
-    Err(fail(format!("too many redirects fetching `{}`", request.url)))
+    Err(fail(format!(
+        "too many redirects fetching `{}`",
+        request.url
+    )))
 }
 
 /// The specifier the bootstrap is registered and entered under.
@@ -312,7 +315,10 @@ mod tests {
     #[test]
     fn the_egress_allowlist_matches_hosts_not_substrings() {
         assert!(host_matches(Some("api.stripe.com"), "api.stripe.com"));
-        assert!(host_matches(Some("api.stripe.com"), "example.com, api.stripe.com"));
+        assert!(host_matches(
+            Some("api.stripe.com"),
+            "example.com, api.stripe.com"
+        ));
         assert!(!host_matches(Some("api.stripe.com"), "stripe.com"));
 
         // `*.` covers the domain itself and any subdomain.

@@ -313,6 +313,7 @@ See [Lifecycle hooks](hooks.md).
 | `409` | uniqueness conflict |
 | `413` | an upload larger than `[storage] max_size_mb` |
 | `415` | an upload whose content type is outside `[storage] allowed_types` |
+| `429` | more requests than `[rate_limit]` allows; carries `Retry-After` and the `X-RateLimit-*` headers |
 | `500` | unexpected server or database error, or a declared hook whose function is not loaded |
 
 Errors are JSON: `{ "error": "<message>" }`. A [hook](hooks.md) can return any

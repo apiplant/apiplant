@@ -109,6 +109,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Configuration](docs/configuration.md) | `main.toml`, TLS, database, workers |
 | [Resources](docs/resources.md) | defining resources, field types & options, migrations |
 | [Permissions](docs/permissions.md) | access levels, per-action policies, ownership, org roles |
+| [Rate limiting](docs/configuration.md#rate_limit) | `[rate_limit]` app-wide, per resource action, per function |
 | [Seed data](docs/seed.md) | `seed/` — the rows an app starts with, in TOML or CSV |
 | [Multitenancy](docs/multitenancy.md) | organisations, memberships, automatic per-tenant isolation |
 | [Relationships](docs/relationships.md) | references, `has_many`, expansion, filtering, `on_delete` |
@@ -296,6 +297,38 @@ on **verified** addresses, sign-ups that run the same hooks registration does,
 and a refusal to unlink the last way into an account. See
 [Authentication](docs/authentication.md#signing-in-with-somebody-elses-account)
 and [`examples/22-oauth`](examples/22-oauth).
+
+## Rate limiting
+
+Off until asked for, then one line switches it on everywhere:
+
+```toml
+# main.toml
+[rate_limit]
+default = "100/1m"
+```
+
+A resource narrows or lifts it per action, and a function does the same in its
+own config file — so the expensive endpoint can be strict while the cached one
+is not limited at all:
+
+```toml
+# models/order.toml
+[rate_limit]
+create = "5/1m"
+list   = "off"
+```
+
+```toml
+# functions/summarise.toml
+rate_limit = "10/1m"
+```
+
+Clients are counted by their peer socket address, which they cannot forge;
+behind a proxy, set `trust_proxy_headers = true` and have the proxy overwrite
+`X-Forwarded-For`. Answers carry `X-RateLimit-Limit`, `-Remaining` and `-Reset`;
+a refusal is `429` with `Retry-After`. See
+[Configuration → `[rate_limit]`](docs/configuration.md#rate_limit).
 
 ## Multitenancy
 

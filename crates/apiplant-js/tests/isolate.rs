@@ -639,8 +639,14 @@ fn fetch_speaks_the_web_api() {
     assert_eq!(out["postedStatus"], 201);
     assert_eq!(out["postedText"], "ok");
     assert_eq!(out["redirected"], true, "the redirect was not followed");
-    assert_eq!(out["redirectedUrl"], true, "Response.url is the pre-redirect URL");
-    assert_eq!(out["redirectedBody"], serde_json::json!({ "hello": "world" }));
+    assert_eq!(
+        out["redirectedUrl"], true,
+        "Response.url is the pre-redirect URL"
+    );
+    assert_eq!(
+        out["redirectedBody"],
+        serde_json::json!({ "hello": "world" })
+    );
     // A 418 is a perfectly good response: `fetch` rejects only on network
     // failure, never on a status the server chose deliberately.
     assert_eq!(out["teapotOk"], false);

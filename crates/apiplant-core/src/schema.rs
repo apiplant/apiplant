@@ -19,6 +19,9 @@ pub struct Resource {
     pub fields: BTreeMap<String, Field>,
     #[serde(default)]
     pub permissions: Permissions,
+    /// Per-action request rate limits, overriding `main.toml`'s `[rate_limit]`.
+    #[serde(default)]
+    pub rate_limit: RateLimits,
     /// Named functions to run around each CRUD operation.
     #[serde(default)]
     pub hooks: Hooks,
@@ -831,6 +834,209 @@ impl From<PermissionsRaw> for Permissions {
     }
 }
 
+/// One CRUD action, named the way `[permissions]` and `[rate_limit]` name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CrudAction {
+    List,
+    Read,
+    Create,
+    Update,
+    Delete,
+}
+
+impl CrudAction {
+    /// Every action, in the order the two sections list them.
+    pub const ALL: [CrudAction; 5] = [
+        CrudAction::List,
+        CrudAction::Read,
+        CrudAction::Create,
+        CrudAction::Update,
+        CrudAction::Delete,
+    ];
+
+    /// The TOML key, e.g. `"create"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CrudAction::List => "list",
+            CrudAction::Read => "read",
+            CrudAction::Create => "create",
+            CrudAction::Update => "update",
+            CrudAction::Delete => "delete",
+        }
+    }
+}
+
+/// How many requests one client may make in a window before an endpoint starts
+/// answering `429`.
+///
+/// Written as `"<requests>/<window>"` — `"100/1m"`, `"5/30s"`, `"1000/1h"`, or
+/// the bare-seconds form `"100/60"`. Two words stand in for a number:
+/// `"off"` lifts the limit whatever the level above set, and `"inherit"` (the
+/// default, and what an omitted key means) defers to it.
+///
+/// The levels, narrowest last: `[rate_limit] default` in `main.toml`, a
+/// resource's `[rate_limit] all`, and finally the per-action key. So a global
+/// `"100/1m"` with `create = "5/1m"` on one resource limits everything to a
+/// hundred a minute except that one endpoint, which takes five.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RateLimitRule {
+    /// Nothing said here; the level above decides.
+    #[default]
+    Inherit,
+    /// No limit, whatever the level above says.
+    Off,
+    /// `requests` per `window_secs`, per client address.
+    Limit { requests: u32, window_secs: u64 },
+}
+
+impl RateLimitRule {
+    /// Parse the string form. `None` is a spelling that means nothing — the
+    /// caller turns it into a load error naming the file it came from, rather
+    /// than a limit nobody asked for or, worse, a silently missing one.
+    pub fn parse(s: &str) -> Option<RateLimitRule> {
+        let s = s.trim();
+        match s.to_ascii_lowercase().as_str() {
+            "" | "inherit" | "default" => return Some(RateLimitRule::Inherit),
+            "off" | "none" | "unlimited" => return Some(RateLimitRule::Off),
+            _ => {}
+        }
+
+        let (requests, window) = s.split_once('/')?;
+        let requests: u32 = requests.trim().parse().ok()?;
+        // A limit of zero requests is a closed door dressed as a rate limit;
+        // `private` in `[permissions]` is how an endpoint is closed.
+        if requests == 0 {
+            return None;
+        }
+        Some(RateLimitRule::Limit {
+            requests,
+            window_secs: parse_window(window.trim())?,
+        })
+    }
+
+    /// The canonical string form, in the units it was written in.
+    pub fn as_string(&self) -> String {
+        match self {
+            RateLimitRule::Inherit => "inherit".to_string(),
+            RateLimitRule::Off => "off".to_string(),
+            RateLimitRule::Limit {
+                requests,
+                window_secs,
+            } => format!("{requests}/{}", format_window(*window_secs)),
+        }
+    }
+
+    /// This rule if it says anything, else `fallback`.
+    pub fn or(self, fallback: RateLimitRule) -> RateLimitRule {
+        match self {
+            RateLimitRule::Inherit => fallback,
+            decided => decided,
+        }
+    }
+
+    /// The limit to enforce, or `None` for "no limit here".
+    pub fn limit(self) -> Option<(u32, u64)> {
+        match self {
+            RateLimitRule::Limit {
+                requests,
+                window_secs,
+            } => Some((requests, window_secs)),
+            _ => None,
+        }
+    }
+}
+
+/// `60`, `30s`, `5m`, `1h`, `1d` — and the words people write instead of `1`
+/// of each (`second`, `minute`, `hour`, `day`).
+fn parse_window(window: &str) -> Option<u64> {
+    let window = window.to_ascii_lowercase();
+    // `"100/"` names no window at all; only a *unit* may be left out, never
+    // the whole thing.
+    if window.is_empty() {
+        return None;
+    }
+    let unit = |n: u64| match window.trim_end_matches(char::is_alphabetic) {
+        "" => Some(n),
+        digits => digits.parse::<u64>().ok().map(|count| count * n),
+    };
+    let seconds = match window.trim_matches(char::is_numeric) {
+        "" | "s" | "sec" | "secs" | "second" | "seconds" => unit(1),
+        "m" | "min" | "mins" | "minute" | "minutes" => unit(60),
+        "h" | "hr" | "hrs" | "hour" | "hours" => unit(3600),
+        "d" | "day" | "days" => unit(86_400),
+        _ => None,
+    }?;
+    // A zero-length window has no rate in it, and the token bucket would
+    // divide by it.
+    (seconds > 0).then_some(seconds)
+}
+
+/// The inverse of [`parse_window`] for whole units, so `"5/60"` reads back as
+/// `"5/1m"` rather than as a number nobody wrote.
+fn format_window(seconds: u64) -> String {
+    for (size, suffix) in [(86_400, 'd'), (3600, 'h'), (60, 'm')] {
+        if seconds % size == 0 {
+            return format!("{}{suffix}", seconds / size);
+        }
+    }
+    format!("{seconds}s")
+}
+
+impl<'de> Deserialize<'de> for RateLimitRule {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(de)?;
+        RateLimitRule::parse(&raw).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "`{raw}` is not a rate limit: write `<requests>/<window>` \
+                 (`100/1m`, `30/30s`, `1000/1h`), `off`, or `inherit`"
+            ))
+        })
+    }
+}
+
+/// The `[rate_limit]` section of a resource: a rule for the whole resource and
+/// a rule per action, both optional.
+///
+/// ```toml
+/// [rate_limit]
+/// all    = "100/1m"   # every endpoint of this resource
+/// create = "5/1m"     # …except this one
+/// delete = "off"      # …and this one, which isn't limited at all
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RateLimits {
+    /// Applies to every action that doesn't name its own rule.
+    pub all: RateLimitRule,
+    pub list: RateLimitRule,
+    pub read: RateLimitRule,
+    pub create: RateLimitRule,
+    pub update: RateLimitRule,
+    pub delete: RateLimitRule,
+}
+
+impl RateLimits {
+    /// The rule for one action: its own if it has one, else `all`, else
+    /// [`RateLimitRule::Inherit`] — which leaves the decision to `main.toml`.
+    pub fn for_action(&self, action: CrudAction) -> RateLimitRule {
+        let own = match action {
+            CrudAction::List => self.list,
+            CrudAction::Read => self.read,
+            CrudAction::Create => self.create,
+            CrudAction::Update => self.update,
+            CrudAction::Delete => self.delete,
+        };
+        own.or(self.all)
+    }
+
+    /// Whether anything at all was declared here.
+    pub fn is_empty(&self) -> bool {
+        CrudAction::ALL
+            .into_iter()
+            .all(|action| self.for_action(action) == RateLimitRule::Inherit)
+    }
+}
+
 /// One point in a resource's request lifecycle at which a function may run.
 ///
 /// `before_*` hooks run after the permission check but before the database is
@@ -1151,6 +1357,109 @@ mod tests {
         let resource: Resource = toml::from_str(src).unwrap();
         resource.validate().unwrap();
         resource
+    }
+
+    #[test]
+    fn a_rate_limit_is_a_count_over_a_window_however_the_window_is_spelled() {
+        let limit = |requests, window_secs| {
+            Some(RateLimitRule::Limit {
+                requests,
+                window_secs,
+            })
+        };
+        // Bare seconds, and every unit suffix, with or without a count.
+        assert_eq!(RateLimitRule::parse("100/60"), limit(100, 60));
+        assert_eq!(RateLimitRule::parse("100/60s"), limit(100, 60));
+        assert_eq!(RateLimitRule::parse("100/1m"), limit(100, 60));
+        assert_eq!(RateLimitRule::parse("100/minute"), limit(100, 60));
+        assert_eq!(RateLimitRule::parse("5/2h"), limit(5, 7200));
+        assert_eq!(RateLimitRule::parse("5/1d"), limit(5, 86_400));
+        // Whitespace and case are how people write, not what they mean.
+        assert_eq!(RateLimitRule::parse(" 30 / 30S "), limit(30, 30));
+
+        assert_eq!(RateLimitRule::parse("off"), Some(RateLimitRule::Off));
+        assert_eq!(RateLimitRule::parse("none"), Some(RateLimitRule::Off));
+        assert_eq!(RateLimitRule::parse(""), Some(RateLimitRule::Inherit));
+        assert_eq!(
+            RateLimitRule::parse("inherit"),
+            Some(RateLimitRule::Inherit)
+        );
+    }
+
+    #[test]
+    fn a_rate_limit_that_says_nothing_enforceable_is_refused_rather_than_guessed() {
+        // No window, no count, a window of nothing, and a limit of nothing —
+        // each is a typo, and each would otherwise become a silent `inherit`.
+        for spelling in ["100", "/60", "abc/60", "100/", "100/0", "0/60", "100/2x"] {
+            assert_eq!(
+                RateLimitRule::parse(spelling),
+                None,
+                "`{spelling}` should not parse as a rate limit"
+            );
+        }
+        // …and the load fails naming it, rather than running unlimited.
+        let error = toml::from_str::<RateLimits>("all = \"100\"").unwrap_err();
+        assert!(
+            error.to_string().contains("not a rate limit"),
+            "unhelpful error: {error}"
+        );
+    }
+
+    #[test]
+    fn a_rate_limit_reads_back_in_the_units_it_was_written_in() {
+        for spelling in ["100/1m", "5/30s", "10/2h", "1/1d"] {
+            assert_eq!(
+                RateLimitRule::parse(spelling).unwrap().as_string(),
+                spelling
+            );
+        }
+    }
+
+    #[test]
+    fn a_per_action_rate_limit_beats_the_resource_wide_one() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "post"
+
+[fields.title]
+type = "string"
+
+[rate_limit]
+all    = "100/1m"
+create = "5/1m"
+delete = "off"
+"#,
+        );
+        let limits = &resource.rate_limit;
+        // The action that named a rule, the ones that fell back to `all`, and
+        // the one that opted out of limiting entirely.
+        assert_eq!(
+            limits.for_action(CrudAction::Create),
+            RateLimitRule::parse("5/1m").unwrap()
+        );
+        assert_eq!(
+            limits.for_action(CrudAction::List),
+            RateLimitRule::parse("100/1m").unwrap()
+        );
+        assert_eq!(limits.for_action(CrudAction::Delete), RateLimitRule::Off);
+        assert!(!limits.is_empty());
+
+        // A resource that says nothing leaves every action to `main.toml`.
+        let quiet = parse_resource(
+            r#"
+[resource]
+name = "page"
+
+[fields.title]
+type = "string"
+"#,
+        );
+        assert!(quiet.rate_limit.is_empty());
+        assert_eq!(
+            quiet.rate_limit.for_action(CrudAction::List),
+            RateLimitRule::Inherit
+        );
     }
 
     #[test]

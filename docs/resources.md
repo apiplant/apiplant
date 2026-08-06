@@ -140,6 +140,27 @@ Available keys are `before_`/`after_` × `list`, `read`, `create`, `update`,
 data each hook receives and what it can return, are in
 [Lifecycle hooks](hooks.md).
 
+## `[rate_limit]`
+
+An optional section narrowing — or lifting — the app-wide
+[`[rate_limit]`](configuration.md#rate_limit), per action:
+
+```toml
+[rate_limit]
+all    = "60/1m"   # every endpoint of this resource
+create = "5/1m"    # …except this one, which is stricter
+list   = "off"     # …and this one, which isn't limited at all
+```
+
+The keys are the ones `[permissions]` uses (`list`, `read`, `create`, `update`,
+`delete`) plus `all`, which applies wherever an action names no rule of its own.
+An action that names nothing and no `all` falls through to `main.toml`. A value
+is `"<requests>/<window>"` (`"100/1m"`, `"30/30s"`, `"1000/1h"`), `"off"`, or
+`"inherit"`; anything else fails the load.
+
+Each rule gets its own count, so a caller who has spent this resource's `create`
+allowance can still read.
+
 ## `[publish]`
 
 An optional section announcing the resource's successful writes on a

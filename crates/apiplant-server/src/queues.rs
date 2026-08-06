@@ -144,8 +144,7 @@ pub async fn run(subscriber: Subscriber) {
                 tokio::time::sleep(wait).await;
                 // Try to get notifications back. Until this succeeds the queue
                 // still works, just at poll speed.
-                if let Ok(reconnected) =
-                    Listener::connect(&subscriber.database_url, &channel).await
+                if let Ok(reconnected) = Listener::connect(&subscriber.database_url, &channel).await
                 {
                     tracing::info!(channel, "queue listener reconnected");
                     listener = Some(reconnected);

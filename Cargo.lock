@@ -350,6 +350,7 @@ dependencies = [
  "futures-util",
  "libloading 0.8.9",
  "ntex",
+ "ntex-ratelimiter",
  "rustls 0.23.42",
  "rustls-pemfile",
  "serde",
@@ -1169,6 +1170,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1933,6 +1948,12 @@ dependencies = [
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
@@ -2977,6 +2998,17 @@ dependencies = [
  "ntex-tokio",
  "ntex-util",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "ntex-ratelimiter"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62524be1c8f9786939ce3ca4ff53095921ad29889e00ae273f3f90a6e5c2822c"
+dependencies = [
+ "dashmap",
+ "ntex",
+ "tokio",
 ]
 
 [[package]]

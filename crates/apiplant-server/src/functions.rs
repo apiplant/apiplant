@@ -21,6 +21,7 @@ use apiplant_abi::{
 };
 use apiplant_ai::Ai;
 use apiplant_cache::Cache;
+use apiplant_core::RateLimitRule;
 use apiplant_db::Db;
 use apiplant_email::Mailer;
 use apiplant_payments::Payments;
@@ -46,15 +47,45 @@ pub struct LoadedFunction {
     /// Config JSON merged from `functions/<name>.toml` (or `{}` if absent).
     /// For a built-in, whatever the framework handed it at registration.
     pub config_json: String,
+    /// How often one caller may invoke it, from the same file's `rate_limit`
+    /// key. [`Inherit`](RateLimitRule::Inherit) leaves it to `main.toml`.
+    pub rate_limit: RateLimitRule,
     body: Body,
+}
+
+/// Read a function's `rate_limit` out of its resolved config.
+///
+/// It lives in `functions/<name>.toml` rather than in the manifest because the
+/// manifest crosses the ABI boundary compiled into the library: how often a
+/// deployment lets people call a function is the deployment's decision, and it
+/// should not take a recompile. A value that is not a rate limit is logged and
+/// ignored — a function that refuses to load is a worse answer than one that
+/// runs at the app-wide rate while somebody fixes a typo.
+fn declared_rate_limit(name: &str, config_json: &str) -> RateLimitRule {
+    let declared = serde_json::from_str::<serde_json::Value>(config_json)
+        .ok()
+        .and_then(|config| config.get("rate_limit")?.as_str().map(str::to_string));
+    let Some(declared) = declared else {
+        return RateLimitRule::Inherit;
+    };
+    RateLimitRule::parse(&declared).unwrap_or_else(|| {
+        tracing::warn!(
+            function = %name,
+            value = %declared,
+            "`rate_limit` is not a rate limit (`100/1m`, `off`, `inherit`); ignoring it"
+        );
+        RateLimitRule::Inherit
+    })
 }
 
 impl LoadedFunction {
     /// Wrap an already-constructed function instance. Used by [`FunctionRegistry::load_dir`]
     /// and by hosts that link functions in statically instead of loading `.so`s.
     pub fn new(func: BoxedFunction, config_json: String) -> Self {
+        let manifest = func.manifest();
         LoadedFunction {
-            manifest: func.manifest(),
+            rate_limit: declared_rate_limit(manifest.name.as_str(), &config_json),
+            manifest,
             config_json,
             body: Body::Dynamic(func),
         }
@@ -68,6 +99,7 @@ impl LoadedFunction {
         config_json: String,
     ) -> Self {
         LoadedFunction {
+            rate_limit: declared_rate_limit(manifest.name.as_str(), &config_json),
             manifest,
             config_json,
             body: Body::Builtin(handler),
@@ -241,6 +273,7 @@ impl FunctionRegistry {
                 .unwrap_or_else(|| "{}".to_string());
 
             loaded.push(LoadedFunction {
+                rate_limit: declared_rate_limit(&name, &config_json),
                 manifest,
                 config_json,
                 body: Body::Dynamic(func),
@@ -547,11 +580,7 @@ impl HostApi for HostBridge {
 
     fn publish(&self, request: RStr<'_>) -> RResult<RString, RString> {
         let Some(queue) = &self.queue else {
-            return RResult::RErr(
-                "this invocation has no queue attached"
-                    .to_string()
-                    .into(),
-            );
+            return RResult::RErr("this invocation has no queue attached".to_string().into());
         };
         // The publisher is recorded as the caller of *this* function, so a
         // message queued while handling somebody's request carries their id

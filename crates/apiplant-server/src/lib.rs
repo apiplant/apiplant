@@ -256,6 +256,14 @@ macro_rules! build_app {
             scope = scope.default_service($crate::ntex_web::to($crate::not_found_route));
         }
 
+        // Rate limiting wraps the API and only the API: the dashboard's own
+        // assets and the public site are files, and counting a page's images
+        // against the allowance for its data is how a limit that was set for
+        // an API ends up breaking a browser.
+        let scope = scope.wrap($crate::rate_limit::RateLimit::new(::std::sync::Arc::clone(
+            &state.rate_limit,
+        )));
+
         let mut app = $crate::ntex_web::App::new().state(state.clone());
 
         // Root-level routes answer for the configured domain only, exactly as
@@ -349,6 +357,7 @@ mod oauth_routes;
 mod openapi;
 mod queue_routes;
 pub mod queues;
+pub mod rate_limit;
 mod response;
 mod sse;
 mod state;
@@ -869,6 +878,18 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         tracing::info!("  404 -> {}", page.display());
     }
 
+    // Resolved before the state is assembled, and from inside the runtime:
+    // every limit gets a bucket with a task sweeping the clients that stopped
+    // calling.
+    let rate_limit = rate_limit::RateLimitPolicy::build(&app, &registry);
+    if rate_limit.is_active() {
+        tracing::info!(
+            overrides = rate_limit.overrides(),
+            "  rate limit -> {}",
+            app.config.rate_limit.default.as_string()
+        );
+    }
+
     let state = AppState {
         app: Arc::new(app),
         db,
@@ -882,6 +903,7 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         oauth: oauth.map(Arc::new),
         queue: queue.clone(),
         agent_ais: Arc::new(agent_ais),
+        rate_limit: Arc::new(rate_limit),
         statics: Arc::new(statics),
         admin_manifest: Arc::new(admin_manifest),
         openapi_json: Arc::new(openapi_json),

@@ -192,6 +192,11 @@ auto_migrate = true
 # tokens. `${{JWT_SECRET}}` reads it from the environment instead.
 jwt_secret = "change-me-before-you-deploy"
 
+[rate_limit]
+# Nothing is limited until this names a rate. One line covers every endpoint;
+# a resource or a function narrows it — or lifts it — for its own.
+# default = "100/1m"
+
 [docs]
 enabled = true
 path = "/docs"
