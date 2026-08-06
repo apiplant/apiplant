@@ -31,6 +31,22 @@ contents refers to. Relative links between guides, such as
 `resources.md#fields`, are rewritten to routes; links outside `docs/` point to
 GitHub.
 
+## Search
+
+The docs sidebar searches the full text of every guide, not just their titles.
+[`build/search-index.ts`](build/search-index.ts) is a Vite plugin: at build time
+it cuts each `../docs/*.md` into sections at its h2/h3 headings, indexes them
+with [zbsearch](https://github.com/micheleriva/zbsearch), and serialises the
+finished index into the virtual module `virtual:search-index`. Editing a guide
+rebuilds it, in `pnpm build` and in `pnpm dev` alike; nothing is committed.
+
+The browser therefore never tokenises the manual — it loads the prebuilt index
+(its own chunk, fetched on the first keystroke, alongside the engine) and calls
+`search`. [`src/lib/search.ts`](src/lib/search.ts) does that, and builds the
+snippets; each result links to the section anchor, not just the guide. Index and
+query share one tokenizer, [`src/lib/search-tokenizer.ts`](src/lib/search-tokenizer.ts) —
+they must, or a stemmed index would not match an unstemmed term.
+
 ## Styling
 
 `src/app.css` holds the palette and three rules that no utility can express;

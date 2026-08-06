@@ -19,14 +19,20 @@
 //! That inversion is the whole design: the isolate thread only ever runs
 //! JavaScript, and the ops are a mailbox.
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::time::Duration;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use deno_core::{
-    extension, op2, ExtensionFileSource, JsRuntime, OpState, PollEventLoopOptions, RuntimeOptions,
-};
+use deno_core::{JsRuntime, PollEventLoopOptions, RuntimeOptions};
+
+pub(crate) use crate::ext::{Current, Message};
+
+/// The V8 heap every isolate starts from, built by `build.rs`.
+///
+/// It carries `deno_web`'s globals and our own bootstrap, already parsed and
+/// executed. See `build.rs` for why this is mandatory rather than an
+/// optimisation: without it `deno_web`'s sources are absolute paths into the
+/// build machine's Cargo registry.
+static SNAPSHOT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/APIPLANT_JS_SNAPSHOT.bin"));
 
 /// How long one invocation may run before the isolate is terminated.
 ///
@@ -50,78 +56,6 @@ pub(crate) struct Job {
     pub input: String,
     /// Where the isolate sends host requests and, finally, the result.
     pub replies: Sender<Message>,
-}
-
-/// What the isolate's thread sends back over a job's channel.
-pub(crate) enum Message {
-    /// The function asked the host for something and is blocked until answered.
-    Host {
-        kind: String,
-        payload: String,
-        answer: Sender<String>,
-    },
-    /// The call finished. Always the last message of a job.
-    Done(Result<String, String>),
-}
-
-/// The isolate-side end of the current job, read by the op.
-type Current = Rc<RefCell<Option<Sender<Message>>>>;
-
-#[op2]
-#[string]
-fn op_apiplant_host(state: &mut OpState, #[string] kind: &str, #[string] payload: &str) -> String {
-    let current = state.borrow::<Current>().clone();
-    let replies = current.borrow().clone();
-    let Some(replies) = replies else {
-        // Only reachable if user code stashed `ctx` and called it after the
-        // invocation returned — from a timer, say. There is no host to ask.
-        return r#"{"error":"no invocation in progress"}"#.to_string();
-    };
-
-    let (answer, wait) = bounded(1);
-    let sent = replies.send(Message::Host {
-        kind: kind.to_string(),
-        payload: payload.to_string(),
-        answer,
-    });
-    if sent.is_err() {
-        return r#"{"error":"the host stopped listening"}"#.to_string();
-    }
-    wait.recv()
-        .unwrap_or_else(|_| r#"{"error":"the host stopped listening"}"#.to_string())
-}
-
-/// The specifier the bootstrap is registered and entered under.
-const BOOTSTRAP: &str = "ext:apiplant_js/bootstrap.js";
-
-/// The bootstrap itself, compiled into the binary.
-///
-/// It lives in `assets/` and arrives here through `include_str!` for one
-/// reason: `extension!`'s `esm = [dir …]` form does *not* embed the file. It
-/// expands to `ExtensionFileSource::loaded_during_snapshot`, which stores the
-/// build machine's absolute `CARGO_MANIFEST_DIR` path and reads it off disk when
-/// an isolate starts. That works in a checkout and nowhere else: a released
-/// binary looks for the CI runner's source tree, does not find it, and every
-/// TypeScript function fails to load while the rest of the server is fine. So
-/// the source is embedded here and installed over `esm_files` below.
-const BOOTSTRAP_SOURCE: &str = include_str!("../assets/bootstrap.js");
-
-extension!(
-    apiplant_js,
-    ops = [op_apiplant_host],
-    esm_entry_point = BOOTSTRAP,
-    options = { current: Current },
-    state = |state, options| state.put::<Current>(options.current),
-);
-
-/// The extension, with the bootstrap supplied as source rather than a path.
-fn extension(current: Current) -> deno_core::Extension {
-    let mut extension = apiplant_js::init(current);
-    extension.esm_files = std::borrow::Cow::Owned(vec![ExtensionFileSource::new_computed(
-        BOOTSTRAP,
-        BOOTSTRAP_SOURCE.into(),
-    )]);
-    extension
 }
 
 /// Start an isolate on its own thread with `code` already evaluated.
@@ -152,19 +86,37 @@ fn run(
     jobs: Receiver<Job>,
     ready: Sender<Result<Option<String>, String>>,
 ) {
-    let current: Current = Rc::new(RefCell::new(None));
+    let current: Current = crate::ext::detached();
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![extension(current.clone())],
+        // The extension list must match `build.rs` exactly — deno_core checks
+        // the registered ops against the ones the snapshot was built with.
+        extensions: vec![
+            deno_webidl::deno_webidl::init(),
+            deno_web::deno_web::init(
+                deno_web::BlobStore::default_arc(),
+                None,
+                false,
+                deno_web::InMemoryBroadcastChannel::default(),
+            ),
+            crate::ext::extension(current.clone()),
+        ],
+        startup_snapshot: Some(SNAPSHOT),
         // Serves `import … from "apiplant"` and refuses everything else.
         module_loader: Some(crate::module::Loader::shared()),
         ..Default::default()
     });
 
-    // The isolate's own event loop needs an async context to be driven in; it is
-    // current-thread and single-purpose, and never blocks on anything but V8,
-    // because host work happens on the *caller's* thread (see the module docs).
+    // The isolate's own event loop needs an async context to be driven in. It is
+    // current-thread and single-purpose: host work still happens on the
+    // *caller's* thread (see the module docs), so nothing here blocks.
+    //
+    // The IO driver is enabled for one reason — `fetch`. Unlike a host call, an
+    // outbound request is not the host's to serve, so it runs as an ordinary
+    // async op on this runtime. That is also what makes concurrent fetches
+    // concurrent: `Promise.all([fetch(a), fetch(b)])` has both in flight, which
+    // a trip through the host mailbox could not do.
     let Ok(local) = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
+        .enable_all()
         .build()
     else {
         let _ = ready.send(Err("cannot start the JavaScript event loop".into()));
@@ -402,40 +354,55 @@ impl Drop for WatchGuard<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::ext::{extension, BOOTSTRAP, BOOTSTRAP_SOURCE};
 
-    /// The bootstrap must travel *inside* the binary, not as a path to it.
+    /// Every `deno_web` script the bootstrap loads must be inside the snapshot.
     ///
-    /// This is a regression test for a released binary that loaded no
-    /// TypeScript function at all: `extension!`'s `esm = [dir …]` form records
-    /// the build machine's absolute path and reads it when an isolate starts,
-    /// so every function failed on any machine that was not the CI runner. A
-    /// checkout cannot notice — the path is right there — which is why the
-    /// assertion is on the extension rather than on a working isolate.
+    /// This is the same regression the bootstrap itself once caused, in its
+    /// general form. deno_core records an extension's JS by *absolute path* and
+    /// reads it from disk on demand; the source is only embedded once a snapshot
+    /// has consumed it. So a `loadExtScript` for a specifier the snapshot missed
+    /// works perfectly in a checkout — the path points into the local Cargo
+    /// registry — and fails on every other machine, taking the Web globals and
+    /// therefore every TypeScript function with it.
+    ///
+    /// A test that merely starts an isolate cannot see this, for exactly that
+    /// reason. So the assertion is against the specifier list `build.rs` records
+    /// after the snapshot is sealed.
     #[test]
-    fn bootstrap_is_embedded_not_a_path() {
-        let extension = extension(Rc::new(RefCell::new(None)));
+    fn every_loaded_script_is_in_the_snapshot() {
+        let consumed = include_str!(concat!(env!("OUT_DIR"), "/consumed_lazy_specifiers.txt"))
+            .lines()
+            .collect::<Vec<_>>();
 
-        let bootstrap = extension
-            .esm_files
-            .iter()
-            .find(|file| file.specifier == BOOTSTRAP)
-            .expect("the extension must carry the bootstrap");
+        // The specifiers as the bootstrap actually spells them, read back out of
+        // it so this cannot drift from the file it is checking.
+        let loaded = BOOTSTRAP_SOURCE
+            .match_indices("ext(\"")
+            .map(|(at, _)| {
+                let rest = &BOOTSTRAP_SOURCE[at + 5..];
+                &rest[..rest.find('"').expect("an unterminated ext() specifier")]
+            })
+            .collect::<Vec<_>>();
 
         assert!(
-            bootstrap.is_runtime_loadable(),
-            "{BOOTSTRAP} is a build-machine path, so a released binary cannot load it",
+            !loaded.is_empty(),
+            "no `ext(\"…\")` calls found — has the bootstrap's loader been renamed?",
         );
-        for file in extension.esm_files.iter() {
-            assert!(file.is_runtime_loadable(), "{} is a path", file.specifier);
+        for specifier in loaded {
+            assert!(
+                consumed.contains(&specifier),
+                "{specifier} is not in the startup snapshot, so a released binary \
+                 would read it from the build machine's disk and fail",
+            );
         }
     }
 
     /// The entry point has to name a module the extension actually supplies;
-    /// getting this wrong fails only at isolate startup, in the same silent way.
+    /// getting this wrong fails only at isolate startup, silently.
     #[test]
     fn bootstrap_is_the_entry_point() {
-        let extension = extension(Rc::new(RefCell::new(None)));
+        let extension = extension(crate::ext::detached());
         assert_eq!(extension.esm_entry_point, Some(BOOTSTRAP));
     }
 }

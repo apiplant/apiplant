@@ -9,13 +9,23 @@ authors.workspace = true
 description = "TypeScript/JavaScript functions for apiplant: build-time transpile, V8 isolates at runtime"
 # `assets/` holds the two files the npm package ships; `typescript/` copies them
 # out of here at pack time, so this is the one place they live.
-include = ["src/**/*", "assets/**/*", "Cargo.toml"]
+include = ["src/**/*", "assets/**/*", "build.rs", "Cargo.toml"]
+
+# The V8 startup snapshot is built here rather than assembled at runtime. It is
+# not an optimisation: `deno_web` declares its 26 JS files as `lazy_loaded_js`,
+# and deno_core records those by *absolute path* and reads them from disk unless
+# a snapshot consumes them first. Without this step a released binary would go
+# looking for the build machine's `~/.cargo/registry` — the same failure the
+# bootstrap once had (see `worker.rs`), multiplied across every Web global.
+build = "build.rs"
 
 [dependencies]
 apiplant-abi = { workspace = true, features = ["manifest-json"] }
 abi_stable.workspace = true
 deno_core.workspace = true
 deno_error.workspace = true
+deno_web.workspace = true
+deno_webidl.workspace = true
 oxc_allocator = { workspace = true, optional = true }
 oxc_ast = { workspace = true, optional = true }
 oxc_codegen = { workspace = true, optional = true }
@@ -25,8 +35,22 @@ oxc_span = { workspace = true, optional = true }
 oxc_transformer = { workspace = true, optional = true }
 crossbeam-channel.workspace = true
 tokio = { workspace = true }
+reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+
+[build-dependencies]
+# `build.rs` compiles `src/ext.rs` directly (via `#[path]`) so the snapshot is
+# built from the same op declarations the runtime uses — hence the overlap with
+# `[dependencies]`. Nothing here is linked into the final binary.
+deno_core.workspace = true
+deno_error.workspace = true
+deno_web.workspace = true
+deno_webidl.workspace = true
+crossbeam-channel.workspace = true
+reqwest.workspace = true
+serde.workspace = true
 
 [features]
 # `transpile` pulls in the TypeScript front end (`oxc`). The CLI needs it to build

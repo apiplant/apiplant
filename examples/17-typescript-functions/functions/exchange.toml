@@ -1,0 +1,26 @@
+# Per-deployment configuration for the `exchange` function, read by `config()`.
+#
+# The name is the *function's*, not the file's: `web.ts` exports three
+# functions, and each reads its own `functions/<function name>.toml`. So this
+# file configures `exchange` alone; `receipt` and `digest` need no config and
+# have none.
+#
+# Keeping the upstream here rather than in the source is what lets staging and
+# production point at different hosts — and lets a test point at a stub without
+# editing TypeScript.
+rates_url = "https://api.frankfurter.dev"
+
+# `exchange` only reaches this one host. With APIPLANT_FETCH_ALLOW set, that is
+# enforced rather than merely intended:
+#
+#   APIPLANT_FETCH_ALLOW=api.frankfurter.dev apiplant run .
+#
+# Unset, `fetch` can reach anything. Set, anything else fails with a TypeError —
+# which is how you stop a dependency, or a prompt-injected AI tool call, from
+# reading a cloud metadata endpoint. `*.example.com` covers subdomains.
+#
+# Redirect targets are checked too, not just the URL you asked for. That is not
+# a detail: the older `frankfurter.app` host redirects here, and an allowlist
+# that only checked the first URL would have followed it anywhere the upstream
+# pointed. Expect to allow every host in a redirect chain, or set
+# `redirect: "manual"` and handle it yourself.

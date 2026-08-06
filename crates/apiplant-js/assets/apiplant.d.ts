@@ -614,3 +614,415 @@ declare function setInterval(
 ): number;
 declare function clearTimeout(id?: number): void;
 declare function clearInterval(id?: number): void;
+
+/* The Web platform globals.
+ *
+ * These are declared by hand rather than by adding `"DOM"` to `lib` in
+ * `tsconfig.json`, and the difference matters: the DOM library would also
+ * promise `document`, `window` and `fetch`, none of which exist here. A
+ * function runs in an isolate, not a browser. What follows is the whole list —
+ * if it is not written down here, it is not there.
+ */
+
+/** Text encoding. `encode` returns UTF-8 bytes, so a multi-byte character
+ *  contributes more than one element. */
+declare class TextEncoder {
+  readonly encoding: "utf-8";
+  encode(input?: string): Uint8Array;
+  encodeInto(source: string, destination: Uint8Array): {
+    read: number;
+    written: number;
+  };
+}
+declare class TextDecoder {
+  constructor(
+    label?: string,
+    options?: { fatal?: boolean; ignoreBOM?: boolean },
+  );
+  readonly encoding: string;
+  decode(input?: ArrayBuffer | ArrayBufferView, options?: { stream?: boolean }): string;
+}
+declare class TextEncoderStream {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<string>;
+}
+declare class TextDecoderStream {
+  constructor(label?: string, options?: { fatal?: boolean; ignoreBOM?: boolean });
+  readonly readable: ReadableStream<string>;
+  readonly writable: WritableStream<Uint8Array>;
+}
+
+/** Base64. These are byte-oriented: `btoa` throws on a character above U+00FF,
+ *  so text goes through `TextEncoder` first. */
+declare function atob(data: string): string;
+declare function btoa(data: string): string;
+
+/** URLs. There is no `location`, so every URL must be absolute or supply a
+ *  base — `new URL("/a")` throws. */
+declare class URL {
+  constructor(url: string | URL, base?: string | URL);
+  hash: string;
+  host: string;
+  hostname: string;
+  href: string;
+  readonly origin: string;
+  password: string;
+  pathname: string;
+  port: string;
+  protocol: string;
+  search: string;
+  readonly searchParams: URLSearchParams;
+  username: string;
+  toJSON(): string;
+  toString(): string;
+  static canParse(url: string | URL, base?: string): boolean;
+}
+declare class URLSearchParams {
+  constructor(
+    init?: string | string[][] | Record<string, string> | URLSearchParams,
+  );
+  readonly size: number;
+  append(name: string, value: string): void;
+  delete(name: string, value?: string): void;
+  get(name: string): string | null;
+  getAll(name: string): string[];
+  has(name: string, value?: string): boolean;
+  set(name: string, value: string): void;
+  sort(): void;
+  toString(): string;
+  forEach(fn: (value: string, key: string, parent: URLSearchParams) => void): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
+}
+interface URLPatternInit {
+  protocol?: string;
+  username?: string;
+  password?: string;
+  hostname?: string;
+  port?: string;
+  pathname?: string;
+  search?: string;
+  hash?: string;
+  baseURL?: string;
+}
+interface URLPatternComponentResult {
+  input: string;
+  groups: Record<string, string | undefined>;
+}
+interface URLPatternResult {
+  inputs: (string | URLPatternInit)[];
+  protocol: URLPatternComponentResult;
+  username: URLPatternComponentResult;
+  password: URLPatternComponentResult;
+  hostname: URLPatternComponentResult;
+  port: URLPatternComponentResult;
+  pathname: URLPatternComponentResult;
+  search: URLPatternComponentResult;
+  hash: URLPatternComponentResult;
+}
+declare class URLPattern {
+  constructor(input?: string | URLPatternInit, baseURL?: string);
+  test(input?: string | URLPatternInit, baseURL?: string): boolean;
+  exec(input?: string | URLPatternInit, baseURL?: string): URLPatternResult | null;
+}
+
+/** Timing. `performance.now()` is milliseconds since the isolate started, not
+ *  since the epoch — use `Date.now()` for a wall clock. */
+declare const performance: {
+  now(): number;
+  readonly timeOrigin: number;
+};
+
+/** A deep copy that understands `Map`, `Set`, `Date`, `ArrayBuffer` and cycles,
+ *  which `JSON.parse(JSON.stringify(…))` does not. Functions cannot be cloned. */
+declare function structuredClone<T>(value: T): T;
+
+/** Binary data. `Blob` and `File` are in-memory only; there is no filesystem
+ *  behind `File`, it is the shape an upload arrives in. */
+declare class Blob {
+  constructor(
+    parts?: (Blob | ArrayBuffer | ArrayBufferView | string)[],
+    options?: { type?: string },
+  );
+  readonly size: number;
+  readonly type: string;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  bytes(): Promise<Uint8Array>;
+  slice(start?: number, end?: number, contentType?: string): Blob;
+  stream(): ReadableStream<Uint8Array>;
+  text(): Promise<string>;
+}
+declare class File extends Blob {
+  constructor(
+    parts: (Blob | ArrayBuffer | ArrayBufferView | string)[],
+    name: string,
+    options?: { type?: string; lastModified?: number },
+  );
+  readonly name: string;
+  readonly lastModified: number;
+}
+declare class FileReader extends EventTarget {
+  readonly result: string | ArrayBuffer | null;
+  readonly error: DOMException | null;
+  readAsArrayBuffer(blob: Blob): void;
+  readAsText(blob: Blob, encoding?: string): void;
+  readAsDataURL(blob: Blob): void;
+  abort(): void;
+  onload: ((this: FileReader, ev: Event) => unknown) | null;
+  onerror: ((this: FileReader, ev: Event) => unknown) | null;
+}
+
+/** Streams. */
+declare class ReadableStream<R = unknown> {
+  constructor(
+    source?: {
+      start?: (controller: ReadableStreamDefaultController<R>) => unknown;
+      pull?: (controller: ReadableStreamDefaultController<R>) => unknown;
+      cancel?: (reason?: unknown) => unknown;
+    },
+    strategy?: { highWaterMark?: number; size?: (chunk: R) => number },
+  );
+  readonly locked: boolean;
+  cancel(reason?: unknown): Promise<void>;
+  getReader(): ReadableStreamDefaultReader<R>;
+  pipeThrough<T>(transform: {
+    readable: ReadableStream<T>;
+    writable: WritableStream<R>;
+  }): ReadableStream<T>;
+  pipeTo(destination: WritableStream<R>): Promise<void>;
+  tee(): [ReadableStream<R>, ReadableStream<R>];
+  [Symbol.asyncIterator](): AsyncIterableIterator<R>;
+}
+declare class ReadableStreamDefaultController<R = unknown> {
+  readonly desiredSize: number | null;
+  close(): void;
+  enqueue(chunk: R): void;
+  error(e?: unknown): void;
+}
+declare class ReadableStreamDefaultReader<R = unknown> {
+  readonly closed: Promise<void>;
+  cancel(reason?: unknown): Promise<void>;
+  read(): Promise<{ done: false; value: R } | { done: true; value: undefined }>;
+  releaseLock(): void;
+}
+declare class WritableStream<W = unknown> {
+  constructor(
+    sink?: {
+      start?: (controller: unknown) => unknown;
+      write?: (chunk: W, controller: unknown) => unknown;
+      close?: () => unknown;
+      abort?: (reason?: unknown) => unknown;
+    },
+    strategy?: { highWaterMark?: number; size?: (chunk: W) => number },
+  );
+  readonly locked: boolean;
+  abort(reason?: unknown): Promise<void>;
+  close(): Promise<void>;
+  getWriter(): {
+    readonly closed: Promise<void>;
+    readonly desiredSize: number | null;
+    write(chunk: W): Promise<void>;
+    close(): Promise<void>;
+    abort(reason?: unknown): Promise<void>;
+    releaseLock(): void;
+  };
+}
+declare class TransformStream<I = unknown, O = unknown> {
+  constructor(
+    transformer?: {
+      start?: (controller: unknown) => unknown;
+      transform?: (chunk: I, controller: unknown) => unknown;
+      flush?: (controller: unknown) => unknown;
+    },
+    writableStrategy?: { highWaterMark?: number },
+    readableStrategy?: { highWaterMark?: number },
+  );
+  readonly readable: ReadableStream<O>;
+  readonly writable: WritableStream<I>;
+}
+declare class ByteLengthQueuingStrategy {
+  constructor(options: { highWaterMark: number });
+  readonly highWaterMark: number;
+  size(chunk: ArrayBufferView): number;
+}
+declare class CountQueuingStrategy {
+  constructor(options: { highWaterMark: number });
+  readonly highWaterMark: number;
+  size(): number;
+}
+/** gzip and deflate, as streams. */
+declare class CompressionStream {
+  constructor(format: "gzip" | "deflate" | "deflate-raw");
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<ArrayBufferView>;
+}
+declare class DecompressionStream {
+  constructor(format: "gzip" | "deflate" | "deflate-raw");
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<ArrayBufferView>;
+}
+
+/** Events, cancellation, and the error type the above throw. */
+declare class Event {
+  constructor(type: string, init?: { bubbles?: boolean; cancelable?: boolean });
+  readonly type: string;
+  readonly target: EventTarget | null;
+  readonly defaultPrevented: boolean;
+  preventDefault(): void;
+  stopPropagation(): void;
+}
+declare class CustomEvent<T = unknown> extends Event {
+  constructor(
+    type: string,
+    init?: { detail?: T; bubbles?: boolean; cancelable?: boolean },
+  );
+  readonly detail: T;
+}
+declare class EventTarget {
+  addEventListener(
+    type: string,
+    listener: ((event: Event) => unknown) | null,
+    options?: boolean | { once?: boolean; passive?: boolean; signal?: AbortSignal },
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: ((event: Event) => unknown) | null,
+    options?: boolean | { capture?: boolean },
+  ): void;
+  dispatchEvent(event: Event): boolean;
+}
+declare class AbortSignal extends EventTarget {
+  readonly aborted: boolean;
+  readonly reason: unknown;
+  throwIfAborted(): void;
+  onabort: ((this: AbortSignal, ev: Event) => unknown) | null;
+  static abort(reason?: unknown): AbortSignal;
+  static timeout(milliseconds: number): AbortSignal;
+}
+declare class AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: unknown): void;
+}
+declare class DOMException extends Error {
+  constructor(message?: string, name?: string);
+  readonly name: string;
+  readonly message: string;
+}
+
+/* HTTP.
+ *
+ * `fetch` here is one op over the same reqwest client the rest of the server
+ * uses, so an outbound request shares its TLS configuration. Two differences
+ * from a browser are worth knowing:
+ *
+ *   * A response is **buffered**, not streamed. `body` is a `ReadableStream`
+ *     over bytes that have already arrived, so `await fetch(…)` does not
+ *     resolve until the last byte does.
+ *   * `APIPLANT_FETCH_ALLOW` can restrict which hosts are reachable, and
+ *     `APIPLANT_FETCH_TIMEOUT_MS` bounds each request (30s by default). A
+ *     refused or timed-out request rejects with a `TypeError`, like any other
+ *     network failure.
+ *
+ * A non-2xx status is *not* a failure: the promise resolves and `ok` is false.
+ */
+type BodyInit = string | URLSearchParams | ArrayBuffer | ArrayBufferView;
+type HeadersInit = Headers | [string, string][] | Record<string, string>;
+
+declare class Headers {
+  constructor(init?: HeadersInit);
+  /** Values for a repeated header are joined with ", ". */
+  append(name: string, value: string): void;
+  set(name: string, value: string): void;
+  /** Case-insensitive; `null` when absent. */
+  get(name: string): string | null;
+  has(name: string): boolean;
+  delete(name: string): void;
+  /** `Set-Cookie` is the one header that must not be joined. */
+  getSetCookie(): string[];
+  forEach(
+    callback: (value: string, name: string, parent: Headers) => void,
+    thisArg?: unknown,
+  ): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
+}
+
+interface RequestInit {
+  method?: string;
+  headers?: HeadersInit;
+  body?: BodyInit | null;
+  /** `follow` (the default) walks redirects; `manual` returns the 3xx itself;
+   *  `error` rejects when one is met. Redirect targets are re-checked against
+   *  `APIPLANT_FETCH_ALLOW`, so a chain may need every host allowed. */
+  redirect?: "follow" | "manual" | "error";
+  /** Aborting stops this call *waiting*; the request already in flight is not
+   *  cancelled and still runs to completion upstream. */
+  signal?: AbortSignal | null;
+}
+
+/** The body accessors, shared by `Request` and `Response`. Each may be called
+ *  once — a second call rejects with a `TypeError`. */
+interface Body {
+  readonly body: ReadableStream<Uint8Array> | null;
+  readonly bodyUsed: boolean;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  bytes(): Promise<Uint8Array>;
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+  blob(): Promise<Blob>;
+}
+
+declare class Request implements Body {
+  constructor(input: string | URL | Request, init?: RequestInit);
+  readonly url: string;
+  readonly method: string;
+  readonly headers: Headers;
+  readonly redirect: "follow" | "manual" | "error";
+  readonly signal: AbortSignal | null;
+  clone(): Request;
+  readonly body: ReadableStream<Uint8Array> | null;
+  readonly bodyUsed: boolean;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  bytes(): Promise<Uint8Array>;
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+  blob(): Promise<Blob>;
+}
+
+interface ResponseInit {
+  status?: number;
+  statusText?: string;
+  headers?: HeadersInit;
+}
+
+declare class Response implements Body {
+  constructor(body?: BodyInit | null, init?: ResponseInit);
+  /** True for 200–299. A 404 is a resolved promise with `ok: false`. */
+  readonly ok: boolean;
+  readonly status: number;
+  readonly statusText: string;
+  readonly headers: Headers;
+  /** Where the response came from — the *last* URL after any redirects. */
+  readonly url: string;
+  readonly redirected: boolean;
+  readonly type: string;
+  clone(): Response;
+  static json(data: unknown, init?: ResponseInit): Response;
+  static error(): Response;
+  readonly body: ReadableStream<Uint8Array> | null;
+  readonly bodyUsed: boolean;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  bytes(): Promise<Uint8Array>;
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+  blob(): Promise<Blob>;
+}
+
+declare function fetch(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response>;

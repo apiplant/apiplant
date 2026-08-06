@@ -129,20 +129,78 @@ globalThis.console = Object.freeze({
   trace: ctx.log.trace,
 });
 
-// Timers are not globals in deno_core, they are `Deno.core` calls. A function
-// that debounces or polls expects the standard four, and the event loop already
-// knows how to wait for them, so they are exposed under their usual names.
+// The Web platform globals, from `deno_web`.
 //
-// Refed on purpose: an invocation is not finished until its timers have run,
-// which is what makes `await new Promise(r => setTimeout(r, 10))` behave.
-globalThis.setTimeout = (callback, delay = 0, ...args) =>
-  Deno.core.createSystemTimer(() => callback(...args), delay, true);
-globalThis.setInterval = (callback, delay = 0, ...args) =>
-  Deno.core.createSystemInterval(() => callback(...args), delay, true);
-globalThis.clearTimeout = (id) => {
-  if (id !== undefined) Deno.core.cancelTimer(id);
-};
-globalThis.clearInterval = globalThis.clearTimeout;
+// `deno_core` on its own is just V8 plus ops: it has no `TextEncoder`, no `URL`,
+// not even `setTimeout`. `deno_web` implements those to spec, but it does not
+// install them -- each of its files is a module that *returns* its interfaces,
+// leaving the choice of what a given runtime exposes to the embedder. That
+// choice is the list below, and it is deliberately a list rather than a loop:
+// every global a function can see is a global we have agreed to keep working.
+//
+// `deno_web`'s files are not ES modules and cannot be `import`ed: each is an
+// IIFE that returns its interfaces, fetched with `core.loadExtScript`. Their
+// sources live in the startup snapshot (see `build.rs`), so none of this
+// touches the disk, and a script already loaded is returned rather than re-run.
+const ext = (specifier) => Deno.core.loadExtScript(specifier);
+
+// `fetch` is ours rather than `deno_web`'s: it is one op over the same reqwest
+// client the rest of the server uses, so a function's outbound request goes
+// through the same TLS configuration and the same egress rules.
+import { fetch, Headers, Request, Response } from "ext:apiplant_js/fetch.js";
+
+const encoding = ext("ext:deno_web/08_text_encoding.js");
+const base64 = ext("ext:deno_web/05_base64.js");
+const url = ext("ext:deno_web/00_url.js");
+const urlPattern = ext("ext:deno_web/01_urlpattern.js");
+const timers = ext("ext:deno_web/02_timers.js");
+const perf = ext("ext:deno_web/15_performance.js");
+const clone = ext("ext:deno_web/02_structured_clone.js");
+const file = ext("ext:deno_web/09_file.js");
+const fileReader = ext("ext:deno_web/10_filereader.js");
+const streams = ext("ext:deno_web/06_streams.js");
+const compression = ext("ext:deno_web/14_compression.js");
+const domException = ext("ext:deno_web/01_dom_exception.js");
+const abort = ext("ext:deno_web/03_abort_signal.js");
+const event = ext("ext:deno_web/02_event.js");
+
+const { TextEncoder, TextDecoder, TextEncoderStream, TextDecoderStream } = encoding;
+const { atob, btoa } = base64;
+const { URL, URLSearchParams } = url;
+const { URLPattern } = urlPattern;
+const { setTimeout, clearTimeout, setInterval, clearInterval } = timers;
+const { performance } = perf;
+const { structuredClone } = clone;
+const { Blob, File } = file;
+const { FileReader } = fileReader;
+const { ReadableStream, WritableStream, TransformStream, ReadableStreamDefaultReader,
+  ByteLengthQueuingStrategy, CountQueuingStrategy } = streams;
+const { CompressionStream, DecompressionStream } = compression;
+const { DOMException } = domException;
+const { AbortController, AbortSignal } = abort;
+const { Event, EventTarget, CustomEvent } = event;
+
+Object.defineProperties(globalThis, Object.getOwnPropertyDescriptors({
+  // Encoding and base64.
+  TextEncoder, TextDecoder, TextEncoderStream, TextDecoderStream, atob, btoa,
+  // URLs. Note there is no `location`: a function is not a document, so a
+  // relative URL has nothing to resolve against and `new URL(path)` throws.
+  URL, URLSearchParams, URLPattern,
+  // Timers. `deno_web`'s are refed, so an invocation is not finished until its
+  // timers have run -- which is what makes `await new Promise(r =>
+  // setTimeout(r, 10))` behave, exactly as the hand-rolled pair before it did.
+  setTimeout, clearTimeout, setInterval, clearInterval, performance,
+  // Structured data.
+  structuredClone, Blob, File, FileReader,
+  // Streams.
+  ReadableStream, WritableStream, TransformStream, ReadableStreamDefaultReader,
+  ByteLengthQueuingStrategy, CountQueuingStrategy,
+  CompressionStream, DecompressionStream,
+  // Events, and the error type the above throw.
+  Event, EventTarget, CustomEvent, AbortController, AbortSignal, DOMException,
+  // HTTP.
+  fetch, Headers, Request, Response,
+}));
 
 /// The module namespace, put here by the host once the app's module has been
 /// evaluated. Kept off `ctx` because it is host plumbing, not function API.

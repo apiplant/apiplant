@@ -871,8 +871,64 @@ queue.publish("order.paid", { orderId: order.id });
 **The request.** `config<T>()`, `principalId()`, `hook<T>()` and `log`. All are
 synchronous: the isolate blocks while the host performs the work on another
 thread. A handler may be declared `async` for its own reasons and is awaited
-either way. `console.log` goes to the server's log, and the standard timers are
-available.
+either way. `console.log` goes to the server's log.
+
+**Web platform globals.** A function runs in a V8 isolate, not a browser and not
+Node, so the globals it can see are an explicit list rather than whatever the
+engine happens to carry:
+
+| | |
+|---|---|
+| Encoding | `TextEncoder`, `TextDecoder`, and their stream forms, `atob`, `btoa` |
+| URLs | `URL`, `URLSearchParams`, `URLPattern` |
+| Timing | `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`, `performance` |
+| Data | `structuredClone`, `Blob`, `File`, `FileReader` |
+| Streams | `ReadableStream`, `WritableStream`, `TransformStream`, the queuing strategies, `CompressionStream`, `DecompressionStream` |
+| Events | `Event`, `EventTarget`, `CustomEvent`, `AbortController`, `AbortSignal`, `DOMException` |
+
+These are the real implementations, so `new TextEncoder().encode("héllo")` is six
+bytes rather than five. `apiplant.d.ts` declares exactly this set and no more —
+if it typechecks, it exists.
+
+There is **no `location`**, so a URL must be absolute or supply a base:
+`new URL("/a")` throws. A timer keeps its invocation alive —
+`await new Promise(r => setTimeout(r, 10))` waits rather than returning early —
+though the request timeout still applies.
+
+**`Intl` is complete**, with the full ICU tables behind it, so locales genuinely
+differ rather than falling back to English: `NumberFormat` with currencies,
+`DateTimeFormat` with the IANA timezone database, `Collator`, `PluralRules`,
+`RelativeTimeFormat`, `ListFormat`. One thing to know before asserting on the
+output — CLDR separates an amount from its currency symbol with a *non-breaking*
+space (U+00A0), not a plain one.
+
+**`fetch`** is the standard API, over the same HTTP client the rest of the
+server uses, so it shares the TLS configuration: `fetch`, `Headers`, `Request`,
+`Response`. A non-2xx status is a *resolved* promise with `ok: false`; only a
+request that never completed rejects, and it rejects with a `TypeError`.
+
+```ts
+const response = await fetch(url, { headers: { accept: "application/json" } });
+if (!response.ok) throw new BadRequest(`upstream said ${response.status}`);
+const body = await response.json();
+```
+
+Four things differ from a browser, and all four are worth knowing:
+
+* **Responses are buffered, not streamed.** `await fetch(…)` does not resolve
+  until the last byte has arrived; `body` is a `ReadableStream` over bytes
+  already in memory. Fine for handler-sized payloads, wrong for a gigabyte.
+* **`APIPLANT_FETCH_ALLOW`** restricts which hosts are reachable — a
+  comma-separated list, `*.example.com` for subdomains. Unset means no
+  restriction. Redirect targets are checked too, not just the URL you asked
+  for, so a chain may need every host in it allowed.
+* **`APIPLANT_FETCH_TIMEOUT_MS`** bounds each request, 30 seconds by default.
+* **Aborting stops waiting, not the request.** An `AbortSignal` settles the
+  promise; the request in flight still runs to completion upstream.
+
+The configured helpers are still the better route where they apply: `ai`,
+`email` and `payments` are logged, mockable and hold their own credentials,
+which a raw `fetch` does not.
 
 **Errors** follow the ABI's split. `throw new BadRequest("…")` produces a `400`
 with that message, the JavaScript equivalent of `APIPLANT_ERR_REQUEST`, and

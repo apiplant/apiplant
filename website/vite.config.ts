@@ -3,6 +3,7 @@ import solid from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { searchIndexPlugin } from "./build/search-index.ts";
 
 /* The download links name a release asset, and every asset name carries the
    version — so the site has to know it. Read from the workspace manifest, the
@@ -18,7 +19,7 @@ function workspaceVersion(): string {
 }
 
 export default defineConfig({
-  plugins: [solid(), tailwindcss()],
+  plugins: [solid(), tailwindcss(), searchIndexPlugin()],
   define: { __APIPLANT_VERSION__: JSON.stringify(workspaceVersion()) },
   // The guides are the repository's own docs/, one directory up. The alias is
   // what `import.meta.glob("@docs/*.md")` resolves against.
@@ -42,6 +43,11 @@ export default defineConfig({
         // whole manual to see the landing page. One chunk per guide instead,
         // fetched when that guide is opened.
         manualChunks(id) {
+          // The prebuilt search index, and the engine that reads it: neither is
+          // touched until the reader types in the search box, so both stay out
+          // of the entry chunk.
+          if (id.includes("virtual:search-index")) return "search-index";
+          if (id.includes("/node_modules/zbsearch/")) return "search-engine";
           const match = /\/docs\/([\w.-]+)\.md(\?|$)/.exec(id);
           return match ? `doc-${match[1]}` : undefined;
         },

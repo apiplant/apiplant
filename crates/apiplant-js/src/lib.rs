@@ -60,6 +60,7 @@
 //! An invocation that runs longer than `APIPLANT_JS_TIMEOUT_MS` (30s by default)
 //! has its isolate terminated and fails that one request; the worker recovers.
 
+mod ext;
 mod module;
 mod worker;
 

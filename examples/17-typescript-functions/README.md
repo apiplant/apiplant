@@ -24,6 +24,13 @@ is worth knowing what actually happens.
 | `GET /api/functions/notes` | authenticated | querying Postgres, reading the caller id |
 | hook `note.before_create` | private | `hook()`, typed hook data, rewriting the body before CRUD runs |
 | `POST /api/functions/draftReply` | authenticated | AI request typing, one tool definition, reading `reply.tool_calls` |
+| `POST /api/functions/exchange` | authenticated | `fetch`, `URL`, `Headers`, checking `response.ok`, the egress allowlist |
+| `POST /api/functions/receipt` | authenticated | `Intl` — currency, dates and lists that actually differ by locale |
+| `POST /api/functions/digest` | public | `TextEncoder`, `CompressionStream`, `btoa` |
+
+The last three live in `web.ts` and are about the **Web platform globals**: a
+function runs in a V8 isolate with a fixed set of them, listed in
+`apiplant.d.ts`. Nothing is imported — if it typechecks, it is there at runtime.
 
 ## Running it
 
@@ -33,8 +40,17 @@ and Go examples there is nothing to install first — no node, no deno, no bun.
 ```bash
 createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_typescript_functions
 
-cargo run -p apiplant -- build examples/17-typescript-functions   # hello.ts → hello.js
+cargo run -p apiplant -- build examples/17-typescript-functions   # *.ts → *.js
 cargo run -p apiplant -- run examples/17-typescript-functions
+```
+
+`exchange` calls a live currency API, so to run *that* one, allow the host it
+talks to. Without `APIPLANT_FETCH_ALLOW` set, `fetch` can reach anything; with
+it set, everything else fails:
+
+```bash
+APIPLANT_FETCH_ALLOW=api.frankfurter.dev \
+  cargo run -p apiplant -- run examples/17-typescript-functions
 ```
 
 ```bash
@@ -60,6 +76,43 @@ curl -X POST localhost:8099/api/note \
   -H 'content-type: application/json' -d '{"title":"   trimmed by the hook   "}'
 # {"title":"trimmed by the hook",...}
 ```
+
+The Web platform ones, from `web.ts`:
+
+```bash
+# fetch: calls the rates API, stores the result, reports where it came from.
+curl -X POST localhost:8099/api/functions/exchange \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"base":"EUR","quote":"USD"}'
+# {"rate":1.1554,"fetchedFrom":"https://api.frankfurter.dev/v1/latest?base=EUR&symbols=USD"}
+
+# Intl: the same amount and instant, in two locales.
+curl -X POST localhost:8099/api/functions/receipt \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"amount":1234.5,"currency":"EUR","locale":"de-DE","timeZone":"Europe/Rome"}'
+# {"total":"1.234,50 €","issued":"6. August 2026 um 15:48",
+#  "summary":"1.234,50 €, 6. August 2026 um 15:48 und Europe/Rome"}
+
+curl -X POST localhost:8099/api/functions/receipt \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"amount":1234,"currency":"JPY","locale":"ja-JP","timeZone":"Asia/Tokyo"}'
+# {"total":"￥1,234","issued":"2026年8月6日 22:48",
+#  "summary":"￥1,234、2026年8月6日 22:48、Asia/Tokyo"}
+
+# Encoding: "héllo world" is 11 characters but 12 bytes.
+curl -X POST localhost:8099/api/functions/digest \
+  -H 'content-type: application/json' -d '{"text":"héllo world"}'
+# {"characters":11,"bytes":12,"gzipped":38,"base64":"aMOpbGxvIHdvcmxk"}
+```
+
+Note the German `und` and the Japanese `、` in `summary`: `Intl.ListFormat`
+knows each locale's conventions, which is the sort of thing a hand-rolled
+`join(", ")` gets wrong everywhere but English.
+
+A `fetch` to a host outside `APIPLANT_FETCH_ALLOW` fails with a `TypeError`, and
+so does a **redirect** to one — the older `frankfurter.app` host redirects to
+`api.frankfurter.dev`, and an allowlist that only checked the first URL would
+have followed it anywhere the upstream chose.
 
 To try the AI function as well, uncomment the `[ai]` block in `main.toml`, point
 it at a model, and then:

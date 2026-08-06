@@ -9,31 +9,85 @@ import {
 } from "solid-js";
 import { A, useLocation, useNavigate, useParams } from "@solidjs/router";
 import { DOCS, DOC_GROUPS, findDoc, loadDoc, neighbours, type DocMeta } from "../lib/docs";
+import { highlightParts, searchDocs, warmSearch, type SearchHit } from "../lib/search";
 import { GITHUB_URL } from "../lib/links";
 
-/** The nav, with a filter: a plain list is unwieldy at nineteen guides. */
+/**
+ * The results of a full-text query, section by section. The index is the one
+ * built from `docs/` at build time, so this is a lookup in memory rather than
+ * a request, and every word of every guide is reachable — not only the titles
+ * the nav lists.
+ */
+function SearchResults(props: { hits: SearchHit[]; query: string; onNavigate?: () => void }) {
+  return (
+    <Show
+      when={props.hits.length > 0}
+      fallback={<p class="px-2 py-4 text-xs text-faint">Nothing matches “{props.query}”.</p>}
+    >
+      <ul class="grid gap-0.5">
+        <For each={props.hits}>
+          {(hit) => (
+            <li>
+              <A
+                href={hit.href}
+                onClick={() => props.onNavigate?.()}
+                class="block rounded-lg px-2 py-2 transition-colors hover:bg-surface-2"
+              >
+                <span class="flex items-baseline gap-1 text-[0.8125rem] font-medium text-ink">
+                  <span class="truncate">{hit.heading || hit.doc}</span>
+                  <Show when={hit.heading}>
+                    <span class="shrink-0 text-[0.6875rem] font-normal text-faint">
+                      in {hit.doc}
+                    </span>
+                  </Show>
+                </span>
+                <span class="mt-0.5 block text-[0.75rem] leading-5 text-faint [overflow-wrap:anywhere]">
+                  <For each={highlightParts(hit.snippet, hit.terms)}>
+                    {(part) => (
+                      <Show when={part.hit} fallback={part.text}>
+                        <mark class="bg-transparent font-medium text-accent">{part.text}</mark>
+                      </Show>
+                    )}
+                  </For>
+                </span>
+              </A>
+            </li>
+          )}
+        </For>
+      </ul>
+    </Show>
+  );
+}
+
+/** The nav, with search: a plain list is unwieldy at nineteen guides. */
 function DocsNav(props: { onNavigate?: () => void }) {
   const params = useParams();
   const [query, setQuery] = createSignal("");
+  // The typed value, settled: searching on every keystroke would re-render the
+  // list faster than it can be read, and the first keystroke also has to wait
+  // for the index chunk.
+  const [settled, setSettled] = createSignal("");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(timer));
 
+  const onInput = (value: string) => {
+    setQuery(value);
+    clearTimeout(timer);
+    timer = setTimeout(() => setSettled(value.trim()), 120);
+  };
+
+  const [hits] = createResource(
+    () => (settled().length > 1 ? settled() : null),
+    (term) => searchDocs(term),
+  );
+
+  const searching = () => query().trim().length > 1;
   const current = () => params.slug ?? "";
-
-  const groups = createMemo(() => {
-    const needle = query().trim().toLowerCase();
-    if (!needle) return DOC_GROUPS;
-    return DOC_GROUPS.map((group) => ({
-      group: group.group,
-      docs: group.docs.filter(
-        (doc) =>
-          doc.title.toLowerCase().includes(needle) || doc.summary.toLowerCase().includes(needle),
-      ),
-    })).filter((group) => group.docs.length > 0);
-  });
 
   return (
     <div class="flex h-full flex-col gap-4">
       <label class="relative block">
-        <span class="sr-only">Filter guides</span>
+        <span class="sr-only">Search the documentation</span>
         <svg
           viewBox="0 0 24 24"
           class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-faint"
@@ -48,18 +102,25 @@ function DocsNav(props: { onNavigate?: () => void }) {
         <input
           type="search"
           value={query()}
-          onInput={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Filter guides"
+          onInput={(event) => onInput(event.currentTarget.value)}
+          onFocus={warmSearch}
+          placeholder="Search the docs"
           class="w-full rounded-lg border border-line bg-surface-2 py-1.5 pl-8 pr-2.5 text-[0.8125rem] text-ink transition-colors placeholder:text-faint hover:border-line-strong focus:border-accent focus:bg-surface focus:outline-none"
         />
       </label>
 
       <nav class="min-h-0 flex-1 overflow-y-auto pb-8">
-        <Show
-          when={groups().length > 0}
-          fallback={<p class="px-2 py-4 text-xs text-faint">No guide matches “{query()}”.</p>}
-        >
-          <For each={groups()}>
+        <Show when={!searching()} fallback={
+          <Show
+            when={hits()}
+            fallback={<p class="px-2 py-4 text-xs text-faint">Searching…</p>}
+          >
+            {(found) => (
+              <SearchResults hits={found()} query={query().trim()} onNavigate={props.onNavigate} />
+            )}
+          </Show>
+        }>
+          <For each={DOC_GROUPS}>
             {(group) => (
               <div class="mb-5">
                 <h2 class="px-2 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-faint">

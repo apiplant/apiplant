@@ -141,8 +141,18 @@ chrono = { version = "0.4", features = ["serde"] }
 libloading = "0.8"
 
 # TypeScript/JavaScript functions: V8 isolates at runtime, oxc to strip types at build time
-deno_core = "0.409"
+# `include_icu_data` hands V8 the full ICU tables at startup. Without it the
+# engine still *has* `Intl`, but every locale collapses to a root fallback:
+# `toLocaleString("de-DE")` formats like English and currencies lose their
+# symbols. It is the difference between an `Intl` that exists and one that is
+# correct, and it costs binary size rather than runtime.
+deno_core = { version = "0.409", features = ["include_icu_data"] }
 deno_error = "0.7"
+# The Web platform globals (encoding, URL, timers, streams, Blob). Pinned to the
+# versions built against `deno_core` 0.409 — these crates track deno_core's
+# 0.x line exactly, so a bump to either is a bump to all three.
+deno_web = "0.287"
+deno_webidl = "0.256"
 oxc_allocator = "0.141"
 oxc_ast = "0.141"
 oxc_codegen = "0.141"

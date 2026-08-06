@@ -13,10 +13,13 @@
   "dependencies": {
     "@shikijs/markdown-it": "^1.29.2",
     "@solidjs/router": "^0.15.3",
+    "@zbsearch/stemmers": "^3.3.4",
+    "@zbsearch/stopwords": "^3.3.4",
     "markdown-it": "^14.1.0",
     "markdown-it-anchor": "^9.2.0",
     "shiki": "^1.29.2",
-    "solid-js": "^1.9.14"
+    "solid-js": "^1.9.14",
+    "zbsearch": "^3.3.4"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
