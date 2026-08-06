@@ -530,17 +530,19 @@ jobs:
           keyid=$(cat /tmp/keyid)
 
           # A passphrase-less key needs no --passphrase, and passing an empty
-          # one to gpg is an error rather than a no-op.
-          pass=()
+          # one to gpg is an error rather than a no-op. Held in the positional
+          # parameters rather than an array: this job runs in a container, where
+          # the step shell is plain sh and `pass=()` is a syntax error.
+          set --
           if [ -n "$GPG_PASSPHRASE" ]; then
-            pass=(--pinentry-mode loopback --passphrase "$GPG_PASSPHRASE")
+            set -- --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE"
           fi
 
           # Both signatures: InRelease is what apt fetches, Release.gpg is what
           # older clients and mirroring tools still look for.
-          gpg --batch --yes "${pass[@]}" --local-user "$keyid" \
+          gpg --batch --yes "$@" --local-user "$keyid" \
             --clearsign -o dists/stable/InRelease dists/stable/Release
-          gpg --batch --yes "${pass[@]}" --local-user "$keyid" \
+          gpg --batch --yes "$@" --local-user "$keyid" \
             --detach-sign --armor -o dists/stable/Release.gpg dists/stable/Release
 
           # The keyring users install, dearmored so it can be dropped into
