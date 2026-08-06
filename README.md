@@ -26,6 +26,47 @@ $ apiplant run ./my-app
 
 ## Install
 
+On macOS or Linux with [Homebrew](https://brew.sh):
+
+```bash
+brew install apiplant/tap/apiplant
+```
+
+On Arch Linux, from the AUR — the package installs the released binary, so it
+works on both `x86_64` and `aarch64`:
+
+```bash
+paru -S apiplant-bin   # or yay, or makepkg -si
+```
+
+On Debian or Ubuntu, from the apt repository — `amd64` and `arm64`, and it
+depends on nothing:
+
+```bash
+curl -sSfL https://apiplant.github.io/apt/apiplant-archive-keyring.gpg \
+  | sudo tee /usr/share/keyrings/apiplant.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apiplant.github.io/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/apiplant.list > /dev/null
+
+sudo apt update && sudo apt install apiplant
+```
+
+`apt upgrade` picks up releases from then on. The suite is `stable` on every
+Debian and Ubuntu — one package serves both, so the line survives a
+distribution upgrade.
+
+Or take the `.deb` from a
+[release](https://github.com/apiplant/apiplant/releases) without adding the
+repository, if you would rather pin a version:
+
+```bash
+curl -sSfLO https://github.com/apiplant/apiplant/releases/latest/download/apiplant_0.6.1-1_amd64.deb
+sudo dpkg -i apiplant_0.6.1-1_amd64.deb
+```
+
+Either way it needs glibc 2.35 — Debian 12 (bookworm) or newer, Ubuntu 22.04 or
+newer.
+
 Prebuilt binaries for Linux (x86_64, aarch64) and macOS (Apple silicon) are
 attached to every
 [release](https://github.com/apiplant/apiplant/releases), each with a `.sha256`
@@ -758,6 +799,7 @@ apiplant call NAME [APP_DIR] run one function and print what it returned
 apiplant admin [APP_DIR]     bake a static admin panel to host elsewhere
 apiplant cli [SERVER|DIR]    interactive console for a running server
 apiplant studio              serve the visual editor from this binary
+apiplant version             print the version and exit (also `-V`, `--version`)
 ```
 
 `init` writes a sample app — one resource, the rows to sign in with and a

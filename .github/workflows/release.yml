@@ -226,9 +226,91 @@ jobs:
           docker buildx imagetools create "${args[@]}" \
             $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
 
+  # Repackaging, not building: both .debs are assembled on one runner from the
+  # archives the `binaries` job produced, because putting an already-built
+  # binary into an ar archive is architecture-independent work.
+  debian:
+    name: debian packages
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Build
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p debs
+
+          build() { # <debian arch> <rust target>
+            local arch="$1" triple="$2" root="stage/$arch"
+
+            tar xzf "dist/apiplant-${GITHUB_REF_NAME}-$triple.tar.gz"
+            local src="apiplant-${GITHUB_REF_NAME}-$triple"
+
+            install -Dm755 "$src/apiplant" "$root/usr/bin/apiplant"
+            install -Dm644 "$src/README.md" "$root/usr/share/doc/apiplant/README.md"
+
+            # dpkg reports installed size in KiB, and dpkg-deb does not work it
+            # out on its own — a missing or wrong value is what makes `apt`
+            # mis-report what an install will cost.
+            local size
+            size=$(du -ks "$root/usr" | cut -f1)
+
+            install -d "$root/DEBIAN"
+            sed -e "s/@VERSION@/$version/" \
+                -e "s/@ARCH@/$arch/" \
+                -e "s/@INSTALLED_SIZE@/$size/" \
+                packaging/debian/control > "$root/DEBIAN/control"
+
+            if grep -qE '@[A-Z_]+@' "$root/DEBIAN/control"; then
+              echo "::error::unsubstituted placeholder in the control file" >&2
+              exit 1
+            fi
+
+            # Everything ships as root:root regardless of who the runner is.
+            dpkg-deb --root-owner-group --build "$root" \
+              "debs/apiplant_${version}-1_${arch}.deb"
+          }
+
+          build amd64 x86_64-unknown-linux-gnu
+          build arm64 aarch64-unknown-linux-gnu
+
+          cd debs
+          for deb in *.deb; do shasum -a 256 "$deb" > "$deb.sha256"; done
+
+      # A package that installs but declares the wrong architecture, or that
+      # quietly lost the binary, is worth catching before it is a release asset.
+      - name: Check
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dpkg-deb --info "debs/apiplant_${version}-1_amd64.deb"
+          dpkg-deb --contents "debs/apiplant_${version}-1_amd64.deb" | grep -q './usr/bin/apiplant'
+          [ "$(dpkg-deb --field "debs/apiplant_${version}-1_arm64.deb" Architecture)" = arm64 ]
+
+          # The runner is amd64, so only that one can actually be installed and
+          # run — which is the check that matters: `version` proves the binary
+          # survived the round trip.
+          sudo dpkg -i "debs/apiplant_${version}-1_amd64.deb"
+          [ "$(apiplant version)" = "apiplant $version" ]
+          sudo dpkg -r apiplant
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-packages
+          path: |
+            debs/*.deb
+            debs/*.deb.sha256
+          if-no-files-found: error
+
   release:
     name: publish release
-    needs: [binaries, manifest]
+    needs: [binaries, manifest, debian]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -239,6 +321,11 @@ jobs:
           path: dist
           pattern: binary-*
           merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          name: debian-packages
 
       # The image tags come from `{{version}}`, which drops the leading `v`;
       # the archive names keep the tag verbatim.
@@ -265,7 +352,281 @@ jobs:
             | Linux aarch64 | `apiplant-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz` |
             | macOS Apple silicon | `apiplant-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz` |
 
-            Each archive has a matching `.sha256` file. The macOS binaries are
+            ## Debian packages
+
+            ```
+            sudo dpkg -i apiplant_${{ steps.version.outputs.version }}-1_amd64.deb
+            ```
+
+            | platform | package |
+            | --- | --- |
+            | Debian/Ubuntu amd64 | `apiplant_${{ steps.version.outputs.version }}-1_amd64.deb` |
+            | Debian/Ubuntu arm64 | `apiplant_${{ steps.version.outputs.version }}-1_arm64.deb` |
+
+            They declare no dependencies and need glibc 2.35 — Debian 12
+            (bookworm) or newer, Ubuntu 22.04 or newer.
+
+            Each archive and package has a matching `.sha256` file. The macOS binaries are
             not yet signed — if you download one through a browser rather than
             with `curl`, clear the quarantine flag before running it:
             `xattr -d com.apple.quarantine ./apiplant`.
+
+  # Both package definitions point at the release archives by URL, so they can
+  # only be published once the release exists — hence `needs: release` rather
+  # than running alongside it. Each job is guarded on its credential: a fork,
+  # or this repository before the secrets are set, skips it instead of failing
+  # the run.
+  homebrew:
+    name: homebrew tap
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Render the formula
+        if: env.TAP_TOKEN != ''
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sha() { shasum -a 256 "dist/apiplant-${GITHUB_REF_NAME}-$1.tar.gz" | cut -d' ' -f1; }
+
+          sed \
+            -e "s/@VERSION@/$version/g" \
+            -e "s/@SHA_LINUX_X86_64@/$(sha x86_64-unknown-linux-gnu)/" \
+            -e "s/@SHA_LINUX_ARM64@/$(sha aarch64-unknown-linux-gnu)/" \
+            -e "s/@SHA_DARWIN_ARM64@/$(sha aarch64-apple-darwin)/" \
+            packaging/homebrew/apiplant.rb > /tmp/apiplant.rb
+
+          # A leftover placeholder means an archive was missing and `sha`
+          # returned nothing — publishing that formula would break `brew
+          # install` for everyone on that platform.
+          if grep -qE '@[A-Z_]+@' /tmp/apiplant.rb; then
+            echo "::error::unsubstituted placeholder in the formula" >&2
+            grep -nE '@[A-Z_]+@' /tmp/apiplant.rb >&2
+            exit 1
+          fi
+
+      - name: Push to apiplant/homebrew-tap
+        if: env.TAP_TOKEN != ''
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          git clone --depth 1 \
+            "https://x-access-token:${TAP_TOKEN}@github.com/apiplant/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp /tmp/apiplant.rb tap/Formula/apiplant.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/apiplant.rb
+          # Re-running a release for the same tag is a no-op rather than an error.
+          git diff --cached --quiet && exit 0
+          git commit -m "apiplant $version"
+          git push
+
+  # The apt repository is cumulative: the whole pool is cloned, the new
+  # packages are added to it, and every index is regenerated over the result.
+  # Regenerating from only the new .debs would publish a Packages file that
+  # drops every earlier version, which is how `apt install apiplant=0.5.0`
+  # stops working.
+  apt:
+    name: apt repository
+    needs: [debian, release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # dpkg-scanpackages and apt-ftparchive are Debian's own tools; the runner
+    # has apt but not dpkg-dev, and a container is cheaper than installing it.
+    container: debian:bookworm
+    env:
+      APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN }}
+    steps:
+      - name: Install the archive tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg git ca-certificates
+
+      - uses: actions/checkout@v4
+        with:
+          path: source
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: debs
+          name: debian-packages
+
+      - name: Import the signing key
+        if: env.APT_REPO_TOKEN != ''
+        env:
+          GPG_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$GPG_KEY" ]; then
+            echo "::error::APT_REPO_TOKEN is set but APT_GPG_PRIVATE_KEY is not" >&2
+            exit 1
+          fi
+          printf '%s\n' "$GPG_KEY" | gpg --batch --import
+          # The key id is needed explicitly: a CI keyring with one secret key
+          # still has no default, and an unsigned Release is one apt refuses.
+          gpg --list-secret-keys --with-colons \
+            | awk -F: '/^sec:/ { print $5; exit }' > /tmp/keyid
+          test -s /tmp/keyid
+
+      - name: Add the packages to the pool
+        if: env.APT_REPO_TOKEN != ''
+        run: |
+          git clone --depth 1 \
+            "https://x-access-token:${APT_REPO_TOKEN}@github.com/apiplant/apt.git" repo
+
+          # `pool/main/a/apiplant/` is the layout apt expects: component, then
+          # the first letter of the source package, then the package.
+          mkdir -p repo/pool/main/a/apiplant
+          cp debs/*.deb repo/pool/main/a/apiplant/
+
+          # GitHub Pages stops publishing at 1GB, and every release adds two
+          # ~22MB packages to a pool that is never pruned. Said out loud well
+          # before it is reached, because the fix — dropping old versions, or
+          # moving the pool off Pages — is not one to discover at the limit.
+          size=$(du -sm repo/pool | cut -f1)
+          if [ "$size" -gt 700 ]; then
+            echo "::warning::the apt pool is ${size}MB; GitHub Pages stops at 1GB." \
+                 "Prune old versions from apiplant/apt or move the pool elsewhere."
+          fi
+
+      - name: Generate the indices
+        if: env.APT_REPO_TOKEN != ''
+        working-directory: repo
+        run: |
+          for arch in amd64 arm64; do
+            dir="dists/stable/main/binary-$arch"
+            mkdir -p "$dir"
+            # /dev/null as the override file: there is no Debian override
+            # database here, and dpkg-scanpackages insists on the argument.
+            dpkg-scanpackages --arch "$arch" pool /dev/null > "$dir/Packages"
+            gzip -9kf "$dir/Packages"
+            test -s "$dir/Packages"
+          done
+
+          # Written outside the tree and moved in: apt-ftparchive checksums
+          # every file under dists/stable, and a Release file it is midway
+          # through writing is one of them.
+          apt-ftparchive -c ../source/packaging/apt/apt-ftparchive.conf \
+            release dists/stable > /tmp/Release
+          mv /tmp/Release dists/stable/Release
+
+      - name: Sign and publish
+        if: env.APT_REPO_TOKEN != ''
+        working-directory: repo
+        env:
+          GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          keyid=$(cat /tmp/keyid)
+
+          # A passphrase-less key needs no --passphrase, and passing an empty
+          # one to gpg is an error rather than a no-op.
+          pass=()
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            pass=(--pinentry-mode loopback --passphrase "$GPG_PASSPHRASE")
+          fi
+
+          # Both signatures: InRelease is what apt fetches, Release.gpg is what
+          # older clients and mirroring tools still look for.
+          gpg --batch --yes "${pass[@]}" --local-user "$keyid" \
+            --clearsign -o dists/stable/InRelease dists/stable/Release
+          gpg --batch --yes "${pass[@]}" --local-user "$keyid" \
+            --detach-sign --armor -o dists/stable/Release.gpg dists/stable/Release
+
+          # The keyring users install, dearmored so it can be dropped into
+          # /usr/share/keyrings and named by `signed-by` as-is.
+          gpg --export "$keyid" > apiplant-archive-keyring.gpg
+
+          # GitHub Pages runs Jekyll otherwise, which would rewrite parts of a
+          # tree that has to be served byte-for-byte.
+          touch .nojekyll
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "apiplant $version"
+          git push
+
+  aur:
+    name: aur package
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # makepkg only exists on Arch, and `--printsrcinfo` is what keeps .SRCINFO
+    # honest — writing it by hand is how AUR packages drift from their PKGBUILD.
+    container: archlinux:base-devel
+    env:
+      AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+    steps:
+      - name: Install git and openssh
+        run: pacman -Sy --noconfirm --needed git openssh
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Render the PKGBUILD
+        if: env.AUR_SSH_KEY != ''
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sha() { sha256sum "dist/apiplant-${GITHUB_REF_NAME}-$1.tar.gz" | cut -d' ' -f1; }
+
+          mkdir -p /tmp/pkg
+          sed \
+            -e "s/@VERSION@/$version/g" \
+            -e "s/@SHA_LINUX_X86_64@/$(sha x86_64-unknown-linux-gnu)/" \
+            -e "s/@SHA_LINUX_ARM64@/$(sha aarch64-unknown-linux-gnu)/" \
+            packaging/aur/PKGBUILD > /tmp/pkg/PKGBUILD
+
+          if grep -qE '@[A-Z_]+@' /tmp/pkg/PKGBUILD; then
+            echo "::error::unsubstituted placeholder in the PKGBUILD" >&2
+            grep -nE '@[A-Z_]+@' /tmp/pkg/PKGBUILD >&2
+            exit 1
+          fi
+
+      # makepkg refuses to run as root even to print .SRCINFO, so it runs as an
+      # unprivileged user over the same directory.
+      - name: Generate .SRCINFO
+        if: env.AUR_SSH_KEY != ''
+        run: |
+          useradd -m builder
+          chown -R builder /tmp/pkg
+          su builder -c 'cd /tmp/pkg && makepkg --printsrcinfo > .SRCINFO'
+          grep -q '^pkgbase = apiplant-bin' /tmp/pkg/.SRCINFO
+
+      - name: Push to the AUR
+        if: env.AUR_SSH_KEY != ''
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes"
+
+          git clone ssh://aur@aur.archlinux.org/apiplant-bin.git aur
+          cp /tmp/pkg/PKGBUILD /tmp/pkg/.SRCINFO aur/
+
+          cd aur
+          git config user.name "Federico Rampazzo"
+          git config user.email "federico@apiplant.com"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet && exit 0
+          git commit -m "apiplant $version"
+          git push

@@ -10,6 +10,7 @@
 //! apiplant admin [APP_DIR]     # bake a static admin panel to host elsewhere
 //! apiplant cli [SERVER|DIR]   # interactive console for a running app
 //! apiplant studio              # serve the visual editor from this binary
+//! apiplant version             # print the version and exit
 //! ```
 //!
 //! An *app directory* holds an optional `main.toml`, an optional `models/`
@@ -40,6 +41,7 @@ usage:
   apiplant cli [SERVER|DIR]    interactive console for a running server
                                (a URL or host; or an app directory, default `.`)
   apiplant studio              serve the visual editor on http://127.0.0.1:5273
+  apiplant version             print the version and exit
 
 options:
   --from <REPO>     (init) clone this git repository instead of the sample app
@@ -58,6 +60,7 @@ options:
   --as <USER_ID>    (call) the user id the function sees as its caller
   --quiet           (call) drop what the function emits instead of relaying it
   -h, --help        show this message
+  -V, --version     show the version
 
 `call` runs one of the app's functions the way an HTTP request to
 `/functions/<NAME>` would — same database, same email/cache/payments/AI — but
@@ -111,12 +114,23 @@ enum Command {
         host: String,
         port: u16,
     },
+    Version,
 }
 
 #[derive(Debug)]
 struct Args {
     command: Command,
     dir: String,
+}
+
+impl Args {
+    /// `version` reads no app, so its directory is a placeholder.
+    fn version() -> Self {
+        Args {
+            command: Command::Version,
+            dir: ".".into(),
+        }
+    }
 }
 
 /// Parse the command line.
@@ -197,6 +211,12 @@ fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
 
         match arg.as_str() {
             "-h" | "--help" => return Ok(None),
+            // Like `--help`, this answers rather than does: nothing else on the
+            // line is validated. The bare word only counts in command position,
+            // so a directory called `version` still works as `apiplant run
+            // version`.
+            "-V" | "--version" => return Ok(Some(Args::version())),
+            "version" if command.is_none() && dir.is_none() => return Ok(Some(Args::version())),
             "--build" => build_first = true,
             "--seed" => seed = true,
             "--release" => release = true,
@@ -448,6 +468,13 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(2);
         }
     };
+    // Answered before anything touches the filesystem: a broken app directory
+    // is often exactly why someone is asking which version they are running.
+    if matches!(args.command, Command::Version) {
+        println!("apiplant {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let dir = std::path::Path::new(&args.dir);
 
     // Every command but `studio` reads an app directory. A missing one is a
@@ -563,6 +590,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Command::Studio { host, port } => studio::serve(&host, port).await,
+
+        // Handled above, before the app directory is looked at.
+        Command::Version => Ok(()),
 
         Command::Seed => {
             let app = load(dir)?;
@@ -933,6 +963,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("server address"), "{err}");
+    }
+
+    #[test]
+    fn version_is_a_word_and_a_flag() {
+        for argv in [&["version"][..], &["-V"], &["--version"]] {
+            assert!(
+                matches!(args(argv).command, Command::Version),
+                "expected version command for {argv:?}"
+            );
+        }
+        // But a directory called `version` is still a directory.
+        assert!(matches!(
+            args(&["run", "version"]).command,
+            Command::Run { .. }
+        ));
+        assert_eq!(args(&["run", "version"]).dir, "version");
     }
 
     #[test]
