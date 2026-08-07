@@ -346,6 +346,9 @@ all, uploads land in a `storage/` directory. See [File storage](storage.md).
 A misconfigured backend — `s3` with no bucket, a `dir` that cannot be created —
 fails the boot rather than the first upload.
 
+[`examples/26-file-upload`](../examples/26-file-upload) is this section pointed
+at Cloudflare R2, with the local block beside it for comparison.
+
 ## `[queues]`
 
 Background work: a message published now, handled by a function shortly after,
@@ -494,6 +497,9 @@ OTLP is the only export format, because it is the one every backend speaks:
 point it at the [OpenTelemetry Collector], Jaeger, Tempo, Honeycomb, Datadog,
 Grafana Cloud, New Relic or anything else that accepts OTLP/HTTP on `:4318`.
 Transport is HTTP, not gRPC.
+
+[`examples/25-observability`](../examples/25-observability) is the whole thing
+running, against a Grafana stack in one container.
 
 | Key | Default | Notes |
 |-----|---------|-------|

@@ -73,6 +73,11 @@ export function dismissToast(id: number) {
   setToasts((current) => current.filter((toast) => toast.id !== id));
 }
 
+/** Errors never expire on their own, so a pile-up needs a single way out. */
+export function dismissAllToasts() {
+  setToasts([]);
+}
+
 export function reportError(error: unknown) {
   notify("error", error instanceof Error ? error.message : String(error));
 }

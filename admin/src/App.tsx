@@ -43,6 +43,7 @@ import {
   manifest,
   navigate,
   navigationGroups,
+  dismissAllToasts,
   notify,
   organizationLabel,
   refreshSession,
@@ -159,7 +160,7 @@ export function App() {
         </Match>
       </Switch>
       <AdminAiAssist />
-      <ToastStack toasts={toasts()} onDismiss={dismissToast} />
+      <ToastStack toasts={toasts()} onDismiss={dismissToast} onDismissAll={dismissAllToasts} />
     </>
   );
 }

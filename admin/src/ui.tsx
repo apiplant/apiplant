@@ -474,35 +474,55 @@ export function SearchInput(props: {
 export function ToastStack(props: {
   toasts: { id: number; kind: "success" | "error" | "info"; message: string }[];
   onDismiss: (id: number) => void;
+  onDismissAll?: () => void;
 }) {
   const tones = {
     success: "border-accent-line bg-accent-soft text-ink",
     error: "border-danger-line bg-danger-soft text-ink",
     info: "border-line bg-surface text-ink",
   };
+  // Errors persist until dismissed and successes can arrive in bursts, so the
+  // stack can outpace closing them one by one.
+  const count = () => props.toasts.length;
   return (
     <Portal>
-      <div class="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-full max-w-sm flex-col gap-2">
-        <For each={props.toasts}>
-          {(toast) => (
-            <div
-              role={toast.kind === "error" ? "alert" : "status"}
-              class={`animate-rise pointer-events-auto flex items-start gap-3 rounded-xl border px-3.5 py-2.5 shadow-lg ${tones[toast.kind]}`}
-            >
-              <span class="min-w-0 flex-1 text-[0.8125rem] leading-relaxed">{toast.message}</span>
-              <button
-                type="button"
-                class="shrink-0 rounded p-0.5 text-faint transition-colors hover:text-ink"
-                aria-label="Dismiss"
-                onClick={() => props.onDismiss(toast.id)}
+      <div class="pointer-events-none fixed bottom-4 right-4 top-4 z-[60] flex w-full max-w-sm flex-col items-end justify-end gap-2">
+        {/* The stack scrolls rather than growing past the viewport, so the
+            clear button below it stays reachable however many errors land. */}
+        <div class="pointer-events-none flex min-h-0 w-full flex-col items-end gap-2 overflow-y-auto">
+          <For each={props.toasts}>
+            {(toast) => (
+              <div
+                role={toast.kind === "error" ? "alert" : "status"}
+                class={`animate-rise pointer-events-auto flex w-full items-start gap-3 rounded-xl border px-3.5 py-2.5 shadow-lg ${tones[toast.kind]}`}
               >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <path d="m3 3 6 6M9 3l-6 6" stroke-linecap="round" />
-                </svg>
-              </button>
-            </div>
-          )}
-        </For>
+                <span class="min-w-0 flex-1 text-[0.8125rem] leading-relaxed">{toast.message}</span>
+                <button
+                  type="button"
+                  class="shrink-0 rounded p-0.5 text-faint transition-colors hover:text-ink"
+                  aria-label="Dismiss"
+                  onClick={() => props.onDismiss(toast.id)}
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="m3 3 6 6M9 3l-6 6" stroke-linecap="round" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </For>
+        </div>
+        <Show when={count() > 2 && props.onDismissAll}>
+          <button
+            type="button"
+            class="animate-rise pointer-events-auto flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface/90 px-2.5 py-1 text-[0.6875rem] text-faint shadow-sm backdrop-blur transition-colors hover:border-line-strong hover:text-ink"
+            onClick={() => props.onDismissAll?.()}
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="m3 3 6 6M9 3l-6 6" stroke-linecap="round" />
+            </svg>
+            Clear {count()} notifications
+          </button>
+        </Show>
       </div>
     </Portal>
   );

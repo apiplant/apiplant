@@ -1,0 +1,80 @@
+# Everything this example adds is the `[storage]` block at the bottom. The app
+# above it is example 04 with a `file` field bolted on, because the point is
+# where the bytes go — not what surrounds them.
+
+[app]
+name = "26 · File upload"
+
+[server]
+port = 8099
+base_path = "/api"
+
+[database]
+url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:5432/apiplant_uploads}"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+
+[docs]
+enabled = true
+path = "/docs"
+title = "26 · File upload"
+
+# --- where the bytes go -----------------------------------------------------
+#
+# `POST /api/uploads` takes the file as the raw request body and answers
+# `{"url": "/files/…"}`. That URL is what a `file` field holds — a relative
+# path, never a bucket address — and `GET /files/…` reads it back out of
+# whichever backend this block names. The indirection is the whole feature:
+# every line below can change without rewriting a single stored row.
+#
+# R2 is S3 with an `endpoint`, and so are MinIO, Backblaze B2 and Spaces.
+# There is one backend, not four.
+[storage]
+backend           = "s3"
+bucket            = "${R2_BUCKET:-files}"
+region            = "auto"          # R2 has no regions; `auto` is what it wants
+endpoint          = "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+access_key_id     = "${R2_ACCESS_KEY_ID}"
+secret_access_key = "${R2_SECRET_ACCESS_KEY}"
+
+# `<endpoint>/<bucket>/<key>` rather than the bucket in the hostname. This is
+# the default whenever an `endpoint` is set, and it is spelled out here only
+# because it is the line people go looking for when a non-AWS service 404s.
+path_style = true
+
+# A key prefix inside the bucket, so this example can share one bucket with
+# everything else you point at it.
+prefix = "apiplant-example-26"
+
+# The URL prefix stored links carry and the server answers on. Change it and
+# links minted from then on change with it; the ones already in the database
+# keep working, because `GET` strips whatever prefix it is given.
+public_base = "/files"
+
+# Refused before the body is read, by a payload limit built from this number —
+# not after a worker has buffered 400 MB.
+max_size_mb = 10
+
+# What an upload may declare as its `Content-Type`. Empty accepts anything;
+# this example is a photo gallery, so it accepts images and PDFs and nothing
+# else. Exact types (`application/pdf`) and wildcards (`image/*`) both work.
+allowed_types = ["image/*", "application/pdf"]
+
+# Not set, deliberately: `base_url` would store absolute links against a CDN
+# origin instead of relative ones. It is faster and it is a one-way door — the
+# objects have to be publicly readable, and the links stop being portable. This
+# bucket is private, and reads are proxied through the server, which is what
+# makes that work.
+# base_url = "https://cdn.example.com"
+
+# --- the local shape, for comparison ----------------------------------------
+#
+# Uncomment this and delete the block above and the app is unchanged in every
+# other respect: same endpoints, same stored URLs, same rows. In a container
+# `dir` is a mounted volume, which is the whole of "uploads survive a deploy".
+#
+# [storage]
+# backend = "local"
+# dir     = "${STORAGE_DIR:-storage}"

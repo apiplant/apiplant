@@ -1,0 +1,71 @@
+# Everything this example adds is in the `[observability]` blocks at the bottom.
+# The app above them is example 02 with one function bolted on, because the point
+# is what the server says about itself while it serves — not what it serves.
+
+[app]
+name = "25 · Observability"
+
+[server]
+port = 8099
+base_path = "/api"
+
+[database]
+url = "postgres://postgres@127.0.0.1:5432/apiplant_observability"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+
+[docs]
+enabled = true
+path = "/docs"
+title = "25 · Observability"
+
+# --- what the server says about itself --------------------------------------
+
+# `enabled` arms the section: every request gets a span, and the log lines
+# written during it inherit that span's fields. Nothing leaves the process yet —
+# that takes an endpoint, further down. The two are separate on purpose: this
+# alone gives you trace-correlated logs with no infrastructure to run.
+[observability]
+enabled      = true
+service_name = "apiplant-observability-demo"  # what to call this in a trace
+environment  = "local"                        # → deployment.environment.name
+
+# Extra attributes on every span and metric. Anything you would group or filter
+# a dashboard by and that is fixed for the process belongs here rather than on
+# each request.
+[observability.resource_attributes]
+region = "local-dev"
+
+[observability.logs]
+# `json` because these lines are going somewhere that parses them. Use `pretty`
+# while you are reading them yourself.
+format      = "json"
+span_fields = true   # put the route, method and trace id on every line
+
+[observability.traces]
+enabled         = true
+sample_ratio    = 1.0    # keep everything; a busy service wants ~0.05
+response_header = true   # X-Trace-Id on every response, so a bug report is a lookup
+
+# Copied onto the span. `authorization` is listed here deliberately and is
+# **refused anyway** — see the README. Credentials never reach your traces,
+# whatever the config asks for.
+capture_headers = ["x-request-id", "authorization"]
+
+# Never traced. A health check every second is a span every second, and you pay
+# per span.
+exclude_paths = ["/_health"]
+
+[observability.metrics]
+enabled       = true
+interval_secs = 5   # how often to push; 60 is the sane production value
+
+# Where it all goes: OTLP over HTTP. This is the port `compose.yaml` exposes.
+# Point it at Grafana Cloud, Honeycomb, Datadog, an OpenTelemetry Collector —
+# anything that speaks OTLP/HTTP. Comment it out and the spans stay in-process.
+[observability.otlp]
+endpoint     = "http://localhost:4318"
+protocol     = "http/protobuf"    # or "http/json"
+timeout_secs = 10

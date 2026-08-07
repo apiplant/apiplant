@@ -1,6 +1,6 @@
 # Examples
 
-Twenty-four self-contained apps, each adding one idea to the last. Every directory
+Twenty-six self-contained apps, each adding one idea to the last. Every directory
 is a complete app: point the binary at it and it runs.
 
 | # | Example | Adds |
@@ -29,6 +29,8 @@ is a complete app: point the binary at it and it runs.
 | 22 | [oauth](22-oauth) | signing in with GitHub, Google, LinkedIn and X: four `[oauth.…]` blocks, two credentials each, and a sign-in page made of links |
 | 23 | [queues](23-queues) | background work on Postgres alone: `publish` from a function, `[queues.subscribe]` to a topic, a model announcing its own writes, retries and a dead-letter |
 | 24 | [nested-resources](24-nested-resources) | `/{parent}/{id}/{child}` across scopes: a global child, an org-scoped child of a global parent, `?via=`, and why a global resource can still need `X-Organization` |
+| 25 | [observability](25-observability) | watching it run: `[observability]`, OTLP to a one-container Grafana stack, spans on the HTTP semantic conventions, trace-correlated logs, and the headers it refuses to capture |
+| 26 | [file-upload](26-file-upload) | uploads into a bucket: one `[storage]` block pointed at Cloudflare R2, a `file` field that holds a relative link and never a bucket address, and the four lines that are the whole difference between a volume and S3 |
 
 ## Running one
 
@@ -73,10 +75,12 @@ Ollama. Example 19 runs against OpenAI or Anthropic instead by editing three
 lines. Each README says so, and each app boots with
 a clear error rather than a mystery if the service isn't there.
 
-Two more need something from outside: example 18 wants Stripe test keys, and
+Three more need something from outside: example 18 wants Stripe test keys,
 example 22 wants an OAuth client id and secret from at least one of GitHub,
 Google, LinkedIn or X — its README says where to get them, and it boots and
-serves a sign-in page with none of them, showing no buttons until you do.
+serves a sign-in page with none of them, showing no buttons until you do — and
+example 26 wants a bucket and a token for it, from Cloudflare R2, S3, or a MinIO
+you run yourself.
 
 ## Signing in
 
