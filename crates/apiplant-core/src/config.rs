@@ -1364,11 +1364,13 @@ pub struct AiConfig {
     /// Sampling temperature sent when a request doesn't name one. Negative
     /// (the default) sends nothing and lets the provider choose.
     pub temperature: f32,
-    /// Whether provider reasoning should be surfaced to callers when the
-    /// provider emits it. This is a *display* decision and says nothing about
-    /// whether the model thinks — see `thinking` for that.
-    pub reasoning: bool,
     /// Whether to ask the provider to think, using its own switch for it.
+    ///
+    /// This is the only reasoning switch there is. Whatever thinking comes back
+    /// is surfaced: `reasoning` stream events, kept on the stored message, and
+    /// revealed by the **Show reasoning** toggle. A reply with no thinking in it
+    /// has no toggle. Paying a model to think and then throwing the trace away
+    /// was never worth a configuration key of its own.
     ///
     /// `None` (the default) sends nothing and leaves the model on whatever its
     /// template does. `Some(false)` turns thinking off, `Some(true)` turns it
@@ -1428,7 +1430,6 @@ impl Default for AiConfig {
             system: String::new(),
             max_tokens: 2048,
             temperature: -1.0,
-            reasoning: false,
             thinking: None,
             reasoning_format: "auto".to_string(),
             access: "authenticated".to_string(),

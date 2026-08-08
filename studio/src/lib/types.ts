@@ -169,7 +169,6 @@ export interface AgentAiOverride {
   temperature?: number;
   maxTokens?: number;
   timeoutSecs?: number;
-  reasoning?: boolean;
   thinking?: boolean;
   // How the server hands the model's thinking back: auto, native, tags, implicit.
   reasoningFormat?: string;

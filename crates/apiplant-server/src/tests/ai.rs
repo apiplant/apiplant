@@ -568,10 +568,13 @@ history = "owner"
 }
 
 #[ntex::test]
-async fn agent_reasoning_is_hidden_by_default() {
+/// Thinking is never optional to keep: whatever the model thought is stored on
+/// the message and returned alongside the answer, for the UI to reveal behind
+/// its toggle. What it must never be is the answer itself.
+async fn agent_reasoning_is_kept_beside_the_answer() {
     let (endpoint, server) = mock_ai_server_with_requests(1, None).await;
     let (state, root, db) = app_with_files(
-        "agent-reasoning-default",
+        "agent-reasoning",
         &format!(
             "\n[ai]\nprovider = \"custom\"\nendpoint = \"{endpoint}\"\nmodel = \"local\"\ntimeout_secs = 2\n"
         ),
@@ -583,85 +586,6 @@ name = "coach"
 description = "A stored coach."
 system = "emit-reasoning"
 storage.enabled = true
-
-[permissions]
-chat = "authenticated"
-history = "owner"
-"#,
-        )],
-    )
-    .await;
-    let app = init_http_app!(state.clone());
-
-    let registration = read_json(
-        test::call_service(
-            &app,
-            req_json(
-                "POST",
-                "/api/auth/register",
-                json!({"email":"ann@example.test","password":"hunter2"}),
-            ),
-        )
-        .await,
-    )
-    .await;
-    let token = registration["token"].as_str().unwrap().to_string();
-
-    let response = read_json(
-        test::call_service(
-            &app,
-            bearer(
-                test::TestRequest::post()
-                    .uri("/api/ai/agents/coach/chat")
-                    .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"message":"hello there","stream":false}).to_string()),
-                &token,
-            )
-            .to_request(),
-        )
-        .await,
-    )
-    .await;
-    assert_eq!(response["text"], "Visible answer.");
-    assert!(response.get("reasoning").is_none());
-
-    let table = state.table("ai_coach_message").unwrap();
-    let rows = state
-        .db
-        .raw_json(
-            &format!("SELECT role, content, reasoning FROM {table} WHERE role = 'assistant'"),
-            &[],
-        )
-        .await
-        .unwrap();
-    let row = rows.as_array().and_then(|rows| rows.first()).unwrap();
-    assert_eq!(row["content"], "Visible answer.");
-    assert!(row.get("reasoning").is_none() || row["reasoning"].is_null());
-
-    server.await.unwrap();
-    fs::remove_dir_all(root).unwrap();
-    db.cleanup().await;
-}
-
-#[ntex::test]
-async fn agent_reasoning_can_be_enabled_per_agent() {
-    let (endpoint, server) = mock_ai_server_with_requests(1, None).await;
-    let (state, root, db) = app_with_files(
-        "agent-reasoning-enabled",
-        &format!(
-            "\n[ai]\nprovider = \"custom\"\nendpoint = \"{endpoint}\"\nmodel = \"local\"\ntimeout_secs = 2\n"
-        ),
-        &[(
-            "agents/coach.toml",
-            r#"
-[agent]
-name = "coach"
-description = "A stored coach."
-system = "emit-reasoning"
-storage.enabled = true
-
-[ai]
-reasoning = true
 
 [permissions]
 chat = "authenticated"

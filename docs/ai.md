@@ -57,7 +57,6 @@ configuration edit.
 | `system` | `""` | system prompt for conversations that don't carry one |
 | `max_tokens` | `2048` | cap on generated tokens. Anthropic requires one, so it is always sent |
 | `temperature` | unset | sent only when `>= 0`; otherwise the provider decides |
-| `reasoning` | `false` | whether the model's thinking is surfaced to callers |
 | `thinking` | unset | whether to ask the model to think, using the provider's own switch |
 | `reasoning_format` | `"auto"` | how the server hands the thinking back: `auto`, `native`, `tags`, `implicit` |
 | `access` | `"authenticated"` | who may call `<base>/ai/chat` |
@@ -78,12 +77,24 @@ internal reasoning before producing any output. If the budget is exhausted
 during that phase the result is an **empty answer**, which is a configuration
 problem rather than a bug. Set the limit generously for these models.
 
+### `thinking` — the only reasoning switch
+
+`thinking` asks the model to think, through whatever parameter its provider
+exposes for that. There is no second key deciding whether you then get to see
+it: thinking that comes back is always emitted as `reasoning` events, always
+kept on the stored message, and always revealed by the **Show reasoning**
+toggle. A reply the model did not think about simply has no toggle.
+
+Paying a model to think and then discarding the trace is not a configuration
+worth having. What matters is that the trace stays *reasoning* — it is never
+part of the answer, at any stage.
+
 ### `reasoning_format` — where the thinking actually is
 
-`reasoning` and `thinking` are about the model. `reasoning_format` is about the
-**server**: the same Qwen3 weights hand their thinking back in three different
-shapes depending on the reasoning parser and chat template in front of them,
-and only one of them is a field of its own.
+`thinking` is about the model. `reasoning_format` is about the **server**: the
+same Qwen3 weights hand their thinking back in three different shapes depending
+on the reasoning parser and chat template in front of them, and only one of
+them is a field of its own.
 
 | Value | The server sends |
 |-------|------------------|
@@ -127,16 +138,15 @@ reaching for `implicit` — a raw `curl` at the endpoint answers it in one line.
 
 A reasoning model can spend its entire `max_tokens` budget thinking and stop
 with nothing left to say. The turn then has a full reasoning trace and an empty
-answer, and how that is reported depends on `reasoning`:
+answer. The trace stays *reasoning*: the message is empty, and a `warning` event
+explains that the model ran out of tokens before answering.
 
-- **shown** — the trace stays *reasoning*. The message is empty, and a
-  `warning` event says the model ran out of tokens before answering. The thinking
-  never becomes the reply.
-- **hidden** — the trace is about to be discarded and nothing else survives the
-  turn, so it is promoted to the answer with a `warning` saying so.
+The thinking is never promoted to be the answer. An empty reply with a visible
+trace behind the toggle is the truth about what happened; a reply that *is* the
+trace is a model appearing to think out loud at the user.
 
-Either way the fix is a larger `max_tokens`: a local Qwen can spend three
-thousand tokens deciding how to say hello.
+The fix is a larger `max_tokens` — a local Qwen can spend three thousand tokens
+deciding how to say hello.
 
 ### `access`
 
@@ -190,7 +200,7 @@ data: {"finish_reason":"stop","input_tokens":42,"output_tokens":96}
 | event | means |
 |-------|-------|
 | `delta` | more of the answer; append it |
-| `reasoning` | more of the model's reasoning, where the provider streams it separately from the answer. It is not part of the reply, and ignoring this event entirely is a valid way to consume the stream |
+| `reasoning` | more of the model's thinking. Never part of the reply, and ignoring this event entirely is a valid way to consume the stream |
 | `error` | generation stopped early. Always followed by `done` |
 | `done` | the stream is complete. Sent exactly once in all cases |
 
@@ -268,18 +278,16 @@ endpoint = "http://localhost:8080"
 model = "local"
 api_key = ""
 timeout_secs = 60
-reasoning = true
+thinking = true
 ```
 
-`reasoning` decides whether the model's thinking is surfaced for this agent:
-the chat stream emits `reasoning` events, the thinking is kept on the stored
-message, and the admin dashboard offers a **Show reasoning** toggle under each
-answer that expands it in a `<pre>` above the message body. Left off, reasoning
-is dropped before it reaches any caller.
+`thinking` asks this agent's model to think. Whatever it thinks is kept on the
+stored message and offered under each answer by the admin dashboard's **Show
+reasoning** toggle, which expands it in a `<pre>` above the message body.
 
-Omit the key and the agent inherits the app-wide `[ai] reasoning` (itself off by
-default). Setting it explicitly overrides that in either direction:
-`reasoning = false` on an agent disables it even when the app enables it.
+Omit the key and the agent inherits the app-wide `[ai] thinking`. Setting it
+explicitly overrides that in either direction: `thinking = false` on an agent
+switches it off even when the app switches it on.
 
 Any key left out falls back to the app's own `[ai]` section. The agent's
 `[agent] system` prompt is the more specific setting and takes precedence over

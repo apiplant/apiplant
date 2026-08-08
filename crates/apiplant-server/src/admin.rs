@@ -315,7 +315,6 @@ struct AgentManifest {
     description: String,
     scope: &'static str,
     storage: bool,
-    reasoning_enabled: bool,
     thread_resource: Option<String>,
     message_resource: Option<String>,
     chat: ActionPermissionManifest,
@@ -513,7 +512,7 @@ fn build_manifest(
     let mut agents = app
         .agents
         .values()
-        .map(|agent| agent_manifest(app, agent))
+        .map(agent_manifest)
         .collect::<Vec<_>>();
     agents.sort_by(|left, right| {
         left.label
@@ -737,7 +736,7 @@ fn known_roles(app: &App, functions: &FunctionRegistry) -> Vec<String> {
     roles.into_iter().collect()
 }
 
-fn agent_manifest(app: &App, agent: &Agent) -> AgentManifest {
+fn agent_manifest(agent: &Agent) -> AgentManifest {
     let org_scoped = agent.meta.scope == apiplant_core::Scope::Organization;
     AgentManifest {
         name: agent.meta.name.clone(),
@@ -745,7 +744,6 @@ fn agent_manifest(app: &App, agent: &Agent) -> AgentManifest {
         description: agent.meta.description.clone(),
         scope: if org_scoped { "organization" } else { "global" },
         storage: agent.meta.storage.enabled,
-        reasoning_enabled: agent.merged_ai_config(&app.config.ai).reasoning,
         thread_resource: agent
             .meta
             .storage

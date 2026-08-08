@@ -1053,7 +1053,9 @@ export function AgentPage(props: { agent: AgentManifest; threadId: string | null
                       const author = roleLabel(entry.role, props.agent.label);
                       const userBubble = entry.role === "user";
                       const reasoningKey = `${entryBlock.index}:${entry.role}`;
-                      const hasReasoning = Boolean(!userBubble && props.agent.reasoning_enabled && entry.reasoning?.trim());
+                      // The toggle follows the message: a reply the model thought about has
+                      // one, a reply it did not has nothing to reveal.
+                      const hasReasoning = Boolean(!userBubble && entry.reasoning?.trim());
                       const selectionClass = userBubble
                         ? "selection:bg-white/90 selection:text-accent-dim"
                         : "selection:bg-accent/35 selection:text-ink";

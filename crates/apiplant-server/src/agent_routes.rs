@@ -58,13 +58,9 @@ struct Caller {
 /// to leave the user's message stored with no reply and no explanation.
 const EMPTY_ANSWER: &str =
     "the model returned no answer; try again, or raise this agent's max_tokens";
-/// Emitted alongside a salvaged answer: the turn is usable, but the caller
-/// should know it is the model's unfinished thinking rather than a real reply.
-const SALVAGED_ANSWER: &str =
-    "the model ran out of tokens before answering; showing its unfinished output";
-/// The same situation on an agent that shows its reasoning. There the thinking
-/// is already on the message, behind the toggle, so the turn needs an
-/// explanation rather than a copy of the trace.
+/// Emitted when the model spent its whole budget thinking. The trace is on the
+/// message already, behind the toggle, so the turn needs an explanation rather
+/// than a copy of the thinking.
 const TRUNCATED_ANSWER: &str =
     "the model ran out of tokens while thinking and never answered; its reasoning is \
 below — raise this agent's max_tokens";
@@ -110,20 +106,19 @@ pub async fn chat(
     if prepared.stream == Some(false) {
         return match chat_with_tools(&state, &prepared, &ai).await {
             Ok(reply) => {
-                let (reply, warning) = salvage_reply(&reply, prepared.reasoning_enabled);
-                let visible_reply = visible_reply(&reply, prepared.reasoning_enabled);
+                let warning = truncated_answer(&reply);
                 if let Err(response) =
-                    persist_assistant_and_summary(&state, &prepared, &ai, &visible_reply).await
+                    persist_assistant_and_summary(&state, &prepared, &ai, &reply).await
                 {
                     return response;
                 }
                 // An empty answer is only a failure when nothing came back at
-                // all. A truncated one still carries the reasoning the caller
-                // asked to see, and `warning` says why the text is missing.
-                if visible_reply.text.trim().is_empty() && warning.is_none() {
+                // all. A truncated one still carries the thinking, and
+                // `warning` says why the text is missing.
+                if reply.text.trim().is_empty() && warning.is_none() {
                     return error(502, EMPTY_ANSWER);
                 }
-                let mut value = reply_json(visible_reply, prepared.thread_id);
+                let mut value = reply_json(reply, prepared.thread_id);
                 if let Some(warning) = warning {
                     if let Some(map) = value.as_object_mut() {
                         map.insert("warning".into(), json!(warning));
@@ -138,10 +133,9 @@ pub async fn chat(
     if !prepared.agent.tools.is_empty() {
         return match chat_with_tools(&state, &prepared, &ai).await {
             Ok(reply) => {
-                let (reply, warning) = salvage_reply(&reply, prepared.reasoning_enabled);
-                let visible_reply = visible_reply(&reply, prepared.reasoning_enabled);
+                let warning = truncated_answer(&reply);
                 if let Err(response) =
-                    persist_assistant_and_summary(&state, &prepared, &ai, &visible_reply).await
+                    persist_assistant_and_summary(&state, &prepared, &ai, &reply).await
                 {
                     return response;
                 }
@@ -153,23 +147,23 @@ pub async fn chat(
                 // reasoning has had no chance to arrive as it was produced.
                 // Send it now, or the toggle on this message would be empty
                 // while the stored message has the trace.
-                if !visible_reply.reasoning.trim().is_empty() {
+                if !reply.reasoning.trim().is_empty() {
                     frames.push(Ok::<Bytes, sse::Never>(sse::event(
                         "reasoning",
-                        &json!({ "text": visible_reply.reasoning }),
+                        &json!({ "text": reply.reasoning }),
                     )));
                 }
-                frames.push(Ok(sse::delta(&visible_reply.text)));
+                frames.push(Ok(sse::delta(&reply.text)));
                 match warning {
                     Some(warning) => {
                         frames.push(Ok(sse::event("warning", &json!({ "text": warning }))))
                     }
-                    None if visible_reply.text.trim().is_empty() => {
+                    None if reply.text.trim().is_empty() => {
                         frames.push(Ok(sse::failure(EMPTY_ANSWER)))
                     }
                     None => {}
                 }
-                frames.push(Ok(sse::done(&done_json(visible_reply.done, thread_id))));
+                frames.push(Ok(sse::done(&done_json(reply.done, thread_id))));
                 response.streaming(Box::pin(futures_util::stream::iter(frames)))
             }
             Err(e) => refused(e),
@@ -207,11 +201,7 @@ pub async fn chat(
                 }
                 Ok(Event::Reasoning(chunk)) => {
                     reasoning_events.borrow_mut().push_str(&chunk);
-                    if prepared.reasoning_enabled {
-                        sse::event("reasoning", &json!({ "text": chunk }))
-                    } else {
-                        Bytes::new()
-                    }
+                    sse::event("reasoning", &json!({ "text": chunk }))
                 }
                 Ok(Event::Done(agent_done)) => {
                     *done_events.borrow_mut() = agent_done;
@@ -233,30 +223,18 @@ pub async fn chat(
                 done: done.borrow().clone(),
                 tool_calls: Vec::new(),
             };
-            let (reply, warning) = salvage_reply(&reply, prepared.reasoning_enabled);
-            let visible_reply = visible_reply(&reply, prepared.reasoning_enabled);
-            let warning = (!failed.get()).then_some(warning).flatten();
-            let empty_answer =
-                !failed.get() && warning.is_none() && visible_reply.text.trim().is_empty();
-            let frame = match persist_assistant(&state, &prepared, &visible_reply).await {
+            let warning = (!failed.get()).then(|| truncated_answer(&reply)).flatten();
+            let empty_answer = !failed.get() && warning.is_none() && reply.text.trim().is_empty();
+            let frame = match persist_assistant(&state, &prepared, &reply).await {
                 Ok(()) => {
                     maybe_refresh_thread_summary(&state, &prepared, &ai).await;
-                    let done =
-                        sse::done(&done_json(visible_reply.done.clone(), prepared.thread_id));
+                    let done = sse::done(&done_json(reply.done.clone(), prepared.thread_id));
                     if let Some(warning) = warning {
-                        let mut bytes = Vec::new();
-                        // Promoted thinking went out as `reasoning` events, or
-                        // as nothing at all when reasoning is disabled, so a
-                        // salvaged answer still has to arrive as the answer.
-                        // A truncated one must not: its trace is on the message
-                        // already, and repeating it here as `delta` is how the
-                        // thinking ends up being the reply.
-                        if !prepared.reasoning_enabled {
-                            bytes.extend_from_slice(sse::delta(&visible_reply.text).as_ref());
-                        }
-                        bytes.extend_from_slice(
-                            sse::event("warning", &json!({ "text": warning })).as_ref(),
-                        );
+                        // No `delta`: the thinking already went out as
+                        // `reasoning` events, and repeating it as the answer is
+                        // how the thinking ends up being the reply.
+                        let mut bytes =
+                            sse::event("warning", &json!({ "text": warning })).to_vec();
                         bytes.extend_from_slice(done.as_ref());
                         return Ok::<Bytes, sse::Never>(Bytes::from(bytes));
                     }
@@ -274,8 +252,7 @@ pub async fn chat(
                 Err(_) => {
                     let mut bytes = sse::failure("agent history could not be saved").to_vec();
                     bytes.extend_from_slice(
-                        sse::done(&done_json(visible_reply.done.clone(), prepared.thread_id))
-                            .as_ref(),
+                        sse::done(&done_json(reply.done.clone(), prepared.thread_id)).as_ref(),
                     );
                     Bytes::from(bytes)
                 }
@@ -294,7 +271,6 @@ struct Prepared {
     owner_id: Option<Uuid>,
     active_org: Option<Uuid>,
     stream: Option<bool>,
-    reasoning_enabled: bool,
     agent: Agent,
 }
 
@@ -441,7 +417,6 @@ async fn prepare(
         owner_id,
         active_org: caller.active_org,
         stream: body.stream,
-        reasoning_enabled: agent.merged_ai_config(&state.app.config.ai).reasoning,
         agent: agent.clone(),
     })
 }
@@ -1335,42 +1310,17 @@ fn reply_json(reply: ChatReply, thread_id: Option<Uuid>) -> Value {
 }
 
 /// A model that spends its whole budget thinking answers with empty text and a
-/// full reasoning trace. Returns the reply to use and the warning the caller
-/// should send with it, if any.
+/// full reasoning trace. That is a real turn — the thinking is on the message
+/// and the toggle reveals it — but the caller is owed an explanation for the
+/// missing answer.
 ///
-/// Whether the trace is promoted to *be* the answer turns entirely on whether
-/// this agent shows its reasoning:
-///
-/// - **shown** — the trace is already on the message, behind the toggle, and
-///   copying it into the answer is the bug that makes every truncated turn look
-///   like the model replied with its own thinking. The reply keeps its empty
-///   text and the caller explains why.
-/// - **hidden** — nothing else survives the turn. [`visible_reply`] is about to
-///   discard the trace, so promoting it is the difference between an unfinished
-///   answer and no answer at all.
-///
-/// Runs before [`visible_reply`] either way: the decision needs the text while
-/// it still exists.
-fn salvage_reply(reply: &ChatReply, reasoning_enabled: bool) -> (ChatReply, Option<&'static str>) {
-    if !reply.text.trim().is_empty() || reply.reasoning.trim().is_empty() {
-        return (reply.clone(), None);
-    }
-    if reasoning_enabled {
-        return (reply.clone(), Some(TRUNCATED_ANSWER));
-    }
-    let mut salvaged = reply.clone();
-    salvaged.text = reply.reasoning.trim().to_string();
-    (salvaged, Some(SALVAGED_ANSWER))
-}
-
-fn visible_reply(reply: &ChatReply, reasoning_enabled: bool) -> ChatReply {
-    if reasoning_enabled {
-        reply.clone()
-    } else {
-        let mut visible = reply.clone();
-        visible.reasoning.clear();
-        visible
-    }
+/// The trace is never promoted to *be* the answer. Doing that is what made
+/// every truncated turn read as though the model had replied with its own
+/// thinking, which is the one thing the reasoning/answer split exists to
+/// prevent.
+fn truncated_answer(reply: &ChatReply) -> Option<&'static str> {
+    (reply.text.trim().is_empty() && !reply.reasoning.trim().is_empty())
+        .then_some(TRUNCATED_ANSWER)
 }
 
 fn done_json(done: Done, thread_id: Option<Uuid>) -> Value {
@@ -1410,54 +1360,34 @@ mod tests {
     use super::*;
     use apiplant_core::Agent as CoreAgent;
 
+    /// The bug this guards: a model that spends its budget thinking has a full
+    /// trace and no answer, and copying the trace into the answer made every
+    /// truncated turn read as though the model replied with its own thinking.
     #[test]
-    fn salvage_promotes_reasoning_only_when_it_would_otherwise_be_lost() {
+    fn a_turn_that_is_all_thinking_stays_thinking() {
         let reply = ChatReply {
             text: "   ".into(),
             reasoning: "  I should tell them about the sea.  ".into(),
             ..ChatReply::default()
         };
-
-        // Reasoning hidden: the trace is about to be discarded, so it is all
-        // the turn has left.
-        let (salvaged, warning) = salvage_reply(&reply, false);
-        assert_eq!(warning, Some(SALVAGED_ANSWER));
-        assert_eq!(salvaged.text, "I should tell them about the sea.");
-        // It must run before `visible_reply`, or there would be nothing left.
-        assert_eq!(
-            visible_reply(&salvaged, false).text,
-            "I should tell them about the sea."
-        );
-
-        // Reasoning shown: the trace already reaches the user behind the
-        // toggle, and copying it into the answer is what made every truncated
-        // turn read as though the model replied with its own thinking.
-        let (kept, warning) = salvage_reply(&reply, true);
-        assert_eq!(warning, Some(TRUNCATED_ANSWER));
-        assert_eq!(kept.text, "   ");
-        assert_eq!(
-            visible_reply(&kept, true).reasoning,
-            "  I should tell them about the sea.  "
-        );
+        assert_eq!(truncated_answer(&reply), Some(TRUNCATED_ANSWER));
+        // The trace is untouched: it reaches the caller as reasoning, behind
+        // the toggle, and never as the answer.
+        assert_eq!(reply.text, "   ");
     }
 
     #[test]
-    fn salvage_leaves_a_real_answer_alone() {
+    fn a_real_answer_needs_no_explaining() {
         let reply = ChatReply {
             text: "The sea is cold.".into(),
             reasoning: "thinking".into(),
             ..ChatReply::default()
         };
-        for reasoning_enabled in [true, false] {
-            let (untouched, warning) = salvage_reply(&reply, reasoning_enabled);
-            assert_eq!(warning, None);
-            assert_eq!(untouched.text, "The sea is cold.");
-        }
+        assert_eq!(truncated_answer(&reply), None);
 
-        // Nothing to salvage: empty answer, empty reasoning.
-        let (still_empty, warning) = salvage_reply(&ChatReply::default(), true);
-        assert_eq!(warning, None);
-        assert!(still_empty.text.is_empty());
+        // Nothing at all: an empty answer with no thinking behind it is a
+        // failed turn, not a truncated one.
+        assert_eq!(truncated_answer(&ChatReply::default()), None);
     }
 
     fn test_agent(storage: &str) -> CoreAgent {

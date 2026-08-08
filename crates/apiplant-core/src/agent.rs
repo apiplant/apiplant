@@ -94,7 +94,6 @@ pub struct AgentAiOverride {
     pub system: Option<String>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
-    pub reasoning: Option<bool>,
     pub thinking: Option<bool>,
     pub reasoning_format: Option<String>,
     pub timeout_secs: Option<u64>,
@@ -340,9 +339,6 @@ impl Agent {
             }
             if let Some(temperature) = ai.temperature {
                 merged.temperature = temperature;
-            }
-            if let Some(reasoning) = ai.reasoning {
-                merged.reasoning = reasoning;
             }
             if let Some(thinking) = ai.thinking {
                 merged.thinking = Some(thinking);
@@ -630,7 +626,6 @@ api_key = ""
 model = "local"
 temperature = 0.2
 timeout_secs = 15
-reasoning = true
 thinking = false
 "#,
         );
@@ -644,7 +639,6 @@ thinking = false
             max_tokens: 2048,
             temperature: -1.0,
             access: "authenticated".to_string(),
-            reasoning: false,
             thinking: None,
             reasoning_format: "auto".to_string(),
             timeout_secs: 300,
@@ -657,8 +651,6 @@ thinking = false
         assert_eq!(merged.api_key, "");
         assert_eq!(merged.timeout_secs, 15);
         assert_eq!(merged.access, "authenticated");
-        assert!(merged.reasoning);
-        // Showing the thinking and asking for it are separate decisions.
         assert_eq!(merged.thinking, Some(false));
     }
 }

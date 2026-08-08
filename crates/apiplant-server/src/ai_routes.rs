@@ -74,7 +74,6 @@ pub async fn config(state: State<AppState>) -> HttpResponse {
                     apiplant_core::Scope::Organization => "organization",
                 },
                 "storage": agent.meta.storage.enabled,
-                "reasoning_enabled": agent.merged_ai_config(&state.app.config.ai).reasoning,
                 "tools": agent.tools.iter().map(|tool| {
                     json!({
                         "name": tool.name,

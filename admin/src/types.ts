@@ -158,7 +158,6 @@ export interface AgentManifest {
   description: string;
   scope: "organization" | "global";
   storage: boolean;
-  reasoning_enabled: boolean;
   thread_resource: string | null;
   message_resource: string | null;
   chat: ActionPermissionManifest;

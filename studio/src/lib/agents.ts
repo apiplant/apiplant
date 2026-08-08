@@ -206,7 +206,6 @@ export function parseAgent(text: string) {
     temperature: asNumber(ai.temperature),
     maxTokens: asNumber(ai.max_tokens),
     timeoutSecs: asNumber(ai.timeout_secs),
-    reasoning: typeof ai.reasoning === "boolean" ? ai.reasoning : undefined,
     thinking: typeof ai.thinking === "boolean" ? ai.thinking : undefined,
     reasoningFormat: asOptionalString(ai.reasoning_format),
   };
@@ -318,7 +317,6 @@ export function emitAgent(agent: AgentEntry): string {
     if (agent.aiOverride.temperature !== undefined) ai.temperature = agent.aiOverride.temperature;
     if (agent.aiOverride.maxTokens !== undefined) ai.max_tokens = agent.aiOverride.maxTokens;
     if (agent.aiOverride.timeoutSecs !== undefined) ai.timeout_secs = agent.aiOverride.timeoutSecs;
-    if (agent.aiOverride.reasoning !== undefined) ai.reasoning = agent.aiOverride.reasoning;
     if (agent.aiOverride.thinking !== undefined) ai.thinking = agent.aiOverride.thinking;
     if (agent.aiOverride.reasoningFormat !== undefined) {
       ai.reasoning_format = agent.aiOverride.reasoningFormat;

@@ -717,30 +717,29 @@ function AiOverrideTab(props: {
           </Labelled>
 
           <Labelled
-            label="reasoning traces"
-            hint="Inherits the global [ai] reasoning setting unless overridden here. When enabled, the model may emit hidden reasoning that operators can reveal per message."
+            label="thinking"
+            hint="Whether to ask the model to think, using the provider's own switch. Whatever thinking comes back is always kept on the message and revealed by the Show reasoning toggle — it is never part of the answer."
           >
             <Select
               value={
-                override().reasoning === undefined
+                override().thinking === undefined
                   ? "inherit"
-                  : override().reasoning
+                  : override().thinking
                     ? "enabled"
                     : "disabled"
               }
               options={[
                 { value: "inherit", label: "inherit — follow the global [ai] setting" },
-                { value: "enabled", label: "enabled — always emit reasoning" },
-                { value: "disabled", label: "disabled — never emit reasoning" },
+                { value: "enabled", label: "enabled — ask the model to think" },
+                { value: "disabled", label: "disabled — ask it not to" },
               ]}
               onChange={(value) =>
                 props.onEdit((draft) => {
                   const next = ensureOverride(draft);
                   // `undefined` drops the key so the agent inherits; an
                   // explicit `false` has to survive, or an agent could never
-                  // turn reasoning off once it is on globally.
-                  next.reasoning =
-                    value === "inherit" ? undefined : value === "enabled";
+                  // turn thinking off once it is on globally.
+                  next.thinking = value === "inherit" ? undefined : value === "enabled";
                   draft.aiOverride = next;
                 })
               }
