@@ -278,6 +278,11 @@ pub(crate) async fn create_personal_organization(state: &AppState, user_id: Uuid
         );
     }
 
+    // The same default a `POST /organization` gets: a personal organisation is
+    // an ordinary organisation, and a deployment whose tenants are all of one
+    // class means this one too.
+    crate::crud::stamp_default_org_class(state, org_r, &mut org);
+
     let created = match state.db.create(org_r, &org).await {
         Ok(row) => row,
         Err(e) => {

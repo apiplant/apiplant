@@ -390,6 +390,7 @@ role, and every other resource is organisation-scoped unless you set
 | Create stamping | `organization_id` is filled in by the server; clients cannot spoof it |
 | Update refusal | `organization_id` in a body is dropped, so a row cannot be moved between organisations |
 | Role checks | `role:admin` means admin of the active organisation |
+| Organisation classes | `role:admin@org_class=school` narrows a permission to organisations of one class; `org_class` is server-owned, written only by `[organization] org_class_editors` |
 
 Single-org users never need the header; multi-org users send it per request.
 Full details in [Multitenancy](docs/multitenancy.md).

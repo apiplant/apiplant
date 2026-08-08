@@ -185,7 +185,79 @@ impl FunctionAccess {
     }
 }
 
+/// What separates an access level from the organisation class it is narrowed
+/// to, in every access string the framework parses.
+pub const ORG_CLASS_SUFFIX: &str = "@org_class=";
+
+/// A [`FunctionAccess`] plus the optional organisation class it is narrowed to
+/// — the function-side twin of `apiplant_core::Policy`, spelled the same way:
+/// `"role:admin@org_class=school"`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionPolicy {
+    pub access: FunctionAccess,
+    pub org_class: Option<String>,
+}
+
+impl FunctionPolicy {
+    /// Parse the shared grammar. `None` for anything unrecognised — including
+    /// an empty class, which would otherwise read as "no qualifier" and widen
+    /// the policy rather than narrowing it.
+    pub fn parse(value: &str) -> Option<FunctionPolicy> {
+        match value.trim().split_once(ORG_CLASS_SUFFIX) {
+            Some((access, class)) => {
+                let class = class.trim();
+                if class.is_empty() {
+                    return None;
+                }
+                Some(FunctionPolicy {
+                    access: FunctionAccess::parse(access)?,
+                    org_class: Some(class.to_string()),
+                })
+            }
+            None => Some(FunctionPolicy {
+                access: FunctionAccess::parse(value)?,
+                org_class: None,
+            }),
+        }
+    }
+
+    /// The canonical string form, round-tripping [`FunctionPolicy::parse`].
+    pub fn as_string(&self) -> String {
+        match &self.org_class {
+            Some(class) => format!("{}{ORG_CLASS_SUFFIX}{class}", self.access.as_string()),
+            None => self.access.as_string(),
+        }
+    }
+
+    /// Whether an organisation carrying `class` satisfies the qualifier.
+    pub fn matches_org_class(&self, class: Option<&str>) -> bool {
+        match &self.org_class {
+            None => true,
+            Some(required) => class.is_some_and(|c| c == required),
+        }
+    }
+}
+
+impl From<FunctionAccess> for FunctionPolicy {
+    fn from(access: FunctionAccess) -> FunctionPolicy {
+        FunctionPolicy {
+            access,
+            org_class: None,
+        }
+    }
+}
+
 impl FunctionManifest {
+    /// The policy the host enforces for this function, class qualifier
+    /// included. An unparseable `permission` collapses to `private`.
+    pub fn policy(&self) -> FunctionPolicy {
+        if !self.permission.is_empty() {
+            return FunctionPolicy::parse(self.permission.as_str())
+                .unwrap_or_else(|| FunctionAccess::Private.into());
+        }
+        self.access().into()
+    }
+
     /// The policy the host enforces for this function.
     ///
     /// An explicit, parseable `permission` wins. Otherwise the legacy
@@ -194,9 +266,13 @@ impl FunctionManifest {
     /// *unparseable* `permission` collapses to [`FunctionAccess::Private`] —
     /// the safe direction, matching how the rest of apiplant treats a typo in
     /// an access string.
+    ///
+    /// This is the *level* only: a `@org_class=` qualifier is dropped, so a
+    /// caller that enforces a class must use [`policy`](Self::policy).
     pub fn access(&self) -> FunctionAccess {
         if !self.permission.is_empty() {
-            return FunctionAccess::parse(self.permission.as_str())
+            return FunctionPolicy::parse(self.permission.as_str())
+                .map(|p| p.access)
                 .unwrap_or(FunctionAccess::Private);
         }
         match self.visibility {

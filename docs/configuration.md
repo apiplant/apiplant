@@ -51,6 +51,10 @@ path    = "/admin"           # where it mounts (outside base_path)
 # logo  = "/logo.png"        # your logo instead of the apiplant one
 gravatar = false             # fall back to Gravatar for accounts with no avatar_url
 
+[organization]               # optional: rules about the tenant itself
+org_class_editors = "member@org_class=admin"   # who may class an organisation
+default_org_class = "customer"                 # what a new one starts as
+
 [public]
 enabled   = true             # serve `dir` at the site root when it exists
 dir       = "public"         # static site directory, relative to the app root
@@ -255,6 +259,29 @@ into it, so it requires no CORS and cannot become stale after a model change.
 For a custom console, set `enabled = false` and serve one from `public/admin/`.
 To host a copy of this one on another origin, build it with `apiplant admin`.
 See [Admin dashboard](admin.md).
+
+## `[organization]`
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `org_class_editors` | `private` | Who may write `organization.org_class`, in the [permissions](permissions.md) grammar. The default writes it for nobody: the column is server-owned and classes come from seed data or SQL. |
+| `default_org_class` | unset | The class stamped on a new organisation that has none — every organisation the API creates, including the personal one each account is given. Unset leaves them unclassed, which no `@org_class=` qualifier matches. A class editor who names a class on create keeps theirs. |
+
+An organisation's `org_class` is what a `@org_class=` permission is checked
+against, so an organisation able to set its own class could grant itself
+whatever those permissions guard. The column is therefore stripped from every
+request body — like `organization_id` — except for callers this setting names.
+
+The policy is answered against the organisation the caller has **selected**, not
+the one being edited, which is how one back-office organisation comes to
+administer everybody's classes:
+
+```toml
+[organization]
+org_class_editors = "member@org_class=admin"
+```
+
+See [Organisation classes](permissions.md#organisation-classes).
 
 ## `[public]`
 

@@ -7,7 +7,7 @@
 //! machinery as every other table.
 
 use crate::config::AiConfig;
-use crate::schema::{titleize, Access, Resource, Scope};
+use crate::schema::{titleize, Access, Policy, Resource, Scope};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -131,19 +131,19 @@ fn default_tool_output_schema() -> Value {
 #[serde(from = "AgentPermissionsRaw")]
 pub struct AgentPermissions {
     /// Who may chat with this agent.
-    pub chat: Access,
+    pub chat: Policy,
     /// Who may read stored history, through the generated resources.
-    pub history: Access,
+    pub history: Policy,
     /// Who may delete stored threads from history.
-    pub delete_history: Access,
+    pub delete_history: Policy,
 }
 
 impl Default for AgentPermissions {
     fn default() -> Self {
         AgentPermissions {
-            chat: Access::Authenticated,
-            history: Access::Owner,
-            delete_history: Access::Owner,
+            chat: Access::Authenticated.into(),
+            history: Access::Owner.into(),
+            delete_history: Access::Owner.into(),
         }
     }
 }
@@ -162,15 +162,15 @@ impl From<AgentPermissionsRaw> for AgentPermissions {
         AgentPermissions {
             chat: raw
                 .chat
-                .map(|value| Access::parse(&value))
+                .map(|value| Policy::parse(&value))
                 .unwrap_or(default.chat),
             history: raw
                 .history
-                .map(|value| Access::parse(&value))
+                .map(|value| Policy::parse(&value))
                 .unwrap_or(default.history.clone()),
             delete_history: raw
                 .delete_history
-                .map(|value| Access::parse(&value))
+                .map(|value| Policy::parse(&value))
                 .unwrap_or(default.history),
         }
     }
@@ -200,13 +200,13 @@ impl Agent {
                 message: "[agent] name cannot be empty".to_string(),
             });
         }
-        if matches!(self.permissions.chat, Access::Owner) {
+        if matches!(self.permissions.chat.level, Access::Owner) {
             return Err(crate::Error::Schema {
                 resource: self.meta.name.clone(),
                 message: "[permissions] chat = \"owner\" is not valid for an agent".to_string(),
             });
         }
-        if self.meta.storage.enabled && matches!(self.permissions.chat, Access::Public) {
+        if self.meta.storage.enabled && matches!(self.permissions.chat.level, Access::Public) {
             return Err(crate::Error::Schema {
                 resource: self.meta.name.clone(),
                 message:
@@ -214,7 +214,9 @@ impl Agent {
                         .to_string(),
             });
         }
-        if self.meta.storage.enabled && matches!(self.permissions.delete_history, Access::Public) {
+        if self.meta.storage.enabled
+            && matches!(self.permissions.delete_history.level, Access::Public)
+        {
             return Err(crate::Error::Schema {
                 resource: self.meta.name.clone(),
                 message: "a stored agent cannot allow public history deletion".to_string(),
@@ -222,7 +224,10 @@ impl Agent {
         }
         if self.meta.storage.enabled
             && self.meta.scope == Scope::Global
-            && matches!(self.permissions.chat, Access::Member | Access::Role(_))
+            && matches!(
+                self.permissions.chat.level,
+                Access::Member | Access::Role(_)
+            )
         {
             return Err(crate::Error::Schema {
                 resource: self.meta.name.clone(),
@@ -233,7 +238,10 @@ impl Agent {
         }
         if self.meta.storage.enabled
             && self.meta.scope == Scope::Global
-            && matches!(self.permissions.history, Access::Member | Access::Role(_))
+            && matches!(
+                self.permissions.history.level,
+                Access::Member | Access::Role(_)
+            )
         {
             return Err(crate::Error::Schema {
                 resource: self.meta.name.clone(),
@@ -245,7 +253,7 @@ impl Agent {
         if self.meta.storage.enabled
             && self.meta.scope == Scope::Global
             && matches!(
-                self.permissions.delete_history,
+                self.permissions.delete_history.level,
                 Access::Member | Access::Role(_)
             )
         {

@@ -37,6 +37,7 @@ import {
   currentUserLabel,
   emailOf,
   hasRole,
+  canPermission,
   manifest,
   notify,
   oauthAvailable,
@@ -749,6 +750,7 @@ export function OrganizationPage() {
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
   const [logo, setLogo] = createSignal("");
+  const [orgClass, setOrgClass] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [creating, setCreating] = createSignal(false);
 
@@ -757,7 +759,65 @@ export function OrganizationPage() {
     setName(typeof current?.name === "string" ? current.name : "");
     setSlug(typeof current?.slug === "string" ? current.slug : "");
     setLogo(typeof current?.avatar_url === "string" ? current.avatar_url : "");
+    setOrgClass(typeof current?.org_class === "string" ? current.org_class : "");
   });
+
+  // The class is not an ordinary column: it decides which `@org_class=`
+  // permissions apply inside this organisation, so the server strips it from
+  // any body but an authorised one's. `[organization] org_class_editors` says
+  // who that is, and the manifest carries the same policy so the field is an
+  // input for them and a plain reading for everyone else.
+  const classPolicy = () => manifest()?.organization?.org_class_editors ?? null;
+  const mayEditClass = createMemo(() => {
+    const policy = classPolicy();
+    return policy ? canPermission(policy, true) : false;
+  });
+  const knownClasses = () => manifest()?.organization?.known_classes ?? [];
+
+  const [scope, setScope] = createSignal<"mine" | "all">("mine");
+  const [search, setSearch] = createSignal("");
+  const [classSaving, setClassSaving] = createSignal<string | null>(null);
+
+  // The server decides what this list contains: `organization` is read at
+  // `member` level, so it is the caller's own organisations — unless they may
+  // edit classes, in which case it is every one, because you cannot class an
+  // organisation you cannot find.
+  //
+  // `org: true` is what makes them one: `org_class_editors` is answered against
+  // the organisation *selected*, so without the header the same account is
+  // nobody in particular and the list comes back narrow.
+  const [allOrganizations, { refetch: refetchOrganizations }] = createResource(
+    () => mayEditClass(),
+    async (may) => (may ? asRecords(await api("/organization?limit=500", { org: true })) : []),
+  );
+
+  const visibleOrganizations = createMemo(() => {
+    const rows = scope() === "all" && mayEditClass() ? allOrganizations() ?? [] : session.organizations;
+    const needle = search().trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((organization) =>
+      organizationLabel(organization).toLowerCase().includes(needle),
+    );
+  });
+
+  // Sent on its own, because `org_class` is the one column the setting
+  // authorises on an organisation the operator may not otherwise touch.
+  const saveClass = async (id: string, value: string) => {
+    setClassSaving(id);
+    try {
+      await api(`/organization/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { org_class: value || null },
+        org: true,
+      });
+      await Promise.all([refreshSession(), refetchOrganizations()]);
+      notify("success", value ? `Class set to ${value}.` : "Class cleared.");
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setClassSaving(null);
+    }
+  };
 
   const mayEdit = createMemo(() => {
     const policy = resourceByName("organization")?.permissions.update;
@@ -776,6 +836,10 @@ export function OrganizationPage() {
           name: name().trim(),
           slug: slug().trim() || null,
           avatar_url: logo().trim() || null,
+          // Sent only when this operator may write it: the server would drop
+          // it otherwise, and a field nobody may change should not be part of
+          // an ordinary rename.
+          ...(mayEditClass() ? { org_class: orgClass().trim() || null } : {}),
         },
       });
       await refreshSession();
@@ -849,8 +913,36 @@ export function OrganizationPage() {
                   </div>
                 </div>
               </Field>
+              <Field
+                label="Class"
+                help={
+                  mayEditClass()
+                    ? "What kind of organization this is. Permissions can be narrowed to a class, so this decides what people may do here."
+                    : "What kind of organization this is. Permissions can be narrowed to a class; only the operators named by `org_class_editors` can change it."
+                }
+              >
+                <Show
+                  when={mayEditClass()}
+                  fallback={
+                    <p class="text-xs text-faint">
+                      {orgClass() ? <code class="font-mono">{orgClass()}</code> : "No class."}
+                    </p>
+                  }
+                >
+                  <input
+                    class="input"
+                    list="admin-org-classes"
+                    placeholder="none"
+                    value={orgClass()}
+                    onInput={(event) => setOrgClass(event.currentTarget.value)}
+                  />
+                  <datalist id="admin-org-classes">
+                    <For each={knownClasses()}>{(value) => <option value={value} />}</For>
+                  </datalist>
+                </Show>
+              </Field>
               <Show
-                when={mayEdit()}
+                when={mayEdit() || mayEditClass()}
                 fallback={
                   <p class="text-xs text-faint">Only an admin of this organization can change these.</p>
                 }
@@ -864,34 +956,125 @@ export function OrganizationPage() {
         </Card>
 
         <Card>
-          <CardHeader title="Your organizations" hint="Switch at any time from the top bar." />
+          <CardHeader
+            title="Organizations"
+            hint={
+              mayEditClass()
+                ? "Switch at any time from the top bar. You may class any organization here, including ones you do not belong to."
+                : "Switch at any time from the top bar."
+            }
+          />
+
+          {/* A class editor administers classes across the deployment, so the
+              server lists every organization for them. That makes the list
+              long and mostly other people's, which is why the scope toggle and
+              the search exist only in that case. */}
+          <Show when={mayEditClass()}>
+            <div class="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
+              <div class="flex rounded-md border border-line p-0.5">
+                <For each={["mine", "all"] as const}>
+                  {(value) => (
+                    <button
+                      type="button"
+                      class="rounded px-2.5 py-1 text-xs capitalize transition-colors"
+                      classList={{
+                        "bg-surface-2 text-ink": scope() === value,
+                        "text-faint hover:text-ink": scope() !== value,
+                      }}
+                      onClick={() => setScope(value)}
+                    >
+                      {value}
+                    </button>
+                  )}
+                </For>
+              </div>
+              <input
+                class="input h-8 min-w-0 flex-1 text-xs"
+                placeholder="Filter by name"
+                value={search()}
+                onInput={(event) => setSearch(event.currentTarget.value)}
+              />
+            </div>
+          </Show>
+
           <Show
-            when={session.organizations.length}
-            fallback={<p class="px-5 py-4 text-xs text-faint">You do not belong to any yet.</p>}
+            when={visibleOrganizations().length}
+            fallback={
+              <p class="px-5 py-4 text-xs text-faint">
+                {session.organizations.length ? "Nothing matches that." : "You do not belong to any yet."}
+              </p>
+            }
           >
             <ul class="divide-y divide-line">
-              <For each={session.organizations}>
+              <For each={visibleOrganizations()}>
                 {(organization) => {
                   const id = String(organization.id ?? "");
+                  const mine = () => session.organizations.some((own) => String(own.id ?? "") === id);
+                  const value = typeof organization.org_class === "string" ? organization.org_class : "";
+                  const [draft, setDraft] = createSignal(value);
                   return (
-                    <li>
-                      <button
-                        type="button"
-                        class="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-2/60"
-                        onClick={() => void setActiveOrganization(id)}
-                      >
+                    <li class="px-5 py-3">
+                      <div class="flex items-center gap-3">
                         <Avatar
                           name={organizationLabel(organization)}
                           src={avatarOf(organization)}
                           size="sm"
                         />
-                        <span class="min-w-0 flex-1 truncate text-sm text-ink">
-                          {organizationLabel(organization)}
-                        </span>
+                        {/* Only an organization you belong to can be made
+                            active: `X-Organization` naming any other is
+                            refused, so offering the switch would be a button
+                            that only ever fails. */}
+                        <Show
+                          when={mine()}
+                          fallback={
+                            <span class="min-w-0 flex-1 truncate text-sm text-ink">
+                              {organizationLabel(organization)}
+                            </span>
+                          }
+                        >
+                          <button
+                            type="button"
+                            class="min-w-0 flex-1 truncate text-left text-sm text-ink transition-colors hover:text-accent"
+                            onClick={() => void setActiveOrganization(id)}
+                          >
+                            {organizationLabel(organization)}
+                          </button>
+                        </Show>
                         <Show when={session.organizationId === id}>
                           <Badge tone="accent">Active</Badge>
                         </Show>
-                      </button>
+                        <Show when={mayEditClass() && !mine()}>
+                          <Badge>Not a member</Badge>
+                        </Show>
+                      </div>
+                      <Show
+                        when={mayEditClass()}
+                        fallback={
+                          <Show when={value}>
+                            <p class="mt-1 pl-11 text-[0.6875rem] text-faint">
+                              Class <code class="font-mono">{value}</code>
+                            </p>
+                          </Show>
+                        }
+                      >
+                        <div class="mt-2 flex items-center gap-2 pl-11">
+                          <input
+                            class="input h-8 max-w-[12rem] text-xs"
+                            list="admin-org-classes"
+                            placeholder="no class"
+                            value={draft()}
+                            onInput={(event) => setDraft(event.currentTarget.value)}
+                          />
+                          <Button
+                            variant="ghost"
+                            disabled={draft().trim() === value}
+                            loading={classSaving() === id}
+                            onClick={() => void saveClass(id, draft().trim())}
+                          >
+                            Save class
+                          </Button>
+                        </div>
+                      </Show>
                     </li>
                   );
                 }}

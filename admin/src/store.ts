@@ -798,8 +798,18 @@ export function can(resource: ResourceManifest, action: Action): boolean {
   return canPermission(resource.permissions[action], resource.scope === "global");
 }
 
-function canPermission(policy: ActionPermissionManifest, global: boolean): boolean {
-  switch (policy.value) {
+/** The `org_class` of the organisation currently selected, if it carries one. */
+export function currentOrganizationClass(): string | null {
+  const value = currentOrganization()?.org_class;
+  return typeof value === "string" && value ? value : null;
+}
+
+export function canPermission(policy: ActionPermissionManifest, global: boolean): boolean {
+  // A class qualifier narrows every level, so it is checked first and on its
+  // own: the active organisation has to be of that class, whoever the caller
+  // is. Server-side the same check runs before the level.
+  if (policy.org_class && policy.org_class !== currentOrganizationClass()) return false;
+  switch (policy.value.split("@org_class=")[0]) {
     case "public":
       return true;
     case "private":

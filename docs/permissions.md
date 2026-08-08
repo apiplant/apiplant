@@ -38,6 +38,9 @@ The same `list` policy also governs the nested `GET /parent/{id}/res` endpoint
 | `role:<name>` | authenticated **and** holding the named role in the active organisation |
 | `private` | nobody; the endpoint is not exposed (returns 404 and is omitted from the docs) |
 
+Any of them can be narrowed to a **class of organisation** by appending
+`@org_class=<name>` — see [Organisation classes](#organisation-classes).
+
 ## Defaults
 
 If you omit `[permissions]` entirely, or any individual key, these safe defaults
@@ -87,6 +90,104 @@ This is what the built-in `billing_product` and `billing_price` rely on to be
 admin-writable, and the [queue](queues.md) to be admin-readable. In a
 single-tenant deployment — one organisation, the operator in it — it reads as
 "the operator", which is what an ops table wants.
+
+## Organisation classes
+
+An organisation carries an `org_class`: what *kind* of tenant it is — `school`,
+`customer`, `staff`. Any access level can be narrowed to one:
+
+```toml
+[permissions]
+list   = "member"
+update = "role:admin@org_class=school"   # admins, but only in a school
+create = "member@org_class=staff"        # anyone in a staff organisation
+```
+
+A qualifier only ever **narrows**: `role:admin@org_class=school` is strictly
+fewer people than `role:admin`. A policy without one applies in every
+organisation, which is what every policy written before classes existed means —
+so classing your organisations changes nothing until a permission asks for a
+class.
+
+| Where it is written | What the class is checked against |
+|---------------------|-----------------------------------|
+| an org-scoped resource | the **active** organisation (`X-Organization`) |
+| the `organization` resource | each row — so a list returns only organisations of that class |
+| any other global resource | the active organisation, as a gate |
+| a function, an agent, `[ai] access`, `[queues] publish` | the active organisation, as a gate |
+
+Because the qualifier needs an organisation, it applies even to the levels that
+name none: `public@org_class=staff` is *not* public — it requires a caller who
+has selected a staff organisation. A caller in the wrong class gets
+
+```
+403 requires an organisation of class `staff`
+```
+
+An organisation with **no** class matches no qualifier at all, and an empty
+class in a policy (`"role:admin@org_class="`) is a typo, so it collapses to
+`private` like any other unparseable access string.
+
+### Who may set a class
+
+The class decides what a `@org_class=` permission lets people do, so an
+organisation able to write its own class could grant itself whatever those
+permissions guard. `organization.org_class` is therefore **server-owned**: it is
+stripped from every request body, exactly like `organization_id`, unless the
+caller is named by one deployment-wide setting:
+
+```toml
+# main.toml
+[organization]
+org_class_editors = "member@org_class=admin"
+```
+
+It is written in this same grammar and answered against the organisation the
+caller has **selected**, not the one being edited — which is how one back-office
+organisation comes to administer everybody's classes. Unset, it is `private`:
+nobody, and classes come only from seed data or SQL.
+
+New organisations can start classed rather than waiting to be classified:
+
+```toml
+[organization]
+default_org_class = "customer"
+```
+
+That covers both doors an organisation comes through — `POST /organization` and
+the personal one every account is created with — so a deployment whose ordinary
+tenant is one kind has its permissions apply from the moment an organisation
+exists. Unset, new organisations carry no class, which no qualifier matches.
+
+### What a class editor may do
+
+Classing organisations is deployment-wide work, so the `organization` resource
+answers a class editor differently — but only as far as the job needs:
+
+| Action | For a class editor |
+|--------|--------------------|
+| `list` / `read` | **every** organisation, not only their own — you cannot class what you cannot find |
+| `update` | `org_class` on any organisation, **and nothing else** |
+| everything else | exactly the resource's ordinary policy |
+
+A body carrying anything besides `org_class` goes by the normal `update`
+policy, so an organisation's own admins keep sole control of its name, slug and
+logo; a rename smuggled in beside a class change is refused rather than
+half-applied. The rule is judged on the body the client sent *and* on the body a
+`before_update` hook returns, so a hook cannot widen the write either.
+
+All of this depends on the organisation the caller has **selected**: the setting
+is answered against `X-Organization`, so the same account acting from an
+unclassed organisation is nobody in particular, sees only its own organisations,
+and may class nothing.
+
+The [dashboard](admin.md)'s Organization screen shows the class as an editable
+field to those the setting names and as plain text to everyone else, so nobody
+is offered an input the server would ignore. For a class editor its
+organisation list covers the whole deployment, with a **Mine / All** switch and
+a name filter, and lets the class be set inline on any row — including
+organisations they do not belong to, which are marked as such because switching
+into one is not something membership allows.
 
 ## Decision model
 

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use apiplant_ai::Ai;
 use apiplant_auth::{Authenticator, OrgMembership, Principal};
 use apiplant_cache::Cache;
-use apiplant_core::App;
+use apiplant_core::{App, ORG_CLASS_FIELD};
 use apiplant_db::Db;
 use apiplant_email::Mailer;
 use apiplant_oauth::Providers;
@@ -202,18 +202,28 @@ impl AppState {
             return Vec::new();
         };
 
+        // The organisation's class rides along on every membership: a
+        // `@org_class=` permission is answered from the principal, so it must
+        // not cost a query of its own. An app that replaced the built-in
+        // `organization` model without the column simply has no classes.
+        let class_select = self.org_class_join();
+
         // An app is free to drop the built-in `membership_role` resource, in
         // which case the primary role is all there is.
         let sql = match self.table("membership_role") {
             Some(role_tbl) => format!(
-                "SELECT m.organization_id::text AS org, m.role AS role, r.role AS extra \
+                "SELECT m.organization_id::text AS org, m.role AS role, r.role AS extra{select} \
                  FROM {membership_tbl} m \
-                 LEFT JOIN {role_tbl} r ON r.membership_id = m.id \
-                 WHERE m.user_id = $1::uuid"
+                 LEFT JOIN {role_tbl} r ON r.membership_id = m.id{join} \
+                 WHERE m.user_id = $1::uuid",
+                select = class_select.0,
+                join = class_select.1,
             ),
             None => format!(
-                "SELECT organization_id::text AS org, role, NULL AS extra \
-                 FROM {membership_tbl} WHERE user_id = $1::uuid"
+                "SELECT m.organization_id::text AS org, m.role AS role, NULL AS extra{select} \
+                 FROM {membership_tbl} m{join} WHERE m.user_id = $1::uuid",
+                select = class_select.0,
+                join = class_select.1,
             ),
         };
 
@@ -232,6 +242,7 @@ impl AppState {
         let mut order: Vec<Uuid> = Vec::new();
         let mut primary: HashMap<Uuid, Option<String>> = HashMap::new();
         let mut extras: HashMap<Uuid, Vec<String>> = HashMap::new();
+        let mut classes: HashMap<Uuid, Option<String>> = HashMap::new();
 
         for row in rows.as_array().map(Vec::as_slice).unwrap_or_default() {
             let Some(org) = row
@@ -252,6 +263,12 @@ impl AppState {
                         .filter(|role| !role.is_empty()),
                 );
             }
+            classes.entry(org).or_insert_with(|| {
+                row.get("org_class")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+                    .filter(|class| !class.is_empty())
+            });
             if let Some(extra) = row.get("extra").and_then(|v| v.as_str()) {
                 if !extra.is_empty() {
                     extras.entry(org).or_default().push(extra.to_string());
@@ -267,6 +284,7 @@ impl AppState {
                     primary.get(&org).cloned().flatten(),
                     extras.remove(&org).unwrap_or_default(),
                 )
+                .in_class(classes.remove(&org).flatten())
             })
             .collect()
     }
@@ -429,6 +447,24 @@ impl AppState {
     }
 
     /// Quoted-safe physical table name for a resource by logical name.
+    /// The `SELECT` fragment and `JOIN` that bring an organisation's class into
+    /// a membership query — both empty when the app's `organization` model has
+    /// no `org_class` column, so a replaced built-in still loads memberships.
+    fn org_class_join(&self) -> (String, String) {
+        let has_class = self
+            .app
+            .resources
+            .get("organization")
+            .is_some_and(|r| r.fields.contains_key(ORG_CLASS_FIELD));
+        match (has_class, self.table("organization")) {
+            (true, Some(org_tbl)) => (
+                format!(", o.{ORG_CLASS_FIELD} AS org_class"),
+                format!(" LEFT JOIN {org_tbl} o ON o.id = m.organization_id"),
+            ),
+            _ => (String::new(), String::new()),
+        }
+    }
+
     pub(crate) fn table(&self, resource: &str) -> Option<String> {
         self.app
             .resources

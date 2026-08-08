@@ -6,6 +6,7 @@ import {
   FIELD_TYPES,
   HOOK_EVENTS,
   ON_DELETE,
+  ORG_CLASS_SUFFIX,
   SCOPES,
   type Action,
   type ContentFormat,
@@ -540,8 +541,17 @@ function PermissionsTab(props: {
   onEdit: (update: (draft: Resource) => void) => void;
   basePath: string;
 }) {
-  const levelOf = (value: string | undefined) => (value?.startsWith("role:") ? "role" : (value ?? "member"));
-  const roleOf = (value: string | undefined) => (value?.startsWith("role:") ? value.slice(5) : "");
+  // A policy is `<level>` or `<level>@org_class=<name>`; the UI edits the two
+  // halves separately and writes them back as one string.
+  const bareOf = (value: string | undefined) => (value ?? "member").split(ORG_CLASS_SUFFIX)[0];
+  const levelOf = (value: string | undefined) => (bareOf(value).startsWith("role:") ? "role" : bareOf(value));
+  const roleOf = (value: string | undefined) =>
+    bareOf(value).startsWith("role:") ? bareOf(value).slice(5) : "";
+  const classOf = (value: string | undefined) => {
+    const at = (value ?? "").indexOf(ORG_CLASS_SUFFIX);
+    return at === -1 ? "" : (value ?? "").slice(at + ORG_CLASS_SUFFIX.length);
+  };
+  const compose = (bare: string, orgClass: string) => (orgClass ? `${bare}${ORG_CLASS_SUFFIX}${orgClass}` : bare);
 
   return (
     <Card>
@@ -567,7 +577,8 @@ function PermissionsTab(props: {
                   options={ACCESS_OPTIONS}
                   onChange={(value) =>
                     props.onEdit((draft) => {
-                      draft.permissions[action] = value === "role" ? `role:${roleOf(current()) || "admin"}` : value;
+                      const bare = value === "role" ? `role:${roleOf(current()) || "admin"}` : value;
+                      draft.permissions[action] = compose(bare, classOf(current()));
                     })
                   }
                 />
@@ -579,11 +590,25 @@ function PermissionsTab(props: {
                     placeholder="admin"
                     onInput={(value) =>
                       props.onEdit((draft) => {
-                        draft.permissions[action] = `role:${value}`;
+                        draft.permissions[action] = compose(`role:${value}`, classOf(current()));
                       })
                     }
                   />
                 </Show>
+                <label class="flex items-center gap-2 text-[0.6875rem] text-faint">
+                  <span class="whitespace-nowrap">in org class</span>
+                  <TextInput
+                    mono
+                    class="max-w-[9rem]"
+                    value={classOf(current())}
+                    placeholder="any"
+                    onInput={(value) =>
+                      props.onEdit((draft) => {
+                        draft.permissions[action] = compose(bareOf(current()), value.trim());
+                      })
+                    }
+                  />
+                </label>
               </div>
             );
           }}
@@ -594,7 +619,11 @@ function PermissionsTab(props: {
           Rows are isolated per organisation before any of this runs, and <Mono>public</Mono> behaves as{" "}
           <Mono>member</Mono> here.{" "}
         </Show>
-        <Show when={Object.values(props.resource.permissions).some((value) => value === "owner")}>
+        <Show when={Object.values(props.resource.permissions).some((value) => value?.includes(ORG_CLASS_SUFFIX))}>
+          A class narrows an action to organisations whose <Mono>org_class</Mono> matches — never widens it.
+          Leave it empty for every organisation.{" "}
+        </Show>
+        <Show when={Object.values(props.resource.permissions).some((value) => bareOf(value) === "owner")}>
           <Mono>owner</Mono> compares <Mono>{props.resource.owner_field}</Mono> to the caller and stamps it on
           create.
         </Show>

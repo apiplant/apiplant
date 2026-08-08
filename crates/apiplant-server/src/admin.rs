@@ -28,9 +28,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use apiplant_abi::{FunctionAccess, HttpMethod};
 use apiplant_core::schema::{
     is_auth_resource, relation_name, titleize, Access, ContentFormat, Field, FieldType, OnDelete,
-    Resource, Widget,
+    Policy, Resource, Widget,
 };
-use apiplant_core::{Agent, App};
+use apiplant_core::{Agent, App, ORG_CLASS_FIELD};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -71,6 +71,20 @@ struct AdminManifest {
     /// `billing_*` resources exist.
     #[serde(skip_serializing_if = "Option::is_none")]
     billing: Option<BillingManifest>,
+    organization: OrganizationManifest,
+}
+
+/// Deployment-wide rules about the tenant itself.
+#[derive(Debug, Serialize)]
+struct OrganizationManifest {
+    /// Who may write `organization.org_class` — the dashboard shows the class
+    /// as an editable field only to them, and read-only to everyone else,
+    /// rather than offering an input the server would silently ignore.
+    org_class_editors: ActionPermissionManifest,
+    /// Every class the app's own permissions mention, so the dashboard can
+    /// offer them instead of asking an operator to remember the spelling.
+    /// A class is a free string, so this is a suggestion, not a constraint.
+    known_classes: Vec<String>,
 }
 
 /// What the dashboard needs to render billing.
@@ -206,6 +220,9 @@ struct ActionPermissionManifest {
     value: String,
     /// The role name when `value` is `role:<name>`, so the UI needn't re-parse.
     role: Option<String>,
+    /// The organisation class the policy is narrowed to, when it names one —
+    /// the `@org_class=` half of the value, split out for the same reason.
+    org_class: Option<String>,
     note: String,
     requires_org: bool,
 }
@@ -567,6 +584,15 @@ fn build_manifest(
         functions: loaded_functions,
         agents,
         billing: billing_manifest(app),
+        organization: OrganizationManifest {
+            // `false` for `org_scoped`: the setting is answered against the
+            // organisation the caller *selected*, like any global policy.
+            org_class_editors: permission_manifest(
+                &app.config.organization.org_class_policy(),
+                false,
+            ),
+            known_classes: known_classes(app),
+        },
     })
 }
 
@@ -637,6 +663,39 @@ fn billing_manifest(app: &App) -> Option<BillingManifest> {
     })
 }
 
+/// Every organisation class named by a permission anywhere in the app —
+/// models, agents, and the `org_class_editors` setting itself.
+fn known_classes(app: &App) -> Vec<String> {
+    let mut classes: BTreeSet<String> = BTreeSet::new();
+    let mut note = |policy: &Policy| {
+        if let Some(class) = &policy.org_class {
+            classes.insert(class.clone());
+        }
+    };
+    for resource in app.resources.values() {
+        for policy in [
+            &resource.permissions.list,
+            &resource.permissions.read,
+            &resource.permissions.create,
+            &resource.permissions.update,
+            &resource.permissions.delete,
+        ] {
+            note(policy);
+        }
+    }
+    for agent in app.agents.values() {
+        for policy in [
+            &agent.permissions.chat,
+            &agent.permissions.history,
+            &agent.permissions.delete_history,
+        ] {
+            note(policy);
+        }
+    }
+    note(&app.config.organization.org_class_policy());
+    classes.into_iter().collect()
+}
+
 fn known_roles(app: &App, functions: &FunctionRegistry) -> Vec<String> {
     let mut roles: BTreeSet<String> = BTreeSet::new();
     // `member` is the role the built-in membership defaults describe, and every
@@ -652,7 +711,7 @@ fn known_roles(app: &App, functions: &FunctionRegistry) -> Vec<String> {
             &resource.permissions.update,
             &resource.permissions.delete,
         ] {
-            if let Access::Role(role) = access {
+            if let Access::Role(role) = &access.level {
                 roles.insert(role.clone());
             }
         }
@@ -670,7 +729,7 @@ fn known_roles(app: &App, functions: &FunctionRegistry) -> Vec<String> {
             &agent.permissions.history,
             &agent.permissions.delete_history,
         ] {
-            if let Access::Role(role) = access {
+            if let Access::Role(role) = &access.level {
                 roles.insert(role.clone());
             }
         }
@@ -771,7 +830,13 @@ fn field_manifest(name: &str, field: &Field, resource: &Resource) -> FieldManife
     let relation = references.as_ref().map(|_| relation_name(name).to_string());
     // The framework stamps the owner and the tenant itself; offering either as
     // an input invites someone to fill in a value the server will overwrite.
-    let stamped = name == resource.meta.owner_field || name == "organization_id";
+    // …and `organization.org_class` is server-owned in the same way: only the
+    // `org_class_editors` policy writes it, and the dashboard offers it on the
+    // organisation screen, which knows whether this operator is named by it.
+    // A generic record form here would be an input that silently does nothing.
+    let stamped = name == resource.meta.owner_field
+        || name == "organization_id"
+        || (resource.meta.name == "organization" && name == ORG_CLASS_FIELD);
 
     FieldManifest {
         label: field
@@ -841,15 +906,21 @@ fn resolve_widget(field: &Field) -> &'static str {
     }
 }
 
-fn permission_manifest(access: &Access, org_scoped: bool) -> ActionPermissionManifest {
+fn permission_manifest(policy: &Policy, org_scoped: bool) -> ActionPermissionManifest {
+    let access = &policy.level;
     ActionPermissionManifest {
-        value: access_value(access),
+        value: policy.as_string(),
         role: match access {
             Access::Role(role) => Some(role.clone()),
             _ => None,
         },
-        note: access_note(access, org_scoped),
-        requires_org: org_scoped || matches!(access, Access::Role(_) | Access::Member),
+        org_class: policy.org_class.clone(),
+        note: access_note(policy, org_scoped),
+        // A class qualifier is answered from the active organisation, so it
+        // needs one selected even where the level alone would not.
+        requires_org: org_scoped
+            || policy.org_class.is_some()
+            || matches!(access, Access::Role(_) | Access::Member),
     }
 }
 
@@ -901,18 +972,15 @@ fn parse_schema(raw: &str) -> Option<Value> {
     serde_json::from_str(raw).ok()
 }
 
-fn access_value(access: &Access) -> String {
-    match access {
-        Access::Public => "public".to_string(),
-        Access::Authenticated => "authenticated".to_string(),
-        Access::Member => "member".to_string(),
-        Access::Owner => "owner".to_string(),
-        Access::Role(role) => format!("role:{role}"),
-        Access::Private => "private".to_string(),
+fn access_note(policy: &Policy, org_scoped: bool) -> String {
+    let note = access_level_note(&policy.level, org_scoped);
+    match &policy.org_class {
+        Some(class) => format!("{note} Only in {class} organizations."),
+        None => note,
     }
 }
 
-fn access_note(access: &Access, org_scoped: bool) -> String {
+fn access_level_note(access: &Access, org_scoped: bool) -> String {
     if org_scoped {
         return match access {
             Access::Private => "Not available.".to_string(),

@@ -17,12 +17,13 @@ pub use agent::{Agent, AgentAiOverride, AgentMeta, AgentPermissions, AgentStorag
 pub use app::{App, TlsPaths};
 pub use config::{
     AiConfig, CacheConfig, Config, EmailConfig, LogFormat, LogsConfig, MetricsConfig,
-    ObservabilityConfig, OtlpConfig, OtlpProtocol, PaymentsConfig, QueuesConfig, RateLimitConfig,
-    SmtpConfig, StorageConfig, TracesConfig,
+    ObservabilityConfig, OrganizationConfig, OtlpConfig, OtlpProtocol, PaymentsConfig,
+    QueuesConfig, RateLimitConfig, SmtpConfig, StorageConfig, TracesConfig,
 };
 pub use env::{expand_document, parse_toml};
 pub use error::{Error, Result};
 pub use schema::{
     relation_name, Access, AuthEvent, CrudAction, Field, FieldType, HookEvent, Hooks, OnDelete,
-    Permissions, Publishes, RateLimitRule, RateLimits, Reference, Resource, Scope,
+    Permissions, Policy, Publishes, RateLimitRule, RateLimits, Reference, Resource, Scope,
+    ORG_CLASS_FIELD, ORG_CLASS_SUFFIX,
 };

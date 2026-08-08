@@ -24,7 +24,7 @@
 //! open proxy to your provider account — a thing an app should have to write
 //! down rather than get by leaving a line out.
 
-use apiplant_abi::FunctionAccess;
+use apiplant_abi::{FunctionAccess, FunctionPolicy};
 use apiplant_ai::{ChatRequest, Event};
 use futures_util::StreamExt;
 use ntex::util::Bytes;
@@ -102,10 +102,10 @@ pub async fn chat(req: HttpRequest, state: State<AppState>, body: Json<Body>) ->
         return error(404, "this app has no ai assistant");
     };
 
-    let access = FunctionAccess::parse(&state.app.config.ai.access)
+    let access = FunctionPolicy::parse(&state.app.config.ai.access)
         // A typo in `[ai] access` closes the door rather than opening it, which
         // is how every other access string in the framework behaves.
-        .unwrap_or(FunctionAccess::Private);
+        .unwrap_or_else(|| FunctionAccess::Private.into());
     if let Err(response) = crate::access::check(&state, &req, &access, "no ai assistant").await {
         return response;
     }

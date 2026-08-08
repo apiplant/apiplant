@@ -40,7 +40,7 @@ pub async fn upload(
     if let Err(response) = crate::access::check(
         &state,
         &req,
-        &FunctionAccess::Authenticated,
+        &FunctionAccess::Authenticated.into(),
         "this app does not store files",
     )
     .await

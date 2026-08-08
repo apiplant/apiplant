@@ -28,3 +28,15 @@ id = "admin-at-globex"
 user_id = "admin"
 organization_id = "globex"
 role = "admin"
+
+# …and a member of Operations, the `org_class = "admin"` organisation. That
+# membership is what `[organization] org_class_editors = "member@org_class=admin"`
+# in main.toml names, so signing in as this account *with Operations selected*
+# (`X-Organization: <operations id>`) is what allows an organisation's class to
+# be changed at all.
+
+[[row]]
+id = "admin-at-operations"
+user_id = "admin"
+organization_id = "operations"
+role = "admin"

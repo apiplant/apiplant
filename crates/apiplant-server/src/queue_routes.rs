@@ -14,8 +14,8 @@
 //! is the entire promise. Whether the handler succeeds is not knowable yet and
 //! will never be reported here.
 
-use apiplant_abi::FunctionAccess;
-use apiplant_core::Access;
+use apiplant_abi::{FunctionAccess, FunctionPolicy};
+use apiplant_core::{Access, Policy};
 use ntex::web::types::{Path, State};
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::Value;
@@ -35,7 +35,7 @@ pub async fn publish(
     // absent. Probing must not reveal which topics an app has.
     let missing = "this app does not accept published messages";
     if let Err(response) =
-        crate::access::check(&state, &req, &to_function_access(&access), missing).await
+        crate::access::check(&state, &req, &to_function_policy(&access), missing).await
     {
         return response;
     }
@@ -81,6 +81,13 @@ pub async fn publish(
 /// in the function one. They differ only by `owner`, which
 /// [`QueuesConfig::publish_access`](apiplant_core::QueuesConfig::publish_access)
 /// has already ruled out because a topic has no owner column to compare against.
+fn to_function_policy(policy: &Policy) -> FunctionPolicy {
+    FunctionPolicy {
+        access: to_function_access(&policy.level),
+        org_class: policy.org_class.clone(),
+    }
+}
+
 fn to_function_access(access: &Access) -> FunctionAccess {
     match access {
         Access::Public => FunctionAccess::Public,

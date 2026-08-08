@@ -84,6 +84,23 @@ member and you'll get `403`.
 An `admin` holds every role the app defines, and nobody may remove their own
 `admin` — so an organisation always has somebody who can administer it.
 
+## Classes of organisation
+
+The seed gives each organisation an `org_class`: Acme and Globex are
+`customer`, and Operations — which `admin@example.com` also belongs to — is
+`admin`. A permission can be narrowed to a class by appending
+`@org_class=<name>` to any level, and `main.toml` names who may change a class
+at all:
+
+```toml
+[organization]
+org_class_editors = "member@org_class=admin"
+```
+
+The column is server-owned like `organization_id`, so any other caller sending
+`org_class` has it dropped. See
+[06 · Permissions](../06-permissions) for a resource guarded by a class.
+
 Details in [Multitenancy](../../docs/multitenancy.md).
 
 **Next:** [05 · Authentication](../05-auth) reshapes the `user` resource itself.

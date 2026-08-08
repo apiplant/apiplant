@@ -1151,3 +1151,273 @@ type = "string"
 
     db.cleanup().await;
 }
+
+fn contains_org(listed: &Value, id: &str) -> bool {
+    listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"].as_str() == Some(id))
+}
+
+/// The whole `org_class` contract, end to end.
+///
+/// A class decides which `@org_class=` permissions apply inside an
+/// organisation, so who may write it is a deployment setting rather than a
+/// row-level one — and whoever it names has to be able to reach organisations
+/// they are not in, or the only classes they could set would be their own.
+#[ntex::test]
+async fn an_org_class_editor_sees_every_organisation_and_may_class_only_that() {
+    let db = TempDatabase::create("orgclass").await;
+    let root = temp_dir("orgclass");
+    write_files(
+        &root,
+        &[(
+            "main.toml",
+            &format!(
+                "[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n\n\
+                 [organization]\norg_class_editors = \"member@org_class=admin\"\n",
+                db.url
+            ),
+        )],
+    );
+
+    let state = load_state(&root).await;
+    // The back office has to start somewhere: nothing over HTTP can write the
+    // first class, which is the point of the column being server-owned.
+    let app = init_http_app!(state);
+
+    let register = |email: &'static str| {
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({ "email": email, "password": "pw" }),
+        )
+    };
+    let staff = read_json(test::call_service(&app, register("staff@example.com")).await).await;
+    let staff_token = staff["token"].as_str().unwrap().to_string();
+    let outsider =
+        read_json(test::call_service(&app, register("outsider@example.com")).await).await;
+    let outsider_token = outsider["token"].as_str().unwrap().to_string();
+
+    let create_org = |token: &str, name: &str| {
+        bearer(
+            test::TestRequest::post()
+                .uri("/api/organization")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(json!({ "name": name }).to_string()),
+            token,
+        )
+        .to_request()
+    };
+    let ops = read_json(test::call_service(&app, create_org(&staff_token, "Ops")).await).await;
+    let ops_id = ops["id"].as_str().unwrap().to_string();
+    let theirs =
+        read_json(test::call_service(&app, create_org(&outsider_token, "Theirs")).await).await;
+    let theirs_id = theirs["id"].as_str().unwrap().to_string();
+
+    // Creating an organisation does not class it, however the body was
+    // written: the column is stripped like the tenant column is.
+    assert_eq!(ops["org_class"], Value::Null);
+
+    let patch_class = |token: &str, org: &str, active: &str, body: Value| {
+        bearer(
+            test::TestRequest::patch()
+                .uri(&format!("/api/organization/{org}"))
+                .header("x-organization", active.to_string())
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(body.to_string()),
+            token,
+        )
+        .to_request()
+    };
+
+    // Nobody is in an `admin`-class organisation yet, so nobody may class one:
+    // the request succeeds as an ordinary update and the column is untouched.
+    let attempt = read_json(
+        test::call_service(
+            &app,
+            patch_class(
+                &staff_token,
+                &ops_id,
+                &ops_id,
+                json!({ "name": "Ops", "org_class": "admin" }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(attempt["org_class"], Value::Null);
+
+    // The operator classes the back office directly, which is what seed data
+    // or SQL is for.
+    state
+        .db
+        .raw_json(
+            &format!(
+                "UPDATE {} SET org_class = 'admin' WHERE id = $1::uuid",
+                state.table("organization").unwrap()
+            ),
+            &[Value::String(ops_id.clone())],
+        )
+        .await
+        .unwrap();
+
+    // Now the list widens: a class editor sees every organisation, including
+    // one they have no membership of, because they cannot class what they
+    // cannot find. The header is what makes them one — the setting is answered
+    // against the organisation selected, here and everywhere else.
+    let listed = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::get()
+                    .uri("/api/organization")
+                    .header("x-organization", ops_id.clone()),
+                &staff_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    assert!(contains_org(&listed, &theirs_id));
+
+    // Acting from anywhere else, the same account sees only its own again.
+    let narrowed = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::get().uri("/api/organization"),
+                &staff_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    assert!(!contains_org(&narrowed, &theirs_id));
+
+    // …and only for them: everybody else still sees their own.
+    let theirs_view = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::get().uri("/api/organization"),
+                &outsider_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    assert!(!contains_org(&theirs_view, &ops_id));
+
+    // The class editor may class an organisation they are not a member of.
+    let classed = test::call_service(
+        &app,
+        patch_class(
+            &staff_token,
+            &theirs_id,
+            &ops_id,
+            json!({ "org_class": "customer" }),
+        ),
+    )
+    .await;
+    assert_eq!(classed.status().as_u16(), 200);
+    assert_eq!(read_json(classed).await["org_class"], "customer");
+
+    // But nothing else about it: a rename is not part of the bargain, and
+    // smuggling one alongside the class does not make it one either.
+    for body in [
+        json!({ "name": "Hijacked" }),
+        json!({ "name": "Hijacked", "org_class": "customer" }),
+    ] {
+        let refused =
+            test::call_service(&app, patch_class(&staff_token, &theirs_id, &ops_id, body)).await;
+        assert_eq!(refused.status().as_u16(), 404);
+    }
+
+    // And the setting is answered against the organisation *selected*: the
+    // same person, acting somewhere unclassed, may not class anything.
+    let elsewhere =
+        read_json(test::call_service(&app, create_org(&staff_token, "Side project")).await).await;
+    let elsewhere_id = elsewhere["id"].as_str().unwrap().to_string();
+    let refused = test::call_service(
+        &app,
+        patch_class(
+            &staff_token,
+            &theirs_id,
+            &elsewhere_id,
+            json!({ "org_class": "pwned" }),
+        ),
+    )
+    .await;
+    assert_eq!(refused.status().as_u16(), 404);
+}
+
+/// `[organization] default_org_class` covers both doors an organisation comes
+/// through, so "every new organisation" is not quietly "every one with a
+/// `POST /organization` behind it".
+#[ntex::test]
+async fn a_default_class_is_stamped_on_every_new_organisation() {
+    let db = TempDatabase::create("orgclassdefault").await;
+    let root = temp_dir("orgclassdefault");
+    write_files(
+        &root,
+        &[(
+            "main.toml",
+            &format!(
+                "[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n\n\
+                 [organization]\ndefault_org_class = \"customer\"\n",
+                db.url
+            ),
+        )],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    // The personal organisation an account is created with.
+    let registered = read_json(
+        test::call_service(
+            &app,
+            req_json(
+                "POST",
+                "/api/auth/register",
+                json!({ "email": "sam@example.com", "password": "pw" }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let token = registered["token"].as_str().unwrap().to_string();
+    let personal = read_json(
+        test::call_service(
+            &app,
+            bearer(test::TestRequest::get().uri("/api/organization"), &token).to_request(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(personal[0]["org_class"], "customer");
+
+    // …and one made over the API, where a class in the body is still refused:
+    // the default fills the column, it does not open it.
+    let created = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::post()
+                    .uri("/api/organization")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({ "name": "Acme", "org_class": "admin" }).to_string()),
+                &token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(created["org_class"], "customer");
+}

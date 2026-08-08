@@ -1,0 +1,35 @@
+# A `global` resource — one shared list, no tenant column — guarded by an
+# organisation *class*.
+#
+# `member@org_class=admin` is an ordinary access level with a qualifier on it:
+# any member will do, provided the organisation they have selected is of class
+# `admin`. Here that is Operations (see `seed/organization.toml`), so the flags
+# are readable by everybody signed in and writable only from the back office.
+#
+# There is nothing to filter on a global table, so the qualifier is a *gate*:
+# the answer depends on the organisation named in `X-Organization`. Sign in as
+# admin@example.com and the same request succeeds or fails depending on which
+# of their organisations they selected.
+
+[resource]
+name = "feature_flag"
+scope = "global"
+
+[permissions]
+list   = "authenticated"            # anyone signed in can see what is on
+read   = "authenticated"
+create = "member@org_class=admin"   # …only the back office can change it
+update = "member@org_class=admin"
+delete = "member@org_class=admin"
+
+[fields.key]
+type = "string"
+required = true
+unique = true
+
+[fields.enabled]
+type = "boolean"
+default = false
+
+[fields.description]
+type = "text"

@@ -12,7 +12,7 @@
 //! requires authentication; public operations carry no security requirement.
 
 use apiplant_abi::{FunctionAccess, HttpMethod};
-use apiplant_core::schema::{Access, Field, FieldType};
+use apiplant_core::schema::{Access, Field, FieldType, Policy};
 use apiplant_core::{Agent, App, Resource, Scope};
 use serde_json::{json, Map, Value};
 
@@ -65,7 +65,7 @@ pub fn build(app: &App, functions: &FunctionRegistry, email_enabled: bool) -> Va
             // child's `list` policy — and a private one has no endpoint here
             // any more than it does at `/{child}`. Documenting it would promise
             // a route that answers 404.
-            if related.is_empty() || child.permissions.list == Access::Private {
+            if related.is_empty() || child.permissions.list.level == Access::Private {
                 continue;
             }
             paths.insert(
@@ -282,14 +282,25 @@ fn resource_input_schema(r: &Resource) -> Value {
 // --- security -------------------------------------------------------------
 
 /// The security requirement for an action, or `None` when public.
-fn security_for(access: &Access) -> Option<Value> {
-    match access {
-        Access::Public => None,
+///
+/// A class-qualified `public` is not public: it needs an organisation, and an
+/// organisation needs credentials.
+fn security_for(policy: &Policy) -> Option<Value> {
+    match (&policy.level, &policy.org_class) {
+        (Access::Public, None) => None,
         _ => Some(json!([{ "bearerAuth": [] }, { "apiKeyAuth": [] }])),
     }
 }
 
-fn access_note(access: &Access) -> String {
+fn access_note(policy: &Policy) -> String {
+    let note = access_level_note(&policy.level);
+    match &policy.org_class {
+        Some(class) => format!("{note} Only in organisations of class `{class}`."),
+        None => note,
+    }
+}
+
+fn access_level_note(access: &Access) -> String {
     match access {
         Access::Public => "Public — no authentication required.".into(),
         Access::Authenticated => "Requires authentication.".into(),
@@ -301,7 +312,7 @@ fn access_note(access: &Access) -> String {
 }
 
 /// Attach `security` to an operation object when the access policy demands it.
-fn with_security(mut op: Value, access: &Access) -> Value {
+fn with_security(mut op: Value, access: &Policy) -> Value {
     if let Some(sec) = security_for(access) {
         op["security"] = sec;
     }
@@ -312,8 +323,11 @@ fn with_agent_security(mut op: Value, agent: &Agent) -> Value {
     let secure = if agent.meta.scope == Scope::Organization {
         Some(json!([{ "bearerAuth": [] }, { "apiKeyAuth": [] }]))
     } else {
-        match agent.permissions.chat {
-            Access::Public => None,
+        match (
+            &agent.permissions.chat.level,
+            &agent.permissions.chat.org_class,
+        ) {
+            (Access::Public, None) => None,
             _ => Some(json!([{ "bearerAuth": [] }, { "apiKeyAuth": [] }])),
         }
     };
@@ -346,7 +360,7 @@ fn collection_path(r: &Resource) -> Value {
     let input_ref = input_schema_name(r);
     let mut path = Map::new();
 
-    if r.permissions.list != Access::Private {
+    if r.permissions.list.level != Access::Private {
         let op = with_security(
             json!({
                 "tags": [name],
@@ -368,7 +382,7 @@ fn collection_path(r: &Resource) -> Value {
         path.insert("get".into(), op);
     }
 
-    if r.permissions.create != Access::Private {
+    if r.permissions.create.level != Access::Private {
         let op = with_security(
             json!({
                 "tags": [name],
@@ -401,7 +415,7 @@ fn item_path(r: &Resource) -> Value {
     let mut path = Map::new();
     path.insert("parameters".into(), id_param);
 
-    if r.permissions.read != Access::Private {
+    if r.permissions.read.level != Access::Private {
         path.insert(
             "get".into(),
             with_security(
@@ -421,7 +435,7 @@ fn item_path(r: &Resource) -> Value {
         );
     }
 
-    if r.permissions.update != Access::Private {
+    if r.permissions.update.level != Access::Private {
         let update_op = with_security(
             json!({
                 "tags": [name],
@@ -440,7 +454,7 @@ fn item_path(r: &Resource) -> Value {
         path.insert("put".into(), update_op);
     }
 
-    if r.permissions.delete != Access::Private {
+    if r.permissions.delete.level != Access::Private {
         path.insert(
             "delete".into(),
             with_security(
@@ -657,7 +671,7 @@ fn ai_config_path(_app: &App) -> Value {
 }
 
 fn ai_chat_path(app: &App) -> Value {
-    let access = Access::parse(&app.config.ai.access);
+    let access = Policy::parse(&app.config.ai.access);
     json!({
         "post": with_security(
             json!({
@@ -720,7 +734,7 @@ fn ai_agent_chat_path(agent: &Agent) -> Value {
         ),
         Scope::Organization => format!(
             "Requires the active organisation in `X-Organization`. {} Messages stream by default. When storage is enabled, a missing `thread_id` starts a new conversation and a present one continues it.",
-            match &agent.permissions.chat {
+            match &agent.permissions.chat.level {
                 Access::Role(role) => format!("Requires the `{role}` role in that organisation."),
                 _ => "Any member who may use the agent may chat with it.".to_string(),
             }

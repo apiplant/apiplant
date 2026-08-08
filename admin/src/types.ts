@@ -88,8 +88,16 @@ export interface ChildManifest {
 export interface ActionPermissionManifest {
   value: string;
   role: string | null;
+  /** The `@org_class=` half of `value`, when the policy names a class. */
+  org_class: string | null;
   note: string;
   requires_org: boolean;
+}
+
+/** Deployment-wide rules about the tenant itself. */
+export interface OrganizationManifest {
+  org_class_editors: ActionPermissionManifest;
+  known_classes: string[];
 }
 
 export interface ActionPermissionsManifest {
@@ -247,6 +255,7 @@ export interface AdminManifest {
   agents: AgentManifest[];
   /** Present only in an app whose `[payments]` section names a provider. */
   billing?: BillingManifest;
+  organization?: OrganizationManifest;
 }
 
 /** What the app's `[payments]` section amounts to, for the billing screen. */

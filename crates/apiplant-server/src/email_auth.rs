@@ -579,12 +579,19 @@ fn may_invite(state: &AppState, principal: &apiplant_auth::Principal, org: Uuid)
 /// [`may_invite`] with the policy handed in, so the rule can be checked without
 /// a database behind it.
 fn invite_policy(
-    create: Option<&apiplant_core::Access>,
+    create: Option<&apiplant_core::Policy>,
     principal: &apiplant_auth::Principal,
     org: Uuid,
 ) -> bool {
     use apiplant_core::Access;
-    match create {
+    // A class-qualified policy is only satisfied inside an organisation of that
+    // class, invitations included.
+    if let Some(class) = create.and_then(|p| p.org_class.as_deref()) {
+        if principal.org_class_of(org) != Some(class) {
+            return false;
+        }
+    }
+    match create.map(|p| &p.level) {
         Some(Access::Role(role)) => principal.has_role_in(org, role),
         Some(Access::Member | Access::Owner | Access::Authenticated) => principal.is_member(org),
         _ => principal.is_admin_of(org),
@@ -977,7 +984,7 @@ mod tests {
         let org = Uuid::new_v4();
 
         // The default: admins of the organisation, and nobody else in it.
-        let admins = Access::Role("admin".into());
+        let admins: apiplant_core::Policy = Access::Role("admin".into()).into();
         assert!(invite_policy(Some(&admins), &principal(org, "admin"), org));
         assert!(!invite_policy(
             Some(&admins),
@@ -987,7 +994,7 @@ mod tests {
 
         // An app that lets any member add people gets invitations to match,
         // rather than a second, stricter answer to the same question.
-        let members = Access::Member;
+        let members: apiplant_core::Policy = Access::Member.into();
         assert!(invite_policy(
             Some(&members),
             &principal(org, "member"),
@@ -1008,7 +1015,8 @@ mod tests {
         // Handing out membership of an organisation is not something to open
         // up because a permission happened to say `public`, and a model with
         // no `membership` at all is not an invitation to improvise.
-        for policy in [Some(&Access::Public), None] {
+        let public: apiplant_core::Policy = Access::Public.into();
+        for policy in [Some(&public), None] {
             assert!(!invite_policy(policy, &principal(org, "member"), org));
             assert!(invite_policy(policy, &principal(org, "admin"), org));
         }

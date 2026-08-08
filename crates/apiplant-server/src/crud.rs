@@ -17,12 +17,12 @@
 use std::collections::HashMap;
 
 use apiplant_auth::{Principal, ADMIN_ROLE};
-use apiplant_core::schema::Access;
-use apiplant_core::{FieldType, HookEvent, Resource};
+use apiplant_core::schema::{Access, Policy};
+use apiplant_core::{CrudAction, FieldType, HookEvent, Resource, ORG_CLASS_FIELD};
 use apiplant_db::{value, Filter, Sort};
 use ntex::web::types::{Json, Path, State};
 use ntex::web::{HttpRequest, HttpResponse};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::hooks::{self, HookRequest};
@@ -95,6 +95,88 @@ fn strip_server_owned(r: &Resource, data: &mut serde_json::Map<String, serde_jso
     }
 }
 
+/// Drop `organization.org_class` from a client body unless the caller is
+/// somebody `[organization] org_class_editors` names.
+///
+/// The class is what a `@org_class=` permission is checked against, so an
+/// organisation able to write its own class could grant itself whatever those
+/// permissions guard. It is therefore server-owned like `organization_id`: not
+/// refused with a `403` — which would make an ordinary rename of an
+/// organisation fail because the client echoed a field back — but *stripped*,
+/// exactly as the tenant column is.
+///
+/// The default setting is `private`, so an app that has said nothing has
+/// classes only its operator can set.
+fn strip_org_class(state: &AppState, r: &Resource, caller: &Caller, data: &mut Map<String, Value>) {
+    if r.meta.name != "organization" || !data.contains_key(ORG_CLASS_FIELD) {
+        return;
+    }
+    if !may_edit_org_class(&state.app.config.organization.org_class_policy(), caller) {
+        data.remove(ORG_CLASS_FIELD);
+    }
+}
+
+/// [`may_edit_org_class`] against the app's configured policy.
+fn is_org_class_editor(state: &AppState, caller: &Caller) -> bool {
+    may_edit_org_class(&state.app.config.organization.org_class_policy(), caller)
+}
+
+/// Stamp `[organization] default_org_class` on a new organisation that has no
+/// class of its own.
+///
+/// Called from both doors an organisation comes through — `POST /organization`
+/// and the personal one every account is given — so "every new organisation" in
+/// the setting means every new organisation, not just the ones with a request
+/// behind them.
+///
+/// Only fills a gap: a class editor who named one on create keeps it, and an
+/// app that names no default leaves the column null, which no `@org_class=`
+/// permission matches.
+pub(crate) fn stamp_default_org_class(
+    state: &AppState,
+    r: &Resource,
+    data: &mut Map<String, Value>,
+) {
+    if r.meta.name != "organization" || !r.fields.contains_key(ORG_CLASS_FIELD) {
+        return;
+    }
+    let Some(default) = state.app.config.organization.default_class() else {
+        return;
+    };
+    let named = data
+        .get(ORG_CLASS_FIELD)
+        .and_then(|value| value.as_str())
+        .is_some_and(|class| !class.trim().is_empty());
+    if !named {
+        data.insert(
+            ORG_CLASS_FIELD.to_string(),
+            Value::String(default.to_string()),
+        );
+    }
+}
+
+/// Whether `caller` satisfies the `org_class_editors` policy.
+fn may_edit_org_class(policy: &Policy, caller: &Caller) -> bool {
+    match (&policy.level, caller.principal.as_ref()) {
+        (Access::Private, _) | (_, None) => false,
+        // Every level below is answered in the organisation the caller
+        // *selected*, not the one being edited: this says who administers
+        // classes across the deployment, which is what a staff organisation is.
+        (level, Some(principal)) => {
+            let membership = caller.active_org.and_then(|org| principal.membership(org));
+            match membership {
+                None => false,
+                Some(m) if !policy.matches_org_class(m.org_class.as_deref()) => false,
+                Some(m) => match level {
+                    Access::Role(role) => m.has_role(role),
+                    Access::Public | Access::Authenticated | Access::Member | Access::Owner => true,
+                    Access::Private => false,
+                },
+            }
+        }
+    }
+}
+
 fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpResponse> {
     state
         .app
@@ -105,21 +187,32 @@ fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpRes
 
 /// Authorize an action, returning the filters that must scope the query (org
 /// isolation, ownership, org membership set) or an error response.
-fn authorize(access: &Access, caller: &Caller, r: &Resource) -> Result<Vec<Filter>, HttpResponse> {
+fn authorize(policy: &Policy, caller: &Caller, r: &Resource) -> Result<Vec<Filter>, HttpResponse> {
     if r.is_org_scoped() {
-        authorize_org_scoped(access, caller, r)
+        authorize_org_scoped(policy, caller, r)
     } else {
-        authorize_global(access, caller, r)
+        authorize_global(policy, caller, r)
     }
+}
+
+/// The refusal a class-qualified policy gives when the organisation in hand is
+/// of the wrong class.
+///
+/// Deliberately names the class rather than saying "forbidden": the caller may
+/// well hold the role, and the thing that is wrong is *which organisation they
+/// selected*, which they can fix by selecting another.
+fn wrong_class(class: &str) -> HttpResponse {
+    error(403, format!("requires an organisation of class `{class}`"))
 }
 
 /// Org-scoped resources: membership in the active org is always required, the
 /// query is always filtered to it, and the policy refines who may act.
 fn authorize_org_scoped(
-    access: &Access,
+    policy: &Policy,
     caller: &Caller,
     r: &Resource,
 ) -> Result<Vec<Filter>, HttpResponse> {
+    let access = &policy.level;
     if *access == Access::Private {
         return Err(error(404, "not found"));
     }
@@ -135,6 +228,13 @@ fn authorize_org_scoped(
     let Some(membership) = principal.membership(org) else {
         return Err(error(403, "you are not a member of this organisation"));
     };
+    // The class qualifier is checked before the level, and only ever narrows:
+    // the active organisation has to be of the class the policy names.
+    if let Some(class) = policy.org_class.as_deref() {
+        if !membership.is_class(class) {
+            return Err(wrong_class(class));
+        }
+    }
 
     let mut filters = vec![Filter::eq("organization_id", org)];
     match access {
@@ -165,11 +265,27 @@ fn authorize_org_scoped(
 /// handler that turns a policy into a query goes through here.
 async fn scope(
     state: &AppState,
-    access: &Access,
+    policy: &Policy,
     caller: &Caller,
     r: &Resource,
+    action: CrudAction,
 ) -> Result<Vec<Filter>, HttpResponse> {
-    let mut filters = authorize(access, caller, r)?;
+    let access = &policy.level;
+    let mut filters = authorize(policy, caller, r)?;
+
+    // Somebody who administers organisation *classes* administers them across
+    // the deployment, so they have to be able to find an organisation they are
+    // not in — otherwise the only organisations they could class are the ones
+    // they had already joined, which is not what a back office is for.
+    //
+    // Reading only: their write is narrowed to the class column alone, in
+    // [`update`], and every other action still goes by the ordinary policy.
+    if r.meta.name == "organization"
+        && matches!(action, CrudAction::List | CrudAction::Read)
+        && is_org_class_editor(state, caller)
+    {
+        filters.retain(|filter| !matches!(filter, Filter::In { column, .. } if column == "id"));
+    }
     if *access == Access::Owner && !r.is_org_scoped() {
         if let (Some(principal), Some(org)) = (caller.principal.as_ref(), caller.active_org) {
             if principal.is_admin_of(org) {
@@ -199,10 +315,12 @@ async fn scope(
 /// hold the role in; on any other global resource there is nothing to filter,
 /// so it gates on the role you hold in the organisation you have selected.
 fn authorize_global(
-    access: &Access,
+    policy: &Policy,
     caller: &Caller,
     r: &Resource,
 ) -> Result<Vec<Filter>, HttpResponse> {
+    let access = &policy.level;
+    let class = policy.org_class.as_deref();
     let deny = || {
         if caller.principal.is_none() {
             error(401, "authentication required")
@@ -211,6 +329,24 @@ fn authorize_global(
         }
     };
     let is_org_resource = r.meta.name == "organization";
+
+    // A class qualifier on a level that has no organisation in it — `public`,
+    // `authenticated`, `owner` — still has to mean something, so it means what
+    // it says: the caller must have selected an organisation of that class.
+    // Otherwise `public@org_class=staff` would read as plain `public`, which is
+    // the one direction a qualifier must never take.
+    if let (Some(class), Access::Public | Access::Authenticated | Access::Owner) = (class, access) {
+        let membership = caller
+            .principal
+            .as_ref()
+            .and_then(|p| caller.active_org.and_then(|org| p.membership(org)));
+        match membership {
+            Some(m) if m.is_class(class) => {}
+            Some(_) => return Err(wrong_class(class)),
+            None => return Err(deny()),
+        }
+    }
+
     match access {
         Access::Public => Ok(Vec::new()),
         Access::Private => Err(error(404, "not found")),
@@ -223,8 +359,24 @@ fn authorize_global(
             None => Err(deny()),
         },
         Access::Member => match &caller.principal {
-            Some(p) if is_org_resource => Ok(vec![Filter::in_uuids("id", p.org_ids())]),
-            Some(_) => Ok(Vec::new()),
+            // On `organization` the class is one more narrowing of the same
+            // list: the orgs you belong to, of the class asked for.
+            Some(p) if is_org_resource => {
+                Ok(vec![Filter::in_uuids("id", p.org_ids_in_class(class))])
+            }
+            // Anywhere else there is nothing to filter, so a class qualifier
+            // becomes a gate on the organisation the caller selected.
+            Some(p) => match class {
+                None => Ok(Vec::new()),
+                Some(class) => match caller.active_org.and_then(|org| p.membership(org)) {
+                    Some(m) if m.is_class(class) => Ok(Vec::new()),
+                    Some(_) => Err(wrong_class(class)),
+                    None => Err(error(
+                        403,
+                        "select an organisation with the X-Organization header",
+                    )),
+                },
+            },
             None => Err(deny()),
         },
         // On `organization` itself, a role narrows the rows: the organisations
@@ -239,10 +391,16 @@ fn authorize_global(
         // Refusing outright would leave a catalogue nobody can edit and a
         // ledger nobody can look at.
         Access::Role(role) => match &caller.principal {
-            Some(p) if is_org_resource => {
-                Ok(vec![Filter::in_uuids("id", p.org_ids_with_role(role))])
-            }
+            Some(p) if is_org_resource => Ok(vec![Filter::in_uuids(
+                "id",
+                p.org_ids_with_role_in_class(role, class),
+            )]),
             Some(p) => match caller.active_org.and_then(|org| p.membership(org)) {
+                // The class is the organisation's, the role is the caller's in
+                // it; both have to hold.
+                Some(membership) if class.is_some_and(|class| !membership.is_class(class)) => {
+                    Err(wrong_class(class.unwrap_or_default()))
+                }
                 // Any of the caller's roles will do, and an admin holds them
                 // all — the same rule an org-scoped resource applies.
                 Some(membership) if membership.has_role(role) => Ok(Vec::new()),
@@ -455,7 +613,15 @@ async fn expand_relations(
         let Some(target) = state.app.resources.get(&reference.target) else {
             continue;
         };
-        let scope = match scope(state, &target.permissions.read, caller, target).await {
+        let scope = match scope(
+            state,
+            &target.permissions.read,
+            caller,
+            target,
+            CrudAction::Read,
+        )
+        .await
+        {
             Ok(filters) => filters,
             Err(_) => {
                 for row in rows.iter_mut() {
@@ -514,7 +680,7 @@ pub async fn list(req: HttpRequest, state: State<AppState>, path: Path<String>) 
     let params = parse_query(req.query_string());
     let caller = state.caller(&req).await;
 
-    let mut filters = match scope(&state, &r.permissions.list, &caller, r).await {
+    let mut filters = match scope(&state, &r.permissions.list, &caller, r, CrudAction::List).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -592,7 +758,7 @@ pub async fn get(
     };
     let params = parse_query(req.query_string());
     let caller = state.caller(&req).await;
-    let filters = match scope(&state, &r.permissions.read, &caller, r).await {
+    let filters = match scope(&state, &r.permissions.read, &caller, r, CrudAction::Read).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -687,7 +853,15 @@ pub async fn nested_list(
     };
 
     let caller = state.caller(&req).await;
-    let mut filters = match scope(&state, &child.permissions.list, &caller, child).await {
+    let mut filters = match scope(
+        &state,
+        &child.permissions.list,
+        &caller,
+        child,
+        CrudAction::List,
+    )
+    .await
+    {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -801,6 +975,8 @@ pub async fn create(
     }
 
     strip_server_owned(r, &mut data);
+    strip_org_class(&state, r, &caller, &mut data);
+    stamp_default_org_class(&state, r, &mut data);
 
     // Auto-stamp the organisation on org-scoped resources (never client-set).
     if r.is_org_scoped() {
@@ -1082,15 +1258,48 @@ pub async fn update(
         Err(_) => return error(400, "invalid id"),
     };
     let caller = state.caller(&req).await;
-    let filters = match scope(&state, &r.permissions.update, &caller, r).await {
+    let mut data = body.into_inner();
+    let mut denied: Option<HttpResponse> = None;
+
+    // A class editor may write `org_class` on **any** organisation, including
+    // ones they are not in — that is the whole job — but only that column: an
+    // organisation's own admins still own its name, its slug and its logo. So
+    // a body that is nothing but the class is authorised by the setting, and
+    // anything else goes by the resource's ordinary `update` policy.
+    //
+    // Judged on the body the client sent, so a `before_update` hook cannot
+    // turn a permitted class change into a wider write; the final body is
+    // checked again below, after the hook has had its say.
+    let class_only = |data: &Map<String, Value>| {
+        r.meta.name == "organization"
+            && data.len() == 1
+            && data.contains_key(ORG_CLASS_FIELD)
+            && is_org_class_editor(&state, &caller)
+    };
+    let class_update = class_only(&data);
+    let mut filters = match scope(
+        &state,
+        &r.permissions.update,
+        &caller,
+        r,
+        CrudAction::Update,
+    )
+    .await
+    {
         Ok(f) => f,
+        // Refused by the policy, but the setting may still allow this one
+        // column. Held rather than returned so the decision is made on the
+        // body that will actually be written.
+        Err(resp) if class_update => {
+            denied = Some(resp);
+            Vec::new()
+        }
         Err(resp) => return resp,
     };
 
     let params = parse_query(req.query_string());
     let hook_req = caller.hook_request(&req, &params).with_record(id);
 
-    let mut data = body.into_inner();
     if removes_own_admin(&state, r, id, &caller, Some(&data)).await {
         return error(
             403,
@@ -1118,6 +1327,17 @@ pub async fn update(
     }
 
     strip_server_owned(r, &mut data);
+    strip_org_class(&state, r, &caller, &mut data);
+
+    if class_only(&data) {
+        // The class alone, so the setting authorises it wherever the
+        // organisation is: drop the narrowing the ordinary policy applied.
+        filters.clear();
+        denied = None;
+    }
+    if let Some(resp) = denied {
+        return resp;
+    }
 
     let updated = match state.db.update(r, id, &data, &filters).await {
         Ok(Some(row)) => row,
@@ -1157,7 +1377,15 @@ pub async fn delete(
         Err(_) => return error(400, "invalid id"),
     };
     let caller = state.caller(&req).await;
-    let filters = match scope(&state, &r.permissions.delete, &caller, r).await {
+    let filters = match scope(
+        &state,
+        &r.permissions.delete,
+        &caller,
+        r,
+        CrudAction::Delete,
+    )
+    .await
+    {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -1269,13 +1497,13 @@ references = "user"
         );
 
         let caller = caller_with_org(org, Some("member"));
-        let member = authorize(&Access::Member, &caller, &resource).unwrap();
+        let member = authorize(&Access::Member.into(), &caller, &resource).unwrap();
         assert!(matches!(
             &member[0],
             Filter::Eq { column, .. } if column == "organization_id"
         ));
 
-        let owner = authorize(&Access::Owner, &caller, &resource).unwrap();
+        let owner = authorize(&Access::Owner.into(), &caller, &resource).unwrap();
         assert_eq!(owner.len(), 2);
         assert!(matches!(
             &owner[1],
@@ -1283,7 +1511,7 @@ references = "user"
         ));
 
         let admin = authorize(
-            &Access::Owner,
+            &Access::Owner.into(),
             &caller_with_org(org, Some("admin")),
             &resource,
         )
@@ -1293,6 +1521,200 @@ references = "user"
             &admin[0],
             Filter::Eq { column, .. } if column == "organization_id"
         ));
+    }
+
+    /// A caller in one classed organisation, having selected it.
+    fn caller_in_class(org: Uuid, role: Option<&str>, class: Option<&str>) -> Caller {
+        Caller {
+            principal: Some(Principal {
+                user_id: Uuid::new_v4(),
+                organizations: vec![OrgMembership::new(org, role.map(str::to_string), [])
+                    .in_class(class.map(str::to_string))],
+            }),
+            active_org: Some(org),
+        }
+    }
+
+    #[test]
+    fn only_the_named_editors_may_write_an_organisations_class() {
+        let staff = Uuid::new_v4();
+        // The setting the feature exists for: the staff organisation edits
+        // everyone's classes, including other organisations'.
+        let policy = Policy::parse("member@org_class=staff");
+
+        assert!(may_edit_org_class(
+            &policy,
+            &caller_in_class(staff, Some("member"), Some("staff"))
+        ));
+        // A member of any other organisation is not staff, whatever they are
+        // there — an admin of their own org included.
+        assert!(!may_edit_org_class(
+            &policy,
+            &caller_in_class(staff, Some("admin"), Some("school"))
+        ));
+        assert!(!may_edit_org_class(
+            &policy,
+            &caller_in_class(staff, Some("admin"), None)
+        ));
+        // Nobody selected an organisation, nobody signed in: no.
+        assert!(!may_edit_org_class(
+            &policy,
+            &Caller {
+                principal: None,
+                active_org: None
+            }
+        ));
+        // The default setting locks the column for everyone.
+        assert!(!may_edit_org_class(
+            &Policy::parse("private"),
+            &caller_in_class(staff, Some("admin"), Some("staff"))
+        ));
+    }
+
+    #[test]
+    fn a_class_qualified_policy_narrows_an_org_scoped_resource() {
+        let org = Uuid::new_v4();
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "report"
+
+[fields.title]
+type = "string"
+"#,
+        );
+        let policy = Policy::parse("role:admin@org_class=school");
+
+        // The role holds and the class matches: ordinary org isolation.
+        let allowed = authorize(
+            &policy,
+            &caller_in_class(org, Some("admin"), Some("school")),
+            &resource,
+        )
+        .unwrap();
+        assert!(matches!(
+            &allowed[0],
+            Filter::Eq { column, .. } if column == "organization_id"
+        ));
+
+        // The same admin, in an organisation of another class — or of none —
+        // is refused: the class can only ever narrow.
+        for class in [Some("staff"), None] {
+            let err = authorize(
+                &policy,
+                &caller_in_class(org, Some("admin"), class),
+                &resource,
+            )
+            .expect_err("wrong class must be refused");
+            assert_eq!(err.status().as_u16(), 403);
+        }
+
+        // Right class, wrong role is still a refusal.
+        assert!(authorize(
+            &policy,
+            &caller_in_class(org, Some("member"), Some("school")),
+            &resource
+        )
+        .is_err());
+
+        // An unqualified policy is unaffected by any class.
+        assert!(authorize(
+            &Access::Role("admin".into()).into(),
+            &caller_in_class(org, Some("admin"), Some("staff")),
+            &resource
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_class_qualified_policy_filters_the_organization_resource() {
+        let school = Uuid::new_v4();
+        let staff = Uuid::new_v4();
+        let caller = Caller {
+            principal: Some(Principal {
+                user_id: Uuid::new_v4(),
+                organizations: vec![
+                    OrgMembership::new(school, Some("admin".into()), [])
+                        .in_class(Some("school".into())),
+                    OrgMembership::new(staff, Some("admin".into()), [])
+                        .in_class(Some("staff".into())),
+                ],
+            }),
+            active_org: Some(staff),
+        };
+        let organization = parse_resource(apiplant_core::defaults::ORGANIZATION_TOML);
+
+        // On `organization` the class is one more narrowing of the list, not a
+        // gate: you see the schools you administer, and nothing else.
+        let filters = authorize(
+            &Policy::parse("role:admin@org_class=school"),
+            &caller,
+            &organization,
+        )
+        .unwrap();
+        assert!(matches!(
+            &filters[0],
+            Filter::In { column, values } if column == "id" && values.len() == 1
+        ));
+
+        let members = authorize(
+            &Policy::parse("member@org_class=staff"),
+            &caller,
+            &organization,
+        )
+        .unwrap();
+        assert!(matches!(
+            &members[0],
+            Filter::In { column, values } if column == "id" && values.len() == 1
+        ));
+    }
+
+    #[test]
+    fn a_class_qualified_policy_gates_other_global_resources() {
+        let org = Uuid::new_v4();
+        let plan = parse_resource(
+            r#"
+[resource]
+name = "plan"
+scope = "global"
+
+[fields.name]
+type = "string"
+"#,
+        );
+
+        // Nothing to filter on a global table, so the class is a gate on the
+        // organisation the caller selected — including for levels that name no
+        // organisation at all, which would otherwise ignore it.
+        for policy in [
+            "role:admin@org_class=staff",
+            "authenticated@org_class=staff",
+        ] {
+            let policy = Policy::parse(policy);
+            assert!(authorize(
+                &policy,
+                &caller_in_class(org, Some("admin"), Some("staff")),
+                &plan
+            )
+            .is_ok());
+            let err = authorize(
+                &policy,
+                &caller_in_class(org, Some("admin"), Some("school")),
+                &plan,
+            )
+            .expect_err("wrong class must be refused");
+            assert_eq!(err.status().as_u16(), 403);
+        }
+
+        // `public@org_class=…` is not public: it needs an organisation, so an
+        // anonymous caller is asked to authenticate rather than let through.
+        let anonymous = Caller {
+            principal: None,
+            active_org: None,
+        };
+        let err = authorize(&Policy::parse("public@org_class=staff"), &anonymous, &plan)
+            .expect_err("a class qualifier always needs an organisation");
+        assert_eq!(err.status().as_u16(), 401);
     }
 
     #[test]
@@ -1321,14 +1743,14 @@ scope = "global"
 type = "string"
 "#,
         );
-        let org_filters = authorize(&Access::Member, &caller, &organization).unwrap();
+        let org_filters = authorize(&Access::Member.into(), &caller, &organization).unwrap();
         assert!(matches!(
             &org_filters[0],
             Filter::In { column, values } if column == "id" && values.len() == 2
         ));
 
         let admin_filters =
-            authorize(&Access::Role("admin".into()), &caller, &organization).unwrap();
+            authorize(&Access::Role("admin".into()).into(), &caller, &organization).unwrap();
         assert!(matches!(
             &admin_filters[0],
             Filter::In { column, values } if column == "id" && values.len() == 1
@@ -1337,7 +1759,7 @@ type = "string"
         // A role on an ordinary global resource gates rather than filters, so
         // it needs an organisation to be checked against. Without one there is
         // no question to answer.
-        let err = match authorize(&Access::Role("admin".into()), &caller, &plan) {
+        let err = match authorize(&Access::Role("admin".into()).into(), &caller, &plan) {
             Ok(_) => panic!("a role check needs an active organisation"),
             Err(err) => err,
         };
@@ -1349,16 +1771,18 @@ type = "string"
             principal: caller.principal.clone(),
             active_org: Some(org_a),
         };
-        assert!(authorize(&Access::Role("admin".into()), &admin_here, &plan)
-            .unwrap()
-            .is_empty());
+        assert!(
+            authorize(&Access::Role("admin".into()).into(), &admin_here, &plan)
+                .unwrap()
+                .is_empty()
+        );
 
         // Holding a different role in that organisation is not holding this one.
         let member_here = Caller {
             principal: caller.principal.clone(),
             active_org: Some(org_b),
         };
-        let err = match authorize(&Access::Role("admin".into()), &member_here, &plan) {
+        let err = match authorize(&Access::Role("admin".into()).into(), &member_here, &plan) {
             Ok(_) => panic!("a member is not an admin"),
             Err(err) => err,
         };

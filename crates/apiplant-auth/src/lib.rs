@@ -44,6 +44,10 @@ pub struct OrgMembership {
     /// Every role held here, primary included — one entry per role, in the
     /// order the database returned them.
     pub roles: Vec<String>,
+    /// The organisation's `org_class`, carried along so a class-qualified
+    /// permission (`role:admin@org_class=school`) can be answered from the
+    /// principal alone, without a second query per request.
+    pub org_class: Option<String>,
 }
 
 impl OrgMembership {
@@ -64,7 +68,19 @@ impl OrgMembership {
             org_id,
             role,
             roles,
+            org_class: None,
         }
+    }
+
+    /// The same membership, in an organisation of `class`.
+    pub fn in_class(mut self, class: Option<String>) -> Self {
+        self.org_class = class.filter(|c| !c.is_empty());
+        self
+    }
+
+    /// Whether this organisation carries `class`.
+    pub fn is_class(&self, class: &str) -> bool {
+        self.org_class.as_deref() == Some(class)
     }
 
     /// Whether this membership carries `role` — directly, or by being `admin`.
@@ -120,6 +136,11 @@ impl Principal {
         self.membership(org).is_some_and(|m| m.has_role(role))
     }
 
+    /// The class of `org`, as seen through the caller's membership of it.
+    pub fn org_class_of(&self, org: Uuid) -> Option<&str> {
+        self.membership(org).and_then(|m| m.org_class.as_deref())
+    }
+
     /// Whether the caller administers `org`.
     pub fn is_admin_of(&self, org: Uuid) -> bool {
         self.membership(org).is_some_and(OrgMembership::is_admin)
@@ -133,9 +154,25 @@ impl Principal {
     /// Organisations where the caller may act as `role` — including the ones
     /// they merely administer.
     pub fn org_ids_with_role(&self, role: &str) -> Vec<Uuid> {
+        self.org_ids_with_role_in_class(role, None)
+    }
+
+    /// The same, narrowed to organisations of one class. `None` keeps every
+    /// class, which is what an unqualified permission means.
+    pub fn org_ids_with_role_in_class(&self, role: &str, class: Option<&str>) -> Vec<Uuid> {
         self.organizations
             .iter()
             .filter(|m| m.has_role(role))
+            .filter(|m| class.is_none_or(|c| m.is_class(c)))
+            .map(|m| m.org_id)
+            .collect()
+    }
+
+    /// Every organisation the caller belongs to, optionally of one class.
+    pub fn org_ids_in_class(&self, class: Option<&str>) -> Vec<Uuid> {
+        self.organizations
+            .iter()
+            .filter(|m| class.is_none_or(|c| m.is_class(c)))
             .map(|m| m.org_id)
             .collect()
     }
@@ -398,6 +435,45 @@ mod tests {
             ["admin".to_string(), "billing".to_string(), String::new()],
         );
         assert_eq!(membership.roles, ["admin", "billing"]);
+    }
+
+    #[test]
+    fn memberships_carry_the_organisations_class() {
+        let school = Uuid::new_v4();
+        let staff = Uuid::new_v4();
+        let unclassed = Uuid::new_v4();
+        let p = Principal {
+            user_id: Uuid::new_v4(),
+            organizations: vec![
+                OrgMembership::new(school, Some("admin".into()), [])
+                    .in_class(Some("school".into())),
+                OrgMembership::new(staff, Some("admin".into()), []).in_class(Some("staff".into())),
+                OrgMembership::new(unclassed, Some("admin".into()), []),
+            ],
+        };
+
+        assert_eq!(p.org_class_of(school), Some("school"));
+        assert_eq!(p.org_class_of(unclassed), None);
+
+        // A class narrows; no class keeps everything, which is what an
+        // unqualified permission means.
+        assert_eq!(
+            p.org_ids_with_role_in_class("admin", Some("school")),
+            vec![school]
+        );
+        assert_eq!(p.org_ids_with_role("admin").len(), 3);
+        assert_eq!(p.org_ids_in_class(Some("staff")), vec![staff]);
+        assert_eq!(p.org_ids_in_class(None).len(), 3);
+
+        // An organisation with no class satisfies no qualifier at all.
+        assert!(p
+            .org_ids_with_role_in_class("admin", Some("customer"))
+            .is_empty());
+
+        // An empty class in the database is no class, not the empty one.
+        let blank = OrgMembership::new(school, None, []).in_class(Some(String::new()));
+        assert_eq!(blank.org_class, None);
+        assert!(!blank.is_class(""));
     }
 
     #[test]

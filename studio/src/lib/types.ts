@@ -33,6 +33,13 @@ export type Scope = (typeof SCOPES)[number];
 export const ACTIONS = ["list", "read", "create", "update", "delete"] as const;
 export type Action = (typeof ACTIONS)[number];
 
+/**
+ * What separates an access level from the organisation class it is narrowed to,
+ * as in `role:admin@org_class=school`. An unqualified policy applies in every
+ * organisation.
+ */
+export const ORG_CLASS_SUFFIX = "@org_class=";
+
 /** The `role:<name>` level is spelled out separately in the UI. */
 export const ACCESS_LEVELS = ["public", "authenticated", "member", "owner", "role", "private"] as const;
 export type AccessLevel = (typeof ACCESS_LEVELS)[number];

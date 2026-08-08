@@ -11,7 +11,7 @@
 //! reference the environment: `url = "$DATABASE_URL"`,
 //! `port = "${PORT:-8080}"`. See [`crate::env`] for the syntax.
 
-use crate::schema::Access;
+use crate::schema::{Access, Policy};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -36,6 +36,7 @@ pub struct Config {
     pub ai: AiConfig,
     pub oauth: OAuthConfig,
     pub observability: ObservabilityConfig,
+    pub organization: OrganizationConfig,
 }
 
 /// What the app calls itself.
@@ -408,6 +409,61 @@ impl Default for AdminConfig {
             gravatar: false,
             ai_assistance: AdminAiAssistanceConfig::default(),
         }
+    }
+}
+
+/// The `[organization]` section: deployment-wide rules about the tenant itself.
+///
+/// Only one today, and it exists because `organization.org_class` is not an
+/// ordinary column. A class decides what a `@org_class=` permission lets people
+/// do, so an organisation that could rename its own class could grant itself
+/// access — which is why the column is server-owned, and why saying who may
+/// write it is a deployment decision rather than a row-level one.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct OrganizationConfig {
+    /// Who may set or change an organisation's `org_class`, in the same
+    /// grammar as `[permissions]` — typically a class of its own, e.g.
+    /// `"member@org_class=staff"`.
+    ///
+    /// Defaults to `"private"`: with no setting, no request can write the
+    /// column at all and classes are fixed by the operator (seed data, or SQL).
+    pub org_class_editors: String,
+
+    /// The class stamped on an organisation created with none — every
+    /// organisation the API makes, personal ones included.
+    ///
+    /// Empty (the default) leaves new organisations unclassed, which no
+    /// `@org_class=` permission matches. Set it where a deployment's ordinary
+    /// tenant is *some* kind — `"customer"` — so the permissions written for
+    /// that class apply from the moment an organisation exists, rather than
+    /// after somebody remembers to class it.
+    ///
+    /// A class editor who names a class on create is not overridden: this
+    /// fills the column in, it does not own it.
+    pub default_org_class: String,
+}
+
+impl Default for OrganizationConfig {
+    fn default() -> Self {
+        OrganizationConfig {
+            org_class_editors: "private".to_string(),
+            default_org_class: String::new(),
+        }
+    }
+}
+
+impl OrganizationConfig {
+    /// The parsed policy for writing `org_class`. An unparseable setting is
+    /// `private`, like every other access string in the system.
+    pub fn org_class_policy(&self) -> Policy {
+        Policy::parse(&self.org_class_editors)
+    }
+
+    /// The class new organisations start with, if the app names one.
+    pub fn default_class(&self) -> Option<&str> {
+        let value = self.default_org_class.trim();
+        (!value.is_empty()).then_some(value)
     }
 }
 
@@ -894,10 +950,11 @@ impl QueuesConfig {
     /// `publish` closes the door, matching how every other access string here
     /// treats a typo — and so does `owner`, which names a column on a row and
     /// means nothing for a topic.
-    pub fn publish_access(&self) -> Access {
-        match Access::parse(self.publish.trim()) {
-            Access::Owner => Access::Private,
-            access => access,
+    pub fn publish_access(&self) -> Policy {
+        let policy = Policy::parse(&self.publish);
+        match policy.level {
+            Access::Owner => Access::Private.into(),
+            _ => policy,
         }
     }
 

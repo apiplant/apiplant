@@ -654,6 +654,29 @@ const SECTIONS: ConfigSection[] = [
     ],
   },
   {
+    id: "organization",
+    title: "Organizations",
+    hint: "The tenant itself. An organisation's `org_class` decides which `@org_class=` permissions apply inside it, so who may write that column is a deployment decision rather than a row-level one.",
+    fields: [
+      {
+        key: "org_class_editors",
+        label: "org class editors",
+        group: "Classes",
+        placeholder: "private",
+        kind: "text" as const,
+        hint: "Who may set an organisation's `org_class`, in the `[permissions]` grammar — typically a class of its own, e.g. `member@org_class=staff`. Unset means nobody: the column is server-owned and classes come from seed data or SQL.",
+      },
+      {
+        key: "default_org_class",
+        label: "default org class",
+        group: "Classes",
+        placeholder: "none",
+        kind: "text" as const,
+        hint: "The class every new organisation starts with, personal ones included. Unset leaves them unclassed, which no `@org_class=` permission matches. A class editor naming one on create is not overridden.",
+      },
+    ],
+  },
+  {
     id: "email",
     title: "Email",
     hint: "Outbound mail for functions and auth flows that need a mailbox.",

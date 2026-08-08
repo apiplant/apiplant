@@ -108,10 +108,38 @@ delete = "role:admin"   # an admin *of this organisation*
 | `role:<name>` | a member holding `<name>` among their roles, or holding `admin` |
 | `owner` | the row's owner (`owner_id`), within the organisation |
 | `public` / `authenticated` | treated like `member` (org context is always required) |
+| `<level>@org_class=<name>` | the same level, but only in an organisation of that class |
 | `private` | never exposed |
 
 Membership and organisation isolation are enforced *before* these levels, which
 can only narrow access, never widen it.
+
+## Classes of organisation
+
+Organisations carry an `org_class` — `school`, `customer`, `staff` — and a
+permission can be narrowed to one:
+
+```toml
+[permissions]
+update = "role:admin@org_class=school"   # admins, in schools only
+```
+
+An unqualified permission applies in every organisation, so adding classes
+changes nothing until something asks for one. The column is server-owned: only
+callers named by `[organization] org_class_editors` in `main.toml` may write it,
+which is what stops an organisation from classing itself into access it was not
+given.
+
+`[organization] default_org_class` gives every new organisation a starting
+class — the personal one each account is created with included — so a
+deployment whose tenants are all of one kind does not have to classify them one
+by one.
+
+Those callers are the one exception to organisation isolation on the
+`organization` resource itself: they list and read every organisation, and may
+write `org_class` — and only `org_class` — on any of them, because classing is
+deployment-wide work. The rules are in
+[Permissions](permissions.md#organisation-classes).
 
 ## Lifecycle
 

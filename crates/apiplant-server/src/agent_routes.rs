@@ -472,7 +472,7 @@ async fn admit(
     let principal = state.resolve_principal(req).await;
 
     if agent.meta.scope == Scope::Organization {
-        if matches!(agent.permissions.chat, Access::Private) {
+        if matches!(agent.permissions.chat.level, Access::Private) {
             return Err(error(
                 404,
                 format!("unknown ai agent `{}`", agent.meta.name),
@@ -491,7 +491,17 @@ async fn admit(
         let Some(membership) = principal.membership(org) else {
             return Err(error(403, "you are not a member of this organisation"));
         };
-        if let Access::Role(role) = &agent.permissions.chat {
+        // A class-qualified agent answers only inside organisations of that
+        // class, whatever the level attached to it.
+        if let Some(class) = agent.permissions.chat.org_class.as_deref() {
+            if !membership.is_class(class) {
+                return Err(error(
+                    403,
+                    format!("requires an organisation of class `{class}`"),
+                ));
+            }
+        }
+        if let Access::Role(role) = &agent.permissions.chat.level {
             if !membership.has_role(role) {
                 return Err(error(
                     403,
@@ -505,7 +515,34 @@ async fn admit(
         });
     }
 
-    match &agent.permissions.chat {
+    // Outside an organisation-scoped agent the same qualifier means the caller
+    // must have selected an organisation of the class, since there is no other
+    // organisation in the request to ask about.
+    if let Some(class) = agent.permissions.chat.org_class.as_deref() {
+        let membership = principal.as_ref().and_then(|p| {
+            state
+                .active_org(req, &principal)
+                .and_then(|org| p.membership(org))
+                .cloned()
+        });
+        match membership {
+            Some(m) if m.is_class(class) => {}
+            Some(_) => {
+                return Err(error(
+                    403,
+                    format!("requires an organisation of class `{class}`"),
+                ))
+            }
+            None => {
+                return Err(match principal {
+                    Some(_) => error(403, "select an organisation with the X-Organization header"),
+                    None => error(401, "authentication required"),
+                })
+            }
+        }
+    }
+
+    match &agent.permissions.chat.level {
         Access::Public => Ok(Caller {
             principal,
             active_org: None,
@@ -841,7 +878,7 @@ async fn load_thread_history_row(
         sql.push_str(" AND owner_id = $2::uuid");
         params.push(Value::String(principal.user_id.to_string()));
     }
-    if matches!(agent.permissions.history, Access::Private) {
+    if matches!(agent.permissions.history.level, Access::Private) {
         return Err(error(404, "unknown thread"));
     }
     let rows = state.db.raw_json(&sql, &params).await.map_err(|e| {

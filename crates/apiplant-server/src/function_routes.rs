@@ -47,7 +47,7 @@ async fn admit(
     let (method, access, config_json) = match state.functions.get(name) {
         Some(f) => (
             f.manifest.method,
-            f.manifest.access(),
+            f.manifest.policy(),
             f.config_json.clone(),
         ),
         None => return Err(error(404, format!("unknown function `{name}`"))),

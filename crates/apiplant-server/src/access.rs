@@ -8,7 +8,7 @@
 //! and [the assistant](crate::ai_routes)); the value is that neither can drift
 //! from the other.
 
-use apiplant_abi::FunctionAccess;
+use apiplant_abi::{FunctionAccess, FunctionPolicy};
 use apiplant_auth::Principal;
 use ntex::web::types::State;
 use ntex::web::{HttpRequest, HttpResponse};
@@ -25,10 +25,41 @@ use crate::state::AppState;
 pub async fn check(
     state: &State<AppState>,
     req: &HttpRequest,
-    access: &FunctionAccess,
+    policy: &FunctionPolicy,
     missing: &str,
 ) -> Result<Option<Principal>, HttpResponse> {
     let principal = state.resolve_principal(req).await;
+    let access = &policy.access;
+
+    // A `@org_class=` qualifier narrows every level, including the ones that
+    // name no organisation: it says the caller must be acting inside an
+    // organisation of that class, so `public@org_class=staff` is a members-only
+    // endpoint, not a public one.
+    if let Some(class) = policy.org_class.as_deref() {
+        if !matches!(access, FunctionAccess::Private) {
+            let membership = principal.as_ref().and_then(|p| {
+                state
+                    .active_org(req, &principal)
+                    .and_then(|org| p.membership(org))
+            });
+            match membership {
+                Some(m) if m.is_class(class) => {}
+                Some(_) => {
+                    return Err(error(
+                        403,
+                        format!("requires an organisation of class `{class}`"),
+                    ))
+                }
+                None if principal.is_some() => {
+                    return Err(error(
+                        403,
+                        "select an organisation with the X-Organization header",
+                    ))
+                }
+                None => return Err(error(401, "authentication required")),
+            }
+        }
+    }
 
     match access {
         FunctionAccess::Public => {}

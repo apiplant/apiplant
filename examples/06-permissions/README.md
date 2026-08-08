@@ -118,6 +118,63 @@ keeps every organisation with at least one administrator.
 Roles live on the **membership**, so the same person can be an admin in one
 organisation and a reader in another.
 
+## Classes of organisation
+
+`feature_flag` is a global resource written `member@org_class=admin`: any member
+will do, provided the organisation they have **selected** is of class `admin`.
+The seed gives Operations that class and puts `admin@example.com` in it, so the
+same account passes or fails depending on which organisation it names:
+
+```bash
+OPS=$(curl -s localhost:8099/api/organization -H "authorization: Bearer $T1" \
+       | jq -r '.[] | select(.slug=="operations") | .id')
+
+curl -s -XPATCH localhost:8099/api/feature_flag/$FLAG -H "authorization: Bearer $T1" \
+  -H "x-organization: $OPS" -H 'content-type: application/json' \
+  -d '{"enabled":false}'                                             # → 200
+
+curl -s -XPATCH localhost:8099/api/feature_flag/$FLAG -H "authorization: Bearer $T1" \
+  -H "x-organization: $ORG" -H 'content-type: application/json' \
+  -d '{"enabled":false}' -i                                          # → 403, Acme is a customer
+```
+
+A qualifier only ever narrows: `role:admin@org_class=school` is fewer people
+than `role:admin`, and a permission with no class applies everywhere — so
+classing organisations changes nothing until a permission asks for one.
+
+The class itself is server-owned. `main.toml` says who may write it:
+
+```toml
+[organization]
+org_class_editors = "member@org_class=admin"
+```
+
+Anyone else sending `org_class` has it dropped from the body, exactly like
+`organization_id` — otherwise an organisation could class itself into whatever
+these permissions guard.
+
+Being named there also widens what you can see, because you cannot class an
+organisation you cannot find:
+
+```bash
+# acting from Operations: every organisation, including ones you are not in
+curl -s "localhost:8099/api/organization" -H "authorization: Bearer $T1" \
+  -H "x-organization: $OPS" | jq '.[].slug'
+
+# the class of one of them — and only the class
+curl -s -XPATCH localhost:8099/api/organization/$SOMEONE_ELSES \
+  -H "authorization: Bearer $T1" -H "x-organization: $OPS" \
+  -H 'content-type: application/json' -d '{"org_class":"customer"}'   # → 200
+
+curl -s -XPATCH localhost:8099/api/organization/$SOMEONE_ELSES \
+  -H "authorization: Bearer $T1" -H "x-organization: $OPS" \
+  -H 'content-type: application/json' -d '{"name":"Hijacked"}' -i     # → 404
+```
+
+Drop the `x-organization` header, or point it at Acme, and both the wide list
+and the class write go away: the setting is answered against the organisation
+you selected.
+
 ## Which status you get
 
 | Code | When |

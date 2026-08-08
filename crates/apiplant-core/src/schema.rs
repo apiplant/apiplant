@@ -786,15 +786,98 @@ impl Access {
     }
 }
 
-/// Per-action permissions. Strings in TOML are parsed via [`Access::parse`].
+/// An access level, optionally narrowed to organisations of one **class**.
+///
+/// The grammar is any [`Access`] spelling followed by `@org_class=<name>`:
+///
+/// ```toml
+/// update = "role:admin"                  # admins of the active organisation
+/// update = "role:admin@org_class=school" # …but only where it is a school
+/// list   = "member@org_class=staff"      # any member of a staff organisation
+/// ```
+///
+/// An unqualified policy applies in **every** organisation, which is what every
+/// policy written before classes existed means — so adding classes to an app
+/// changes nothing until a policy asks for one.
+///
+/// The class is a filter on the organisation, never a widening: it is checked
+/// *in addition* to the level, so `role:admin@org_class=school` is strictly
+/// fewer people than `role:admin`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Policy {
+    /// Who may act.
+    pub level: Access,
+    /// The `org_class` the organisation must carry, if the policy names one.
+    pub org_class: Option<String>,
+}
+
+impl Policy {
+    /// Parse `"<level>"` or `"<level>@org_class=<name>"`.
+    ///
+    /// An empty or malformed class (`"role:admin@org_class="`) makes the whole
+    /// policy `private`: the same direction a typo in a level takes, because a
+    /// qualifier nobody can satisfy must not silently become one everybody can.
+    pub fn parse(s: &str) -> Policy {
+        let s = s.trim();
+        match s.split_once(ORG_CLASS_SUFFIX) {
+            Some((level, class)) => {
+                let class = class.trim();
+                if class.is_empty() {
+                    return Policy::from(Access::Private);
+                }
+                Policy {
+                    level: Access::parse(level.trim()),
+                    org_class: Some(class.to_string()),
+                }
+            }
+            None => Policy::from(Access::parse(s)),
+        }
+    }
+
+    /// The canonical string form, round-tripping [`Policy::parse`].
+    pub fn as_string(&self) -> String {
+        match &self.org_class {
+            Some(class) => format!("{}{ORG_CLASS_SUFFIX}{class}", self.level.as_string()),
+            None => self.level.as_string(),
+        }
+    }
+
+    /// Whether an organisation carrying `class` satisfies this policy's class
+    /// qualifier. An unqualified policy is satisfied by every organisation,
+    /// including one with no class at all.
+    pub fn matches_org_class(&self, class: Option<&str>) -> bool {
+        match &self.org_class {
+            None => true,
+            Some(required) => class.is_some_and(|c| c == required),
+        }
+    }
+}
+
+impl From<Access> for Policy {
+    fn from(level: Access) -> Policy {
+        Policy {
+            level,
+            org_class: None,
+        }
+    }
+}
+
+/// What separates a level from the organisation class it is narrowed to.
+pub const ORG_CLASS_SUFFIX: &str = "@org_class=";
+
+/// The `organization` column holding a class. Server-owned: written only by
+/// somebody `[organization] org_class_editors` names.
+pub const ORG_CLASS_FIELD: &str = "org_class";
+
+/// Per-action permissions. Strings in TOML are parsed via [`Policy::parse`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(from = "PermissionsRaw")]
 pub struct Permissions {
-    pub list: Access,
-    pub read: Access,
-    pub create: Access,
-    pub update: Access,
-    pub delete: Access,
+    pub list: Policy,
+    pub read: Policy,
+    pub create: Policy,
+    pub update: Policy,
+    pub delete: Policy,
 }
 
 impl Default for Permissions {
@@ -803,11 +886,11 @@ impl Default for Permissions {
         // caller's organisation. On a `global` resource, `member` behaves like
         // `authenticated` (there is no org to belong to).
         Permissions {
-            list: Access::Member,
-            read: Access::Member,
-            create: Access::Member,
-            update: Access::Member,
-            delete: Access::Member,
+            list: Access::Member.into(),
+            read: Access::Member.into(),
+            create: Access::Member.into(),
+            update: Access::Member.into(),
+            delete: Access::Member.into(),
         }
     }
 }
@@ -825,11 +908,11 @@ impl From<PermissionsRaw> for Permissions {
     fn from(r: PermissionsRaw) -> Self {
         let d = Permissions::default();
         Permissions {
-            list: r.list.map(|s| Access::parse(&s)).unwrap_or(d.list),
-            read: r.read.map(|s| Access::parse(&s)).unwrap_or(d.read),
-            create: r.create.map(|s| Access::parse(&s)).unwrap_or(d.create),
-            update: r.update.map(|s| Access::parse(&s)).unwrap_or(d.update),
-            delete: r.delete.map(|s| Access::parse(&s)).unwrap_or(d.delete),
+            list: r.list.map(|s| Policy::parse(&s)).unwrap_or(d.list),
+            read: r.read.map(|s| Policy::parse(&s)).unwrap_or(d.read),
+            create: r.create.map(|s| Policy::parse(&s)).unwrap_or(d.create),
+            update: r.update.map(|s| Policy::parse(&s)).unwrap_or(d.update),
+            delete: r.delete.map(|s| Policy::parse(&s)).unwrap_or(d.delete),
         }
     }
 }
@@ -1472,11 +1555,79 @@ type = "string"
         assert_eq!(Access::parse("wat"), Access::Private);
 
         let defaults = Permissions::default();
-        assert_eq!(defaults.list, Access::Member);
-        assert_eq!(defaults.read, Access::Member);
-        assert_eq!(defaults.create, Access::Member);
-        assert_eq!(defaults.update, Access::Member);
-        assert_eq!(defaults.delete, Access::Member);
+        assert_eq!(defaults.list, Access::Member.into());
+        assert_eq!(defaults.read, Access::Member.into());
+        assert_eq!(defaults.create, Access::Member.into());
+        assert_eq!(defaults.update, Access::Member.into());
+        assert_eq!(defaults.delete, Access::Member.into());
+    }
+
+    #[test]
+    fn a_policy_may_be_narrowed_to_an_organisation_class() {
+        let plain = Policy::parse("role:admin");
+        assert_eq!(plain.level, Access::Role("admin".into()));
+        assert_eq!(plain.org_class, None);
+        // Unqualified means every class, including organisations with none —
+        // which is what every policy written before classes existed says.
+        assert!(plain.matches_org_class(None));
+        assert!(plain.matches_org_class(Some("school")));
+
+        let schools = Policy::parse("role:admin@org_class=school");
+        assert_eq!(schools.level, Access::Role("admin".into()));
+        assert_eq!(schools.org_class.as_deref(), Some("school"));
+        assert!(schools.matches_org_class(Some("school")));
+        assert!(!schools.matches_org_class(Some("staff")));
+        assert!(!schools.matches_org_class(None));
+
+        // The qualifier is not only for roles.
+        assert_eq!(
+            Policy::parse("member@org_class=staff"),
+            Policy {
+                level: Access::Member,
+                org_class: Some("staff".into()),
+            }
+        );
+
+        // Round-trips, so a manifest and the docs can print what was written.
+        for written in ["public", "role:admin", "member@org_class=staff"] {
+            assert_eq!(Policy::parse(written).as_string(), written);
+        }
+
+        // A qualifier nobody can satisfy must close the door, not vanish and
+        // leave the bare level behind.
+        assert_eq!(
+            Policy::parse("role:admin@org_class=").level,
+            Access::Private
+        );
+        assert_eq!(Policy::parse("role:admin@org_class=  ").org_class, None);
+        // …and an unknown level stays private with the class attached, so it
+        // cannot be read as a widening either.
+        assert_eq!(Policy::parse("wat@org_class=school").level, Access::Private);
+    }
+
+    #[test]
+    fn a_class_qualified_permission_parses_from_toml() {
+        let resource: Resource = toml::from_str(
+            r#"
+[resource]
+name = "report"
+
+[permissions]
+list = "member"
+update = "role:admin@org_class=school"
+
+[fields.title]
+type = "string"
+"#,
+        )
+        .unwrap();
+        assert_eq!(resource.permissions.list, Access::Member.into());
+        assert_eq!(
+            resource.permissions.update.org_class.as_deref(),
+            Some("school")
+        );
+        // An unwritten action keeps the default, class-free.
+        assert_eq!(resource.permissions.delete, Access::Member.into());
     }
 
     #[test]

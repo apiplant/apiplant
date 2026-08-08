@@ -46,6 +46,16 @@ required = true
 type = "string"
 unique = true
 
+# What *kind* of organisation this is — `school`, `staff`, `customer`. A
+# permission can be narrowed to one (`role:admin@org_class=school`), so this
+# column decides who gets in, and it is therefore server-owned: it is stripped
+# from every client body like `organization_id` is, and only somebody the
+# `[organization] org_class_editors` setting names may set it. Unset by
+# default, which no class-qualified policy matches.
+[fields.org_class]
+type = "string"
+max_length = 64
+
 # A logo, as a URL a browser can fetch. Nothing sets it — an organisation is not
 # handed to us by an identity provider the way a person is — so it is here for
 # an app to fill and for every interface to read: the dashboard's workspace
