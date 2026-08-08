@@ -60,6 +60,28 @@ automatic_tax = true
 # and charging them nothing.
 tax_id_collection = true
 
+# ---------------------------------------------------------------------------
+# Posting things.
+#
+# This app sells three things: a subscription, a file you download and a mug
+# somebody has to put in a box. Only the third needs an address, and it is the
+# `shippable` column on `billing_product` that says so — the checkout adds the
+# address form on its own, and no caller has to remember to ask for it.
+#
+# The list below is where the mug can go. An empty list means the app posts
+# nothing, and a checkout for a shippable product is refused rather than
+# taking money for an order with no address on it.
+# ---------------------------------------------------------------------------
+shipping_countries = ["IT", "DE", "FR", "ES", "GB", "US"]
+
+# What automatic tax files a product under when its row doesn't say. Two
+# defaults, not one, because that is the distinction the rate actually turns
+# on: in most of the EU a downloaded file and a posted mug are taxed by
+# different rules, and one default for both is a confident wrong answer half
+# the time.
+digital_tax_code  = "txcd_10000000"   # general — electronically supplied services
+physical_tax_code = "txcd_99999999"   # general — tangible goods
+
 # Where a buyer lands afterwards. Left empty here so the example uses the
 # dashboard's own billing screen, which is a real page with a real result on
 # it — a production app points these at its own.

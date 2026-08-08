@@ -628,6 +628,33 @@ type = "text"
 type = "boolean"
 default = true
 
+# Whether buying this means posting something to somebody. A mug is
+# shippable; a subscription and a downloadable file are not.
+#
+# One column, two consequences: the checkout asks for a shipping address (from
+# the countries in `[payments] shipping_countries`), and the product is filed
+# under the tangible-goods tax code rather than the digital one. Both follow
+# from the same fact, which is why it is one field and not three.
+[fields.shippable]
+type = "boolean"
+default = false
+
+[fields.shippable.admin]
+help = "Physical goods that have to be posted. Adds a shipping address to the checkout."
+
+# Stripe's tax category for this product — `txcd_10000000` for a digital
+# service, `txcd_99999999` for general tangible goods, and a more specific one
+# where the rate differs (an e-book is not taxed like software in most of the
+# EU). Empty takes the default for its kind from `[payments]`.
+#
+# This is the input to automatic tax that nobody remembers to set, and the one
+# that decides whether the computed rate is right or merely plausible.
+[fields.tax_code]
+type = "string"
+
+[fields.tax_code.admin]
+help = "Stripe tax category. Empty uses the [payments] default for digital or physical."
+
 # Free-form facts the app checks when deciding what a plan may do: seat
 # limits, feature flags, an internal tier name. Copied to Stripe as metadata
 # so an operator reading either system sees the same thing.

@@ -1,0 +1,11 @@
+# Config for the `require_purchase` hook, read at boot.
+
+# Which payment statuses count as bought.
+#
+# `succeeded` alone. The tempting addition is `pending` — the buyer is on the
+# page, the money is on its way — but a pending payment is a bank that has not
+# answered yet, and a file handed over on the strength of one is a file handed
+# over for free when the answer is no. A subscription can afford to be generous
+# here because it can be taken away again next month; a download cannot be
+# un-downloaded.
+paid_statuses = ["succeeded"]

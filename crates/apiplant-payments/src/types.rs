@@ -56,7 +56,11 @@ impl Interval {
 }
 
 /// Whether a price is quoted before or after tax.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+///
+/// Deserialized through [`TaxBehavior::parse`] rather than by matching variant
+/// names exactly: the value arrives from a database column, and an empty one —
+/// a row that never said — must read as a default rather than fail the sale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaxBehavior {
     /// The amount is what you charge, and tax is added to it (the default —
@@ -68,6 +72,12 @@ pub enum TaxBehavior {
     /// Not decided. Stripe refuses to compute automatic tax on such a price,
     /// so this exists to round-trip an existing one, not to be chosen.
     Unspecified,
+}
+
+impl<'de> Deserialize<'de> for TaxBehavior {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<TaxBehavior, D::Error> {
+        Ok(TaxBehavior::parse(&String::deserialize(deserializer)?))
+    }
 }
 
 impl TaxBehavior {
@@ -89,9 +99,50 @@ pub struct ProductSpec {
     pub name: String,
     pub description: String,
     pub active: bool,
+    /// Whether buying this means posting something to somebody.
+    ///
+    /// It is a fact about the product rather than about the checkout, which is
+    /// what lets the checkout ask for a shipping address without the caller
+    /// having to remember to say so — a mug needs one and a PDF does not, and
+    /// the row already knows which it is.
+    pub shippable: bool,
+    /// Stripe's [tax code] for this product, e.g. `txcd_10000000` for a
+    /// digital service or `txcd_99999999` for general tangible goods.
+    ///
+    /// This is what makes automatic tax a real answer rather than a guess:
+    /// the rate on an e-book is not the rate on a mug, and in most of the EU
+    /// it is not even the same rate as a printed book. Empty falls back to
+    /// `[payments] digital_tax_code` / `physical_tax_code` per `shippable`.
+    ///
+    /// [tax code]: https://stripe.com/docs/tax/tax-categories
+    pub tax_code: String,
     /// Copied to Stripe as metadata, so an operator reading either system
     /// sees the same facts about a plan.
+    ///
+    /// An empty `json` column arrives as `null`, which is what a product with
+    /// no features looks like — so null is read as "none" rather than as a
+    /// type error that refuses the whole product.
+    #[serde(deserialize_with = "map_or_nothing")]
     pub metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Read a JSON object, treating `null` and a missing value as an empty one.
+fn map_or_nothing<'de, D>(
+    deserializer: D,
+) -> Result<serde_json::Map<String, serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Ok(
+        match Option::<serde_json::Value>::deserialize(deserializer)? {
+            Some(serde_json::Value::Object(map)) => map,
+            // Anything else — a null column, or a `features` holding a string
+            // somebody typed — carries no key/value pairs, and refusing the
+            // product over it would be refusing a sale over a decoration.
+            _ => serde_json::Map::new(),
+        },
+    )
 }
 
 /// A price on its way to Stripe.
@@ -260,6 +311,15 @@ pub struct PaymentRecord {
     pub stripe_customer_id: String,
     pub stripe_subscription_id: String,
     pub organization_id: String,
+    /// The `billing_price` row this paid for, from the metadata the purchase
+    /// was started with.
+    ///
+    /// Without it a one-off payment is an amount and a date and nothing else —
+    /// there is no way back from "they paid €12" to *what they bought*, which
+    /// is the only question an app asks of a completed purchase. A
+    /// subscription can be traced through its own row; a single charge has
+    /// only this.
+    pub price_id: String,
     /// Total charged, in the smallest unit.
     pub amount: i64,
     /// How much of `amount` was tax. Zero when Stripe computed none.

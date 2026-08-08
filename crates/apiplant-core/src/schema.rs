@@ -63,7 +63,49 @@ fn default_scope() -> Scope {
     Scope::Organization
 }
 
+impl Field {
+    /// The case to force on this field's value, if any.
+    ///
+    /// `None` for every non-text field whatever the TOML said: `case` on a
+    /// number is a line that reads as if it does something, and quietly
+    /// ignoring it here is better than upper-casing the digits of a price.
+    pub fn text_case(&self) -> Option<TextCase> {
+        match self.ty {
+            FieldType::String | FieldType::Text => self.case,
+            _ => None,
+        }
+    }
+}
+
 impl Resource {
+    /// The fields that force a case, for a caller normalising a whole row.
+    /// Empty for most resources, which is the fast path worth keeping.
+    pub fn cased_fields(&self) -> impl Iterator<Item = (&String, TextCase)> {
+        self.fields
+            .iter()
+            .filter_map(|(name, field)| Some((name, field.text_case()?)))
+    }
+
+    /// Force every cased field in a row of this resource into its case.
+    ///
+    /// Applied to rows on the way out, so the guarantee holds for data this
+    /// API did not write — a seed file, the payments webhook, a migration run
+    /// by hand. Without it `case` would only describe rows that happened to
+    /// arrive through `POST`.
+    pub fn apply_text_case(&self, row: &mut serde_json::Value) {
+        let Some(object) = row.as_object_mut() else {
+            return;
+        };
+        for (name, case) in self.cased_fields() {
+            if let Some(serde_json::Value::String(value)) = object.get(name) {
+                let cased = case.apply(value);
+                if &cased != value {
+                    object.insert(name.clone(), serde_json::Value::String(cased));
+                }
+            }
+        }
+    }
+
     /// Physical table name.
     pub fn table_name(&self) -> String {
         self.meta
@@ -612,6 +654,18 @@ pub struct Field {
     #[serde(default)]
     pub default: Option<serde_json::Value>,
     pub max_length: Option<u32>,
+    /// Force a text field to one case, in storage and in every response.
+    ///
+    /// For values that are *codes* rather than prose — a currency, a country,
+    /// a ticket prefix, a coupon. Those have a conventional case, and the
+    /// difference between `eur` and `EUR` is a spelling rather than a
+    /// distinction: left alone it produces two of everything, and a filter
+    /// that matches whichever one the caller happened to type.
+    ///
+    /// Only meaningful on `string` and `text`; ignored elsewhere, because
+    /// there is no case to change about a number.
+    #[serde(default)]
+    pub case: Option<TextCase>,
     /// For `reference` fields: what happens to this row when the referenced row
     /// is deleted. Defaults to [`OnDelete::Restrict`] (safe: blocks orphaning).
     #[serde(default)]
@@ -619,6 +673,41 @@ pub struct Field {
     /// Dashboard presentation for this field, from `[fields.<name>.admin]`.
     #[serde(default)]
     pub admin: FieldAdmin,
+}
+
+/// The case a text field is kept in.
+///
+/// Applied on the way in, so the column holds one spelling and `unique`,
+/// sorting and equality all mean what they look like; and on the way out, so a
+/// row written by a seed, a webhook or a hand-run `UPDATE` reads back the same
+/// as one written through the API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextCase {
+    /// `eur`, `gb`, `pending`.
+    Lower,
+    /// `EUR`, `GB`, `PENDING`.
+    Upper,
+}
+
+impl TextCase {
+    /// This case applied to a value. ASCII-only on purpose: these are codes —
+    /// currencies, country codes, SKUs — and Unicode case folding turns a
+    /// Turkish `i` into something that no longer matches the code it came
+    /// from.
+    pub fn apply(self, value: &str) -> String {
+        match self {
+            TextCase::Lower => value.to_ascii_lowercase(),
+            TextCase::Upper => value.to_ascii_uppercase(),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TextCase::Lower => "lower",
+            TextCase::Upper => "upper",
+        }
+    }
 }
 
 /// Supported column types.

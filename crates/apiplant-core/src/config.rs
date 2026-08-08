@@ -1202,6 +1202,23 @@ pub struct PaymentsConfig {
     /// card requires. `auto` (default) or `required`; automatic tax needs an
     /// address, so `auto` still collects enough to place the customer.
     pub billing_address: String,
+    /// Two-letter ISO country codes a physical product may be shipped to.
+    ///
+    /// Only consulted for a product marked `shippable`; a digital one never
+    /// asks for a shipping address whatever is listed here. Empty means the
+    /// app sells nothing it has to post, and a checkout for a shippable
+    /// product is refused rather than quietly taking money for something with
+    /// nowhere to send it.
+    pub shipping_countries: Vec<String>,
+    /// Stripe [tax code] for a product that isn't shipped, when the row does
+    /// not name one. The default is "general — electronically supplied
+    /// services", which is what most software actually is.
+    ///
+    /// [tax code]: https://stripe.com/docs/tax/tax-categories
+    pub digital_tax_code: String,
+    /// Stripe tax code for a shippable product that doesn't name one. The
+    /// default is "general — tangible goods".
+    pub physical_tax_code: String,
     /// Where Stripe returns the buyer after a completed checkout. Empty falls
     /// back to the dashboard's billing screen — see
     /// [`ServerConfig::public_origin`].
@@ -1227,6 +1244,9 @@ impl Default for PaymentsConfig {
             automatic_tax: true,
             tax_id_collection: None,
             billing_address: "auto".to_string(),
+            shipping_countries: Vec::new(),
+            digital_tax_code: "txcd_10000000".to_string(),
+            physical_tax_code: "txcd_99999999".to_string(),
             success_url: String::new(),
             cancel_url: String::new(),
             portal_return_url: String::new(),
@@ -1261,6 +1281,36 @@ impl PaymentsConfig {
     /// it, and asking for one you ignore is a field that does nothing.
     pub fn collects_tax_ids(&self) -> bool {
         self.tax_id_collection.unwrap_or(self.automatic_tax)
+    }
+
+    /// The countries a physical order may be shipped to, upper-cased the way
+    /// Stripe wants them, with blanks and duplicates dropped.
+    pub fn shipping_destinations(&self) -> Vec<String> {
+        let mut seen = Vec::new();
+        for country in &self.shipping_countries {
+            let code = country.trim().to_ascii_uppercase();
+            if !code.is_empty() && !seen.contains(&code) {
+                seen.push(code);
+            }
+        }
+        seen
+    }
+
+    /// Whether this app posts anything anywhere. False means every product is
+    /// digital, and no checkout will ever ask for a shipping address.
+    pub fn ships(&self) -> bool {
+        !self.shipping_destinations().is_empty()
+    }
+
+    /// The tax code for a product that named none — which one depends on
+    /// whether it is posted, because that is the distinction the rate actually
+    /// turns on.
+    pub fn default_tax_code(&self, shippable: bool) -> String {
+        let configured = match shippable {
+            true => self.physical_tax_code.trim(),
+            false => self.digital_tax_code.trim(),
+        };
+        configured.to_string()
     }
 
     /// Whether the webhook endpoint can verify a delivery. Payments still work

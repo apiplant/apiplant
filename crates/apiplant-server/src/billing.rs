@@ -134,6 +134,10 @@ pub async fn checkout(
             .get("allow_promotion_codes")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        // Not something the request may ask for: a caller that could turn
+        // shipping off for a physical product could buy a mug with nowhere to
+        // send it.
+        shipping: price.shippable,
     };
 
     let started = match payments.checkout(spec).await {
@@ -349,7 +353,7 @@ async fn apply_subscription(state: &AppState, sub: &SubscriptionState) -> Result
             current_period_end, cancel_at_period_end, trial_ends_at, canceled_at, \
             stripe_subscription_id) \
          VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, \
-                 to_timestamp($6), $7, to_timestamp($8), to_timestamp($9), $10) \
+                 to_timestamp($6::double precision), $7, to_timestamp($8::double precision), to_timestamp($9::double precision), $10) \
          ON CONFLICT (stripe_subscription_id) DO UPDATE SET \
            organization_id = EXCLUDED.organization_id, \
            customer_id = COALESCE(EXCLUDED.customer_id, {table}.customer_id), \
@@ -400,6 +404,14 @@ async fn apply_payment(state: &AppState, payment: &PaymentRecord) -> Result<(), 
     };
     let customer = customer_row_id(state, &payment.stripe_customer_id).await;
     let subscription = subscription_row_id(state, &payment.stripe_subscription_id).await;
+    // What was bought. The metadata names the `billing_price` row directly;
+    // failing that — a renewal whose invoice carried none — the subscription
+    // being paid for knows its own price. Without either, a one-off charge is
+    // an amount with nothing to attribute it to.
+    let price = match parse_org(&payment.price_id) {
+        Some(id) => Some(id),
+        None => subscription_price_row_id(state, subscription).await,
+    };
 
     // A payment with no intent id — some invoices have none until they are
     // paid — can't be deduplicated on it, so it is inserted plainly. The
@@ -407,19 +419,20 @@ async fn apply_payment(state: &AppState, payment: &PaymentRecord) -> Result<(), 
     let sql = if payment.stripe_payment_intent_id.is_empty() {
         format!(
             "INSERT INTO {table} \
-               (organization_id, customer_id, subscription_id, amount, tax_amount, \
+               (organization_id, customer_id, subscription_id, price_id, amount, tax_amount, \
                 currency, status, description, receipt_url, paid_at, stripe_invoice_id) \
-             VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, to_timestamp($10), $11)"
+             VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8, $9, $10, to_timestamp($11::double precision), $12)"
         )
     } else {
         format!(
             "INSERT INTO {table} \
-               (organization_id, customer_id, subscription_id, amount, tax_amount, \
+               (organization_id, customer_id, subscription_id, price_id, amount, tax_amount, \
                 currency, status, description, receipt_url, paid_at, stripe_invoice_id, \
                 stripe_payment_intent_id) \
-             VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, to_timestamp($10), $11, $12) \
+             VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8, $9, $10, to_timestamp($11::double precision), $12, $13) \
              ON CONFLICT (stripe_payment_intent_id) DO UPDATE SET \
                status = EXCLUDED.status, \
+               price_id = COALESCE(EXCLUDED.price_id, {table}.price_id), \
                amount = EXCLUDED.amount, \
                tax_amount = EXCLUDED.tax_amount, \
                receipt_url = EXCLUDED.receipt_url, \
@@ -431,6 +444,7 @@ async fn apply_payment(state: &AppState, payment: &PaymentRecord) -> Result<(), 
         json!(org.to_string()),
         optional_id(customer),
         optional_id(subscription),
+        optional_id(price),
         json!(payment.amount),
         json!(payment.tax_amount),
         json!(payment.currency),
@@ -573,6 +587,8 @@ struct PriceRow {
     recurring: bool,
     trial_days: u32,
     active: bool,
+    /// From the product behind it: whether buying this has to be posted.
+    shippable: bool,
 }
 
 async fn load_price(state: &AppState, id: &str) -> Result<Option<PriceRow>, HttpResponse> {
@@ -582,9 +598,18 @@ async fn load_price(state: &AppState, id: &str) -> Result<Option<PriceRow>, Http
     let Ok(id) = Uuid::parse_str(id.trim()) else {
         return Err(error(422, "`price_id` must be the id of a billing_price"));
     };
+    // Joined rather than fetched separately: whether the thing is posted is a
+    // property of the product, and the checkout needs it in the same breath as
+    // the amount. `LEFT JOIN` so a price whose product went missing still
+    // produces "no such price" rather than a 500.
+    let products = state
+        .table("billing_product")
+        .unwrap_or_else(|| "billing_product".to_string());
     let sql = format!(
-        "SELECT id::text AS id, stripe_price_id, interval, trial_days, active \
-         FROM {table} WHERE id = $1::uuid LIMIT 1"
+        "SELECT p.id::text AS id, p.stripe_price_id, p.interval, p.trial_days, p.active, \
+                coalesce(pr.shippable, false) AS shippable \
+         FROM {table} p LEFT JOIN {products} pr ON pr.id = p.product_id \
+         WHERE p.id = $1::uuid LIMIT 1"
     );
     let rows = match state.db.raw_json(&sql, &[json!(id.to_string())]).await {
         Ok(rows) => rows,
@@ -610,6 +635,10 @@ async fn load_price(state: &AppState, id: &str) -> Result<Option<PriceRow>, Http
             .unwrap_or(0)
             .clamp(0, u32::MAX as i64) as u32,
         active: row.get("active").and_then(Value::as_bool).unwrap_or(true),
+        shippable: row
+            .get("shippable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }))
 }
 
@@ -664,6 +693,24 @@ async fn subscription_row_id(state: &AppState, stripe_subscription_id: &str) -> 
 }
 
 /// One row's id, looked up by a unique Stripe id.
+/// The price a subscription is on, for a renewal invoice that named none.
+///
+/// A subscription's invoices carry the metadata of the *subscription*, and
+/// older ones may carry none at all — but the row already knows what was being
+/// paid for, so the ledger can say so rather than leaving the column empty.
+async fn subscription_price_row_id(state: &AppState, subscription: Option<Uuid>) -> Option<Uuid> {
+    let subscription = subscription?;
+    let table = state.table("billing_subscription")?;
+    let sql = format!("SELECT price_id::text AS id FROM {table} WHERE id = $1::uuid LIMIT 1");
+    let rows = state
+        .db
+        .raw_json(&sql, &[json!(subscription.to_string())])
+        .await
+        .ok()?;
+    let id = rows.as_array()?.first()?.get("id")?.as_str()?;
+    Uuid::parse_str(id).ok()
+}
+
 async fn row_id_by(state: &AppState, resource: &str, column: &str, value: &str) -> Option<Uuid> {
     if value.trim().is_empty() {
         return None;
@@ -805,6 +852,10 @@ fn optional_id(id: Option<Uuid>) -> Value {
 }
 
 /// A Unix timestamp for `to_timestamp()`, or `NULL`.
+///
+/// Every call site casts the placeholder (`to_timestamp($n::double
+/// precision)`): parameters reach the database as text, and `to_timestamp`
+/// has no overload that takes one.
 fn seconds(value: Option<i64>) -> Value {
     match value {
         Some(seconds) => json!(seconds),

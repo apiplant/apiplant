@@ -210,6 +210,14 @@ impl Payments {
             );
         }
 
+        // The Stripe client builds a rustls connector that asks for the
+        // process-wide crypto provider, and this workspace compiles more than
+        // one — so with none installed the first HTTPS call panics rather than
+        // failing. Installing it here, where the only client is built, means a
+        // caller cannot forget to; "already set" is the normal case and not an
+        // error, since the server installs the same provider at boot.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         let timeout = Duration::from_secs(config.timeout_secs.max(1));
         Ok(Some(Payments {
             client: stripe::Client::new(secret),
@@ -305,9 +313,9 @@ impl Payments {
         match tokio::time::timeout(self.timeout, future).await {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(e)) => Err(match e {
-                stripe::StripeError::Stripe(response) => PaymentsError::Provider(format!(
-                    "{what}: {}",
-                    response.message.unwrap_or_default()
+                stripe::StripeError::Stripe(response, status) => PaymentsError::Provider(format!(
+                    "{what}: {} (HTTP {status})",
+                    response.message.clone().unwrap_or_default()
                 )),
                 other => PaymentsError::Transport(format!("{what}: {other}")),
             }),
@@ -409,6 +417,13 @@ pub struct CheckoutSpec {
     pub cancel_url: String,
     /// Let the buyer enter a promotion code on the Stripe page.
     pub allow_promotion_codes: bool,
+    /// Whether this purchase has to be posted, so the page must ask where to.
+    ///
+    /// Taken from the product rather than from the request: whether a thing is
+    /// physical is a fact about the thing, and a caller that has to remember
+    /// to say so is a caller that will one day sell a mug with no address on
+    /// it.
+    pub shipping: bool,
 }
 
 #[cfg(test)]

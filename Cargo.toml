@@ -119,16 +119,41 @@ redis ={ version = "0.27", default-features = false, features = [
 
 # Payments (Stripe). `webpki` roots rather than the platform store, to match
 # the rest of the graph: rustls everywhere, no OpenSSL, nothing read from /etc.
-async-stripe = { version = "0.40", default-features = false, features = [
-    "runtime-tokio-hyper-rustls-webpki",
-    # `webhook-events` deserialises every event type Stripe can deliver, and
-    # its enum names types from every product group — so it needs `full`. The
-    # alternative is not deserialising webhooks, which is the one part of a
-    # payments integration that cannot be skipped.
-    "full",
-    "webhook-events",
-    "chrono",
+# Stripe, split into the resource crates this app actually touches.
+#
+# Pinned to the 1.0 line because it targets a *current* API version. The 0.x
+# line generates against 2023-10-16, and an app whose requests speak one API
+# version while its webhooks arrive in another has two shapes of every object
+# to reason about — which is exactly the mismatch that used to make every
+# subscription event unparseable.
+#
+# No `webhook-events` feature: deliveries are read as JSON (see
+# `apiplant-payments/src/webhook.rs`), which is what lets an account on a newer
+# version than this pin keep working.
+async-stripe = { version = "1.0.0-rc.8", default-features = false, features = [
+    "rustls-ring",
+    "rustls-tls-webpki-roots",
 ] }
+#
+# Each resource crate is feature-gated per API object, so only the handful this
+# framework touches is compiled — the alternative (`full`) generates the whole
+# Stripe surface and costs minutes of build time for types nothing calls.
+async-stripe-core = { version = "1.0.0-rc.8", default-features = false, features = [
+    "customer",
+] }
+async-stripe-product = { version = "1.0.0-rc.8", default-features = false, features = [
+    "product",
+    "price",
+] }
+async-stripe-checkout = { version = "1.0.0-rc.8", default-features = false, features = [
+    "checkout_session",
+] }
+async-stripe-billing = { version = "1.0.0-rc.8", default-features = false, features = [
+    "subscription",
+    "billing_portal_session",
+] }
+async-stripe-shared = { version = "1.0.0-rc.8", default-features = false }
+async-stripe-types = { version = "1.0.0-rc.8", default-features = false }
 
 # TLS
 rustls = "0.23"

@@ -74,6 +74,17 @@ pub const STRIPE_PRODUCT: &str = "apiplant_stripe_product";
 /// declares it.
 pub const STRIPE_PRICE: &str = "apiplant_stripe_price";
 
+/// The physical tables the catalogue hooks read.
+///
+/// Hard-coded rather than resolved from the schema because these two resources
+/// are the framework's own: an app may rename the *resource* — the URL it is
+/// served at — but the table underneath is
+/// [`Resource::table_name`](apiplant_core::Resource::table_name)'s default and
+/// nothing offers to change it. The prefix is not optional, and leaving it off
+/// is a query against a table that has never existed.
+const BILLING_PRODUCT_TABLE: &str = "apiplant_billing_product";
+const BILLING_PRICE_TABLE: &str = "apiplant_billing_price";
+
 /// A built-in's manifest: private, POST, version-locked to the framework.
 fn manifest(name: &str, description: &str) -> FunctionManifest {
     FunctionManifest {
@@ -226,7 +237,7 @@ pub fn stripe_product(bridge: &HostBridge, input: &str) -> Result<String, String
     // On an update the body carries only what changed — a rename sends
     // `{"name": …}` and nothing else — but Stripe wants the whole product. So
     // the row as it stands is read back and the edit is overlaid on it.
-    let current = current_row(bridge, "billing_product", &hook)?;
+    let current = current_row(bridge, BILLING_PRODUCT_TABLE, &hook)?;
     let field = |name: &str| {
         data.get(name)
             .or_else(|| current.get(name))
@@ -243,6 +254,11 @@ pub fn stripe_product(bridge: &HostBridge, input: &str) -> Result<String, String
         // column's default, and the alternative is archiving a plan in Stripe
         // because somebody renamed it.
         "active": field("active").as_bool().unwrap_or(true),
+        // Absent reads as "not posted", which matches the column's default and
+        // is the safe way round: a digital product wrongly marked shippable
+        // asks a buyer for an address nobody will ever use.
+        "shippable": field("shippable").as_bool().unwrap_or(false),
+        "tax_code": string_of(&field("tax_code")),
         "metadata": field("features"),
     });
 
@@ -281,7 +297,7 @@ pub fn stripe_price(bridge: &HostBridge, input: &str) -> Result<String, String> 
         _ => return Ok(reject(400, "expected a JSON object")),
     };
     let hook: Value = serde_json::from_str(&bridge.hook()).unwrap_or(Value::Null);
-    let current = current_row(bridge, "billing_price", &hook)?;
+    let current = current_row(bridge, BILLING_PRICE_TABLE, &hook)?;
     let field = |name: &str| {
         data.get(name)
             .or_else(|| current.get(name))
@@ -315,7 +331,15 @@ pub fn stripe_price(bridge: &HostBridge, input: &str) -> Result<String, String> 
         "interval": string_of(&field("interval")),
         "interval_count": field("interval_count").as_u64().unwrap_or(1),
         "trial_days": field("trial_days").as_u64().unwrap_or(0),
-        "tax_behavior": string_of(&field("tax_behavior")),
+        // A create that says nothing about tax behaviour gets the column's
+        // default, the same way `active` does above. The alternative is
+        // "unspecified", and Stripe refuses to compute automatic tax on a
+        // price marked that way — so the omission would silently produce a
+        // price that cannot be taxed.
+        "tax_behavior": match string_of(&field("tax_behavior")) {
+            behavior if behavior.trim().is_empty() => "exclusive".to_string(),
+            behavior => behavior,
+        },
         "active": field("active").as_bool().unwrap_or(true),
     });
 
@@ -360,13 +384,12 @@ fn current_row(bridge: &HostBridge, table: &str, hook: &Value) -> Result<Value, 
 
 /// The Stripe id of the product a price points at.
 fn product_stripe_id(bridge: &HostBridge, product_id: &str) -> Result<Option<String>, String> {
-    // The physical table is the resource's own, and `billing_product` is a
-    // built-in whose name an app can override but whose table it cannot —
-    // see `Resource::table_name`.
-    let sql = "SELECT stripe_product_id FROM billing_product WHERE id = $1::uuid LIMIT 1";
+    let sql = format!(
+        "SELECT stripe_product_id FROM {BILLING_PRODUCT_TABLE} WHERE id = $1::uuid LIMIT 1"
+    );
     let found = first_column(
         bridge,
-        sql,
+        &sql,
         vec![Value::String(product_id.to_string())],
         "stripe_product_id",
     )?;

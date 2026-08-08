@@ -22,7 +22,7 @@ is a complete app: point the binary at it and it runs.
 | 15 | [email](15-email) | sending mail: one `[email]` provider, named in config |
 | 16 | [caching](16-caching) | the optional `[cache]` Redis, reached from a function |
 | 17 | [typescript-functions](17-typescript-functions) | and in TypeScript: the `apiplant` module, transpiled at build time and run in a V8 isolate |
-| 18 | [payments](18-payments) | taking money: `[payments]`, a catalogue as resources, a paywall as a hook |
+| 18 | [payments](18-payments) | taking money: `[payments]`, a catalogue as resources, subscriptions and one-off purchases, physical and digital goods, paywalls as hooks |
 | 19 | [ai](19-ai) | an assistant: one `[ai]` provider, configured `agents/`, a chat endpoint that streams, a function in front of the model, live tokens in the admin action |
 | 20 | [streaming](20-streaming) | any function's second endpoint: `/stream`, sending the answer as it is produced and into the admin action view |
 | 21 | [docker](21-docker) | shipping it: the app inside `ghcr.io/apiplant/apiplant`, a compose file, config from the environment |

@@ -71,19 +71,21 @@ fn look_up(ctx: &Context<Settings>, organization: &str) -> Result<Plan, String> 
         .map(|status| json!(status))
         .collect();
 
-    // `= ANY($2)` rather than a built-up `IN (…)`: the list is configuration,
-    // and configuration going into SQL by string concatenation is how a
-    // settings file becomes an injection vector.
+    // The list is bound as one parameter rather than built into the SQL:
+    // configuration reaching a query by string concatenation is how a settings
+    // file becomes an injection vector. It arrives as `jsonb`, so it is
+    // unnested with `jsonb_array_elements_text` — a plain `= ANY($2::text[])`
+    // cannot cast from it.
     let row = ctx.query_one(
         "SELECT s.status, \
                 coalesce(p.name, '') AS product, \
                 coalesce(p.features, 'null'::jsonb) AS features, \
                 to_char(s.current_period_end, 'YYYY-MM-DD\"T\"HH24:MI:SSZ') AS renews_at \
-         FROM billing_subscription s \
-         LEFT JOIN billing_price pr ON pr.id = s.price_id \
-         LEFT JOIN billing_product p ON p.id = pr.product_id \
+         FROM apiplant_billing_subscription s \
+         LEFT JOIN apiplant_billing_price pr ON pr.id = s.price_id \
+         LEFT JOIN apiplant_billing_product p ON p.id = pr.product_id \
          WHERE s.organization_id = $1::uuid \
-         ORDER BY (s.status = ANY($2::text[])) DESC, s.created_at DESC \
+         ORDER BY (s.status IN (SELECT jsonb_array_elements_text($2::jsonb))) DESC, s.created_at DESC \
          LIMIT 1",
         &[json!(organization), Value::Array(statuses)],
     )?;

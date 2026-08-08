@@ -432,6 +432,15 @@ adds the `billing_*` resources and the `/billing` endpoints. See
 | `automatic_tax` | `true` | Let Stripe Tax compute and add tax. Requires registrations configured at Stripe. |
 | `tax_id_collection` | *(follows `automatic_tax`)* | Ask business buyers for a VAT or GST number. |
 | `billing_address` | `auto` | `auto` or `required`. |
+| `shipping_countries` | `[]` | ISO country codes a `shippable` product may be sent to. Empty means the app posts nothing, and a checkout for a shippable product is refused. |
+| `digital_tax_code` | `txcd_10000000` | Stripe tax category for a product that is not posted, when its row names none. |
+| `physical_tax_code` | `txcd_99999999` | The same, for one that is. Two defaults rather than one, because a download and a posted object are taxed by different rules. |
+
+There is deliberately no `api_version`. Requests go out at the bundled Stripe
+client's own version (currently `2026-07-29.dahlia`), which is what keeps its
+typed objects correct, and webhook deliveries are read field by field so **any**
+account version is accepted. See [Payments → API
+versions](payments.md#api-versions).
 | `success_url` / `cancel_url` | *(empty)* | Where a buyer is returned to. Empty uses the dashboard's billing screen. |
 | `portal_return_url` | *(empty)* | Where the customer portal returns to. |
 | `timeout_secs` | `20` | Per provider call. |

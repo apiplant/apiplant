@@ -10,12 +10,19 @@
 
 use std::str::FromStr;
 
-use stripe::{
-    BillingPortalSession, CheckoutSession, CheckoutSessionBillingAddressCollection,
-    CheckoutSessionMode, CreateBillingPortalSession, CreateCheckoutSession,
-    CreateCheckoutSessionAutomaticTax, CreateCheckoutSessionLineItems,
-    CreateCheckoutSessionSubscriptionData, CreateCheckoutSessionTaxIdCollection, CustomerId,
-    Subscription, SubscriptionId, UpdateSubscription,
+use stripe_billing::billing_portal_session::CreateBillingPortalSession;
+use stripe_billing::subscription::{CancelSubscription, RetrieveSubscription, UpdateSubscription};
+use stripe_checkout::checkout_session::{
+    CreateCheckoutSession, CreateCheckoutSessionAutomaticTax, CreateCheckoutSessionCustomerUpdate,
+    CreateCheckoutSessionCustomerUpdateAddress, CreateCheckoutSessionCustomerUpdateName,
+    CreateCheckoutSessionCustomerUpdateShipping, CreateCheckoutSessionLineItems,
+    CreateCheckoutSessionPaymentIntentData, CreateCheckoutSessionShippingAddressCollection,
+    CreateCheckoutSessionShippingAddressCollectionAllowedCountries,
+    CreateCheckoutSessionSubscriptionData, CreateCheckoutSessionTaxIdCollection,
+};
+use stripe_shared::{
+    CheckoutSessionBillingAddressCollection, CheckoutSessionMode, CustomerId, Subscription,
+    SubscriptionId,
 };
 
 use crate::catalog::{nonempty, org_metadata};
@@ -68,34 +75,55 @@ impl Payments {
             metadata.insert(PRICE_METADATA_KEY.to_string(), price_row.to_string());
         }
 
-        let mut params = CreateCheckoutSession::new();
-        params.mode = Some(mode);
-        params.customer = Some(customer_id.clone());
-        params.success_url = Some(&success_url);
-        params.cancel_url = Some(&cancel_url);
-        params.line_items = Some(vec![CreateCheckoutSessionLineItems {
-            price: Some(price),
-            quantity: Some(spec.quantity.max(1)),
-            ..Default::default()
-        }]);
-        params.metadata = Some(metadata.clone());
+        let mut line_item = CreateCheckoutSessionLineItems::new();
+        line_item.price = Some(price);
+        line_item.quantity = Some(spec.quantity.max(1));
+
+        let mut params = CreateCheckoutSession::new()
+            .mode(mode)
+            .customer(customer_id.clone())
+            .success_url(&success_url)
+            .cancel_url(&cancel_url)
+            .line_items(vec![line_item]);
+        // Empty metadata is refused by Stripe as an unset attempt, so an
+        // organisation-less checkout sends none rather than a blank.
+        if !metadata.is_empty() {
+            params = params.metadata(metadata.clone());
+        }
         if spec.allow_promotion_codes {
-            params.allow_promotion_codes = Some(true);
+            params = params.allow_promotion_codes(true);
         }
 
         // Let Stripe Tax work out what the buyer owes, and collect enough of
         // an address for it to be able to. With no registrations configured
         // in Stripe this adds nothing and costs nothing.
+        //
+        // The `customer_update` is not optional decoration. Automatic tax
+        // needs an address *on the customer*, and a session that names an
+        // existing customer is refused outright unless it is allowed to save
+        // the one the buyer types back onto them. Since a customer is always
+        // named here — that is how a second purchase reaches the same invoices
+        // — leaving this out means every checkout in an app with tax on fails,
+        // which is a thing that only shows up against a real Stripe.
         if self.config.automatic_tax {
-            params.automatic_tax = Some(CreateCheckoutSessionAutomaticTax {
-                enabled: true,
-                liability: None,
-            });
+            let mut customer_update = CreateCheckoutSessionCustomerUpdate::new();
+            customer_update.address = Some(CreateCheckoutSessionCustomerUpdateAddress::Auto);
+            customer_update.name = Some(CreateCheckoutSessionCustomerUpdateName::Auto);
+            // Only when the page actually asks for one: Stripe refuses
+            // `shipping: auto` on a session that collects no shipping
+            // address, so this cannot simply be on.
+            customer_update.shipping = spec
+                .shipping
+                .then_some(CreateCheckoutSessionCustomerUpdateShipping::Auto);
+
+            params = params
+                .automatic_tax(CreateCheckoutSessionAutomaticTax::new(true))
+                .customer_update(customer_update);
         }
         if self.config.collects_tax_ids() {
-            params.tax_id_collection = Some(CreateCheckoutSessionTaxIdCollection { enabled: true });
+            params = params.tax_id_collection(CreateCheckoutSessionTaxIdCollection::new(true));
         }
-        params.billing_address_collection = Some(
+        params = params.billing_address_collection(
             match self
                 .config
                 .billing_address
@@ -108,24 +136,50 @@ impl Payments {
             },
         );
 
+        // Something has to be posted, so ask where. The list of countries is
+        // configuration rather than a per-call argument because "where we
+        // ship to" is a fact about the business, and a checkout that quietly
+        // accepted an address outside it would be a promise the warehouse
+        // cannot keep.
+        if spec.shipping {
+            let countries = self.config.shipping_destinations();
+            if countries.is_empty() {
+                return Err(PaymentsError::Request(
+                    "this product is shippable, but [payments] shipping_countries is empty — \
+                     there is nowhere to send it"
+                        .into(),
+                ));
+            }
+            params = params.shipping_address_collection(
+                CreateCheckoutSessionShippingAddressCollection::new(parse_countries(&countries)?),
+            );
+        }
+
         // The subscription itself carries the metadata too. Subscription
         // events (`customer.subscription.updated`, a renewal two years from
         // now) reference the subscription and know nothing of the session that
         // created it, so without this copy they arrive unattributable.
         if spec.recurring {
-            let mut data = CreateCheckoutSessionSubscriptionData::default();
-            data.metadata = Some(metadata);
+            let mut data = CreateCheckoutSessionSubscriptionData::new();
+            data.metadata = (!metadata.is_empty()).then_some(metadata);
             if spec.trial_days > 0 {
                 data.trial_period_days = Some(spec.trial_days);
             }
-            params.subscription_data = Some(data);
+            params = params.subscription_data(data);
+        } else {
+            // And a one-off's payment intent carries it for the same reason:
+            // `payment_intent.succeeded` is what reports the purchase, and it
+            // arrives referring to nothing but itself. Without this copy the
+            // charge is an amount with no tenant and no idea what was bought —
+            // and, since an invoice's own intents carry no such metadata, it
+            // is also how the two are told apart.
+            let mut data = CreateCheckoutSessionPaymentIntentData::new();
+            data.metadata = (!metadata.is_empty()).then_some(metadata);
+            params = params.payment_intent_data(data);
         }
 
         let session = self
-            .call(
-                "starting the checkout",
-                CheckoutSession::create(&self.client, params),
-            )
+            .call("starting the checkout", params.send(&self.client))
             .await?;
 
         let url = session.url.clone().ok_or_else(|| {
@@ -162,13 +216,13 @@ impl Payments {
             .map_err(|e| PaymentsError::Request(format!("customer id {customer:?}: {e}")))?;
 
         let back = self.return_url(return_url, &self.config.portal_return_url, "");
-        let mut params = CreateBillingPortalSession::new(id);
-        params.return_url = Some(&back);
-
         let session = self
             .call(
                 "opening the billing portal",
-                BillingPortalSession::create(&self.client, params),
+                CreateBillingPortalSession::new()
+                    .customer(id)
+                    .return_url(&back)
+                    .send(&self.client),
             )
             .await?;
         Ok(session.url)
@@ -186,7 +240,7 @@ impl Payments {
         let subscription = self
             .call(
                 "retrieving the subscription",
-                Subscription::retrieve(&self.client, &id, &[]),
+                RetrieveSubscription::new(id).send(&self.client),
             )
             .await?;
         Ok(subscription_state(&subscription))
@@ -207,11 +261,11 @@ impl Payments {
             .map_err(|e| PaymentsError::Request(format!("subscription id {id:?}: {e}")))?;
 
         let subscription = if at_period_end {
-            let mut params = UpdateSubscription::new();
-            params.cancel_at_period_end = Some(true);
             self.call(
                 "cancelling the subscription",
-                Subscription::update(&self.client, &id, params),
+                UpdateSubscription::new(id)
+                    .cancel_at_period_end(true)
+                    .send(&self.client),
             )
             .await?
         } else {
@@ -219,7 +273,7 @@ impl Payments {
             // subscription, which is the state we want to report either way.
             self.call(
                 "ending the subscription",
-                Subscription::cancel(&self.client, &id, stripe::CancelSubscription::default()),
+                CancelSubscription::new(id).send(&self.client),
             )
             .await?
         };
@@ -246,6 +300,32 @@ impl Payments {
     }
 }
 
+/// Turn configured country codes into the ones Stripe's client accepts.
+///
+/// A typo is refused here rather than sent: Stripe would reject the whole
+/// session, and "GB, DE, XX" failing as *one* unusable code is a better error
+/// than a checkout that stopped working after somebody edited a list.
+fn parse_countries(
+    codes: &[String],
+) -> Result<Vec<CreateCheckoutSessionShippingAddressCollectionAllowedCountries>, PaymentsError> {
+    codes
+        .iter()
+        .map(|code| {
+            // Parsing never fails — an unrecognised code becomes `Unknown`,
+            // which Stripe's own client documents as not fit to send. Treating
+            // it as the error it is keeps a typo a named configuration
+            // problem rather than a rejected session.
+            match CreateCheckoutSessionShippingAddressCollectionAllowedCountries::from_str(code) {
+                Ok(CreateCheckoutSessionShippingAddressCollectionAllowedCountries::Unknown(_))
+                | Err(_) => Err(PaymentsError::Config(format!(
+                    "[payments] shipping_countries: {code:?} is not a country Stripe ships to"
+                ))),
+                Ok(country) => Ok(country),
+            }
+        })
+        .collect()
+}
+
 /// Read a Stripe subscription into the app's shape.
 pub(crate) fn subscription_state(subscription: &Subscription) -> SubscriptionState {
     let item = subscription.items.data.first();
@@ -253,8 +333,7 @@ pub(crate) fn subscription_state(subscription: &Subscription) -> SubscriptionSta
         stripe_subscription_id: subscription.id.to_string(),
         stripe_customer_id: subscription.customer.id().to_string(),
         stripe_price_id: item
-            .and_then(|item| item.price.as_ref())
-            .map(|price| price.id.to_string())
+            .map(|item| item.price.id.to_string())
             .unwrap_or_default(),
         status: subscription.status.as_str().to_string(),
         quantity: item.and_then(|item| item.quantity).unwrap_or(1) as i64,
@@ -263,7 +342,10 @@ pub(crate) fn subscription_state(subscription: &Subscription) -> SubscriptionSta
             .get(ORG_METADATA_KEY)
             .cloned()
             .unwrap_or_default(),
-        current_period_end: Some(subscription.current_period_end),
+        // The billing period belongs to the item, not the subscription: one
+        // subscription can hold items on different cycles, so there is no
+        // single period to ask the parent for.
+        current_period_end: item.map(|item| item.current_period_end),
         trial_end: subscription.trial_end,
         canceled_at: subscription.canceled_at,
         cancel_at_period_end: subscription.cancel_at_period_end,
@@ -286,6 +368,64 @@ mod tests {
         )
         .unwrap()
         .unwrap()
+    }
+
+    /// The list is configuration, so a typo in it must fail as a named bad
+    /// code rather than as a whole session Stripe rejects for reasons of its
+    /// own.
+    #[test]
+    fn shipping_countries_are_checked_before_they_are_sent() {
+        let good = parse_countries(&["GB".into(), "DE".into(), "US".into()]).unwrap();
+        assert_eq!(good.len(), 3);
+
+        let error = parse_countries(&["GB".into(), "XX".into()]).unwrap_err();
+        assert!(error.to_string().contains("XX"), "{error}");
+    }
+
+    /// A shippable product in an app that has said nowhere to ship to is a
+    /// misconfiguration, and taking the money first would mean an order with
+    /// no address on it.
+    #[test]
+    fn shipping_with_no_destinations_configured_is_refused() {
+        let digital_only = payments(PaymentsConfig::default());
+        assert!(digital_only.config.shipping_destinations().is_empty());
+        assert!(!digital_only.config.ships());
+    }
+
+    /// Codes are normalised on the way out — a config file saying `gb` and one
+    /// saying `GB` are the same list, and the duplicate is not sent twice.
+    #[test]
+    fn destinations_are_upper_cased_and_deduplicated() {
+        let shop = payments(PaymentsConfig {
+            shipping_countries: vec!["gb".into(), "GB".into(), " de ".into(), "".into()],
+            ..PaymentsConfig::default()
+        });
+        assert_eq!(shop.config.shipping_destinations(), ["GB", "DE"]);
+        assert!(shop.config.ships());
+    }
+
+    /// The fallback differs by kind on purpose: filing a posted mug under the
+    /// digital code is how automatic tax returns a confident wrong number.
+    #[test]
+    fn the_default_tax_code_follows_whether_the_thing_is_posted() {
+        let shop = payments(PaymentsConfig::default());
+        assert_eq!(shop.config.default_tax_code(true), "txcd_99999999");
+        assert_eq!(shop.config.default_tax_code(false), "txcd_10000000");
+
+        // A product naming its own code keeps it, whichever kind it is.
+        let spec = crate::ProductSpec {
+            tax_code: "txcd_10502000".into(),
+            shippable: true,
+            ..Default::default()
+        };
+        assert_eq!(shop.tax_code(&spec).as_deref(), Some("txcd_10502000"));
+
+        // Blanked in config means "send nothing and let Stripe decide".
+        let silent = payments(PaymentsConfig {
+            digital_tax_code: String::new(),
+            ..PaymentsConfig::default()
+        });
+        assert_eq!(silent.tax_code(&crate::ProductSpec::default()), None);
     }
 
     #[test]

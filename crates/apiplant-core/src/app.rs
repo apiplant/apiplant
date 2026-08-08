@@ -130,6 +130,7 @@ impl App {
                         hidden: false,
                         default: None,
                         max_length: None,
+                        case: None,
                         on_delete: Some(OnDelete::Cascade),
                         // Injected and stamped by the framework — an operator
                         // should never see, let alone type, a tenant id.

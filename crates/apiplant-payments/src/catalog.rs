@@ -12,11 +12,15 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use stripe::{
-    CreateCustomer, CreatePrice, CreatePriceRecurring, CreatePriceRecurringInterval, CreateProduct,
-    Currency, Customer, CustomerId, IdOrCreate, Price, PriceId, PriceTaxBehavior, Product,
-    ProductId, UpdateCustomer, UpdatePrice, UpdateProduct,
+use stripe_core::customer::{
+    CreateCustomer, RetrieveCustomer, RetrieveCustomerReturned, SearchCustomer, UpdateCustomer,
 };
+use stripe_product::price::{
+    CreatePrice, CreatePriceRecurring, CreatePriceRecurringInterval, RetrievePrice, UpdatePrice,
+};
+use stripe_product::product::{CreateProduct, UpdateProduct};
+use stripe_shared::{Customer, CustomerId, Price, PriceId, PriceTaxBehavior, ProductId};
+use stripe_types::Currency;
 
 use crate::types::{CustomerSpec, CustomerState, Interval, PriceSpec, TaxBehavior};
 use crate::{Payments, PaymentsError, ORG_METADATA_KEY};
@@ -56,12 +60,21 @@ impl Payments {
         if let Some(id) = nonempty(&spec.stripe_customer_id) {
             let id = CustomerId::from_str(id)
                 .map_err(|e| PaymentsError::Request(format!("customer id {id:?}: {e}")))?;
-            let customer = self
+            let found = self
                 .call(
                     "retrieving the customer",
-                    Customer::retrieve(&self.client, &id, &[]),
+                    RetrieveCustomer::new(id).send(&self.client),
                 )
                 .await?;
+            // Stripe answers "deleted" for a customer that has been removed
+            // rather than 404-ing, and billing a deleted customer fails much
+            // later with a message about nothing in particular.
+            let RetrieveCustomerReturned::Customer(customer) = found else {
+                return Err(PaymentsError::Provider(format!(
+                    "the stripe customer {:?} has been deleted",
+                    spec.stripe_customer_id
+                )));
+            };
             return Ok(customer_state(&customer));
         }
 
@@ -70,17 +83,18 @@ impl Payments {
         }
 
         let mut params = CreateCustomer::new();
-        params.email = nonempty(&spec.email);
-        params.name = nonempty(&spec.name);
+        if let Some(email) = nonempty(&spec.email) {
+            params = params.email(email);
+        }
+        if let Some(name) = nonempty(&spec.name) {
+            params = params.name(name);
+        }
         let metadata = org_metadata(&spec.organization_id);
         if !metadata.is_empty() {
-            params.metadata = Some(metadata);
+            params = params.metadata(metadata);
         }
         let customer = self
-            .call(
-                "creating the customer",
-                Customer::create(&self.client, params),
-            )
+            .call("creating the customer", params.send(&self.client))
             .await?;
         tracing::info!(
             customer = %customer.id,
@@ -104,15 +118,9 @@ impl Payments {
             return Ok(None);
         };
         let query = format!("metadata['{ORG_METADATA_KEY}']:'{}'", escape_query(org));
-        let params = stripe::CustomerSearchParams {
-            query,
-            limit: Some(1),
-            page: None,
-            expand: &[],
-        };
         // A search that fails is not a reason to refuse the checkout: the
         // worst case is the customer we were about to create anyway.
-        match Customer::search(&self.client, params).await {
+        match SearchCustomer::new(query).limit(1).send(&self.client).await {
             Ok(found) => Ok(found.data.first().map(customer_state)),
             Err(error) => {
                 tracing::debug!(%error, "customer search failed; creating a new customer");
@@ -131,18 +139,19 @@ impl Payments {
         let id = CustomerId::from_str(stripe_customer_id).map_err(|e| {
             PaymentsError::Request(format!("customer id {stripe_customer_id:?}: {e}"))
         })?;
-        let mut params = UpdateCustomer::new();
-        params.email = nonempty(&spec.email);
-        params.name = nonempty(&spec.name);
+        let mut params = UpdateCustomer::new(id);
+        if let Some(email) = nonempty(&spec.email) {
+            params = params.email(email);
+        }
+        if let Some(name) = nonempty(&spec.name) {
+            params = params.name(name);
+        }
         let metadata = org_metadata(&spec.organization_id);
         if !metadata.is_empty() {
-            params.metadata = Some(metadata);
+            params = params.metadata(metadata);
         }
         let customer = self
-            .call(
-                "updating the customer",
-                Customer::update(&self.client, &id, params),
-            )
+            .call("updating the customer", params.send(&self.client))
             .await?;
         Ok(customer_state(&customer))
     }
@@ -162,34 +171,60 @@ impl Payments {
         if let Some(existing) = nonempty(&spec.stripe_product_id) {
             let id = ProductId::from_str(existing)
                 .map_err(|e| PaymentsError::Request(format!("product id {existing:?}: {e}")))?;
-            let mut params = UpdateProduct::new();
-            params.name = Some(name);
-            params.description = Some(spec.description.trim().to_string());
-            params.active = Some(spec.active);
-            params.metadata = Some(metadata);
+            let mut params = UpdateProduct::new(id)
+                .name(name)
+                .description(spec.description.trim().to_string())
+                .active(spec.active)
+                .shippable(spec.shippable);
+            // An empty map serializes as `metadata=`, which Stripe reads as an
+            // attempt to unset the field and refuses outright. "No metadata"
+            // has to mean sending none.
+            if !metadata.is_empty() {
+                params = params.metadata(metadata);
+            }
+            if let Some(code) = self.tax_code(spec) {
+                params = params.tax_code(code);
+            }
             let product = self
-                .call(
-                    "updating the product",
-                    Product::update(&self.client, &id, params),
-                )
+                .call("updating the product", params.send(&self.client))
                 .await?;
             return Ok(product.id.to_string());
         }
 
-        let mut params = CreateProduct::new(name);
+        let mut params = CreateProduct::new(name)
+            .active(spec.active)
+            .shippable(spec.shippable);
+        if !metadata.is_empty() {
+            params = params.metadata(metadata);
+        }
         let description = spec.description.trim();
         if !description.is_empty() {
-            params.description = Some(description);
+            params = params.description(description);
         }
-        params.active = Some(spec.active);
-        params.metadata = Some(metadata);
+        if let Some(code) = self.tax_code(spec) {
+            params = params.tax_code(code);
+        }
         let product = self
-            .call(
-                "creating the product",
-                Product::create(&self.client, params),
-            )
+            .call("creating the product", params.send(&self.client))
             .await?;
         Ok(product.id.to_string())
+    }
+
+    /// The tax code to file a product under: what the row says, or the
+    /// configured default for its kind.
+    ///
+    /// The fallback is per-kind rather than a single value because the whole
+    /// point of the code is that a posted thing and a downloaded thing are
+    /// taxed differently — one default for both would be a wrong answer for
+    /// at least half the catalogue.
+    pub(crate) fn tax_code(&self, spec: &crate::ProductSpec) -> Option<String> {
+        let code = match nonempty(&spec.tax_code) {
+            Some(code) => code.to_string(),
+            None => self.config.default_tax_code(spec.shippable),
+        };
+        // Blanked deliberately in config: send nothing and let Stripe fall
+        // back to the account's own default category.
+        nonempty(&code).map(str::to_string)
     }
 
     /// Create or update a price, replacing it when the change is one Stripe
@@ -225,19 +260,17 @@ impl Payments {
             let current = self
                 .call(
                     "retrieving the price",
-                    Price::retrieve(&self.client, &id, &[]),
+                    RetrievePrice::new(id.clone()).send(&self.client),
                 )
                 .await?;
 
             if !spec.differs_materially_from(&price_spec(&current)) {
-                let mut params = UpdatePrice::new();
-                params.nickname = nonempty(&spec.nickname);
-                params.active = Some(spec.active);
+                let mut params = UpdatePrice::new(id).active(spec.active);
+                if let Some(nickname) = nonempty(&spec.nickname) {
+                    params = params.nickname(nickname);
+                }
                 let updated = self
-                    .call(
-                        "updating the price",
-                        Price::update(&self.client, &id, params),
-                    )
+                    .call("updating the price", params.send(&self.client))
                     .await?;
                 return Ok(PriceOutcome {
                     id: updated.id.to_string(),
@@ -248,12 +281,10 @@ impl Payments {
             let replacement = self.create_price(spec, product).await?;
             // Archive the old one *after* the new one exists: the other order
             // leaves a product with nothing buyable if the create fails.
-            let mut archive = UpdatePrice::new();
-            archive.active = Some(false);
             if let Err(error) = self
                 .call(
                     "archiving the price",
-                    Price::update(&self.client, &id, archive),
+                    UpdatePrice::new(id).active(false).send(&self.client),
                 )
                 .await
             {
@@ -281,28 +312,28 @@ impl Payments {
     /// Mint a Stripe price from a spec.
     async fn create_price(&self, spec: &PriceSpec, product: &str) -> Result<String, PaymentsError> {
         let currency = self.currency(&spec.currency)?;
-        let mut params = CreatePrice::new(currency);
-        params.product = Some(IdOrCreate::Id(product));
-        params.unit_amount = Some(spec.unit_amount);
-        params.nickname = nonempty(&spec.nickname);
-        params.active = Some(spec.active);
-        params.tax_behavior = Some(match spec.tax_behavior {
-            TaxBehavior::Inclusive => PriceTaxBehavior::Inclusive,
-            TaxBehavior::Exclusive => PriceTaxBehavior::Exclusive,
-            TaxBehavior::Unspecified => PriceTaxBehavior::Unspecified,
-        });
+        let mut params = CreatePrice::new(currency)
+            .product(product)
+            .unit_amount(spec.unit_amount)
+            .active(spec.active)
+            .tax_behavior(match spec.tax_behavior {
+                TaxBehavior::Inclusive => PriceTaxBehavior::Inclusive,
+                TaxBehavior::Exclusive => PriceTaxBehavior::Exclusive,
+                TaxBehavior::Unspecified => PriceTaxBehavior::Unspecified,
+            });
+        if let Some(nickname) = nonempty(&spec.nickname) {
+            params = params.nickname(nickname);
+        }
 
         if let Some(interval) = recurring_interval(spec.interval) {
-            params.recurring = Some(CreatePriceRecurring {
-                interval,
-                interval_count: Some(spec.interval_count.max(1)),
-                trial_period_days: (spec.trial_days > 0).then_some(spec.trial_days),
-                ..Default::default()
-            });
+            let mut recurring = CreatePriceRecurring::new(interval);
+            recurring.interval_count = Some(spec.interval_count.max(1));
+            recurring.trial_period_days = (spec.trial_days > 0).then_some(spec.trial_days);
+            params = params.recurring(recurring);
         }
 
         let price = self
-            .call("creating the price", Price::create(&self.client, params))
+            .call("creating the price", params.send(&self.client))
             .await?;
         Ok(price.id.to_string())
     }
@@ -313,8 +344,16 @@ impl Payments {
             Some(code) => code.to_ascii_lowercase(),
             None => self.config.default_currency(),
         };
-        Currency::from_str(&code)
-            .map_err(|_| PaymentsError::Request(format!("{code:?} is not a currency Stripe takes")))
+        // Parsing does not fail: an unrecognised code becomes `Unknown`, which
+        // would be sent to Stripe and rejected there, on a price somebody is
+        // trying to save. Catching it here keeps a typo a validation error
+        // against the row that caused it.
+        match Currency::from_str(&code) {
+            Ok(Currency::Unknown(_)) | Err(_) => Err(PaymentsError::Request(format!(
+                "{code:?} is not a currency Stripe takes"
+            ))),
+            Ok(currency) => Ok(currency),
+        }
     }
 }
 
@@ -346,18 +385,16 @@ fn price_spec(price: &Price) -> PriceSpec {
         stripe_product_id: String::new(),
         nickname: price.nickname.clone().unwrap_or_default(),
         unit_amount: price.unit_amount.unwrap_or(0),
-        currency: price
-            .currency
-            .map(|c| c.to_string().to_ascii_lowercase())
-            .unwrap_or_default(),
+        currency: price.currency.to_string().to_ascii_lowercase(),
         interval,
         interval_count,
         trial_days,
         tax_behavior: price
             .tax_behavior
+            .as_ref()
             .map(|behavior| TaxBehavior::parse(behavior.as_str()))
             .unwrap_or(TaxBehavior::Unspecified),
-        active: price.active.unwrap_or(true),
+        active: price.active,
     }
 }
 
@@ -368,7 +405,7 @@ fn customer_state(customer: &Customer) -> CustomerState {
         .tax_ids
         .as_ref()
         .and_then(|list| list.data.first())
-        .and_then(|id| id.value.clone())
+        .map(|id| id.value.clone())
         .unwrap_or_default();
     let tax_country = customer
         .address
@@ -386,7 +423,23 @@ fn customer_state(customer: &Customer) -> CustomerState {
         name: customer.name.clone().unwrap_or_default(),
         tax_id,
         tax_country,
-        details: serde_json::to_value(customer).unwrap_or(serde_json::Value::Null),
+        // The fields this app actually reads, rather than the whole customer.
+        // Stripe's response types deserialize with miniserde and cannot be
+        // re-serialized; the full object arrives on the webhook path, which
+        // has the raw JSON and overwrites this with it.
+        details: serde_json::json!({
+            "id": customer.id.to_string(),
+            "email": customer.email,
+            "name": customer.name,
+            "address": customer.address.as_ref().map(|address| serde_json::json!({
+                "country": address.country,
+                "postal_code": address.postal_code,
+                "city": address.city,
+                "line1": address.line1,
+                "line2": address.line2,
+                "state": address.state,
+            })),
+        }),
     }
 }
 

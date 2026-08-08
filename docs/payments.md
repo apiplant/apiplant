@@ -75,6 +75,32 @@ curl -X POST $API/billing_price \
        "currency": "eur", "interval": "month", "trial_days": 14}'
 ```
 
+### Physical and digital goods
+
+A product carries two more columns, and both answer the same question — is this
+thing posted, or downloaded?
+
+```bash
+curl -X POST $API/billing_product \
+  -H "Authorization: Bearer $TOKEN" -H "X-Organization: $ORG" \
+  -d '{"name": "Enamel Mug", "shippable": true}'
+```
+
+`shippable` decides two things at once: whether the checkout collects a shipping
+address (from `[payments] shipping_countries`), and which tax category the
+product is filed under. A checkout for a shippable product in an app that lists
+no shipping countries is refused, rather than taking money for an order with
+nowhere to send it.
+
+`tax_code` is Stripe's [tax category] for the product. Left empty it takes the
+`[payments]` default *for its kind* — `digital_tax_code` or `physical_tax_code`
+— because in much of the EU a downloaded file and a posted object are taxed by
+different rules, and a single default would be wrong for half of any mixed
+catalogue. Set it explicitly where the rate is more specific than "general":
+an e-book is not taxed like software.
+
+[tax category]: https://stripe.com/docs/tax/tax-categories
+
 Saving either row runs a built-in hook (`apiplant_stripe_product` and
 `apiplant_stripe_price`) that creates or updates the object in Stripe and writes
 the resulting id back into the row. The hook runs **before** the write, so if
@@ -182,6 +208,29 @@ delivery, reporting this in the boot log and on the dashboard's billing screen.
 Returning a 404 instead would leave an operator unable to tell which part is
 misconfigured.
 
+### API versions
+
+There are two directions, and they behave differently on purpose.
+
+**Requests** are sent at the API version the bundled Stripe client is generated
+against — currently `2026-07-29.dahlia`, the latest. It is pinned rather than
+configurable, and that is what makes the typed request and response objects
+correct: a client generated for one version cannot reliably read another's
+answers. Your account's own default version does not affect these calls, because
+the version is sent explicitly on every request.
+
+**Webhooks** are the direction you do not control. Stripe delivers events in the
+shape of whichever version the endpoint was created under, and those shapes
+change: `current_period_end` moved from a subscription onto its items, an
+invoice's subscription moved under `parent`, `tax` became a `total_taxes`
+breakdown. So deliveries are read field by field, each in the places it has
+lived, rather than parsed into a fixed set of structs.
+
+The result is that **any account version works**, with nothing to configure. You
+need not pin your account, match it to anything, or upgrade in step with this
+framework. This matters more than it sounds: the failure it prevents is the
+silent kind, where the charges still go through and only your tables stay empty.
+
 ### Idempotency
 
 Stripe retries until it receives a 2xx, and may deliver the same event more than
@@ -207,9 +256,11 @@ becomes `billing_payment.tax_amount`.
 automatic_tax     = true       # Stripe computes and adds tax
 tax_id_collection = true       # ask business buyers for a VAT/GST number
 billing_address   = "auto"     # or "required"
+digital_tax_code  = "txcd_10000000"   # general — electronically supplied services
+physical_tax_code = "txcd_99999999"   # general — tangible goods
 ```
 
-Two points to note:
+Three points to note:
 
 * It requires an **origin address and at least one active registration**
   configured in the Stripe dashboard. Without them it computes no tax and the
@@ -218,6 +269,9 @@ Two points to note:
 * `tax_behavior` on a price declares whether the amount is quoted **before** tax
   (`exclusive`, the default) or **inclusive** of it. An incorrect setting makes
   every invoice wrong by the tax rate.
+* The **tax code** on the product is what makes the computed rate right rather
+  than merely plausible. See [Physical and digital
+  goods](#physical-and-digital-goods).
 
 Collecting a tax number is significant: a business buyer's VAT number is what
 triggers the reverse charge, which is the difference between charging a German
@@ -275,6 +329,9 @@ currency          = "usd"                     # for prices that do not name one
 automatic_tax     = true
 tax_id_collection = true                      # unset follows automatic_tax
 billing_address   = "auto"                    # or "required"
+shipping_countries = []                       # ISO codes a shippable product may go to
+digital_tax_code  = "txcd_10000000"           # default for a product that is not posted
+physical_tax_code = "txcd_99999999"           # default for one that is
 success_url       = ""                        # empty means the dashboard's billing screen
 cancel_url        = ""
 portal_return_url = ""
