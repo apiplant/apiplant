@@ -1383,6 +1383,27 @@ pub struct AiConfig {
     /// `reasoning_effort` and cannot be switched off, so this is not sent to
     /// them.
     pub thinking: Option<bool>,
+    /// How the provider hands back the model's thinking, when it is not already
+    /// in a field of its own.
+    ///
+    /// A reasoning model emits its thinking in one of three shapes, and which
+    /// one you get is decided by the *server's* template and flags, not by the
+    /// model:
+    ///
+    /// | value | meaning |
+    /// |-------|---------|
+    /// | `auto` (default) | native fields if present, otherwise read the tags out of the text — including a template that opened the block for the model, so the answer arrives with a closing tag and no opening one |
+    /// | `native` | the server always fills `reasoning_content` (llama.cpp `--reasoning-format deepseek`, vLLM `--reasoning-parser`); text is never scanned |
+    /// | `tags` | thinking arrives inline as a matched `<think>…</think>` pair in the content |
+    /// | `implicit` | the chat template pre-opens the block, so *every* reply starts inside the thinking and the first `</think>` ends it (Qwen3 and DeepSeek-R1 on a server with no reasoning parser) |
+    ///
+    /// `auto` is right almost always. The one case it cannot settle on its own
+    /// is a *streamed* pre-opened block: while the tokens are arriving there is
+    /// nothing yet to say whether they are thinking or an answer, so `auto`
+    /// treats them as thinking only when [`thinking`](Self::thinking) is `true`
+    /// — the app having said the model will think. Set `implicit` when the
+    /// template thinks by default and you are leaving `thinking` unset.
+    pub reasoning_format: String,
     /// Who may call `<base>/ai/chat`, in the grammar a resource's
     /// `[permissions]` uses: `public`, `authenticated` (the default), `member`,
     /// `role:<name>`.
@@ -1409,6 +1430,7 @@ impl Default for AiConfig {
             temperature: -1.0,
             reasoning: false,
             thinking: None,
+            reasoning_format: "auto".to_string(),
             access: "authenticated".to_string(),
             timeout_secs: 300,
         }

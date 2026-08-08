@@ -516,6 +516,8 @@ See [AI](ai.md).
 | `max_tokens` | `2048` | Cap per reply, sent to every provider (Anthropic requires one). A reasoning model consumes this budget while reasoning, so a small value can produce an empty reply. |
 | `temperature` | *(unset)* | Sent only when `>= 0`; otherwise the provider decides. |
 | `reasoning` | `false` | Whether provider reasoning is surfaced to callers, via `reasoning` stream events, reasoning retained on stored messages, and a **Show reasoning** toggle in admin. When disabled it is discarded before any caller sees it. Individual agents override this with their own `[ai] reasoning`. |
+| `thinking` | *(unset)* | Whether to ask the model to think, using each provider's own switch (Anthropic's `thinking`, `chat_template_kwargs.enable_thinking` for local servers). Unset sends nothing and leaves the template's own default alone. Separate from `reasoning`, which only decides whether the thinking is *shown*. |
+| `reasoning_format` | `auto` | Where the thinking is, in the shape the **server** chose: `auto`, `native` (`reasoning_content`), `tags` (a matched `<think>…</think>` pair in the content), `implicit` (the chat template opened the block in the prompt, so a reply closes one it never opened — Qwen3 and DeepSeek-R1 on a server with no reasoning parser). See [AI](ai.md#reasoning_format--where-the-thinking-actually-is). |
 | `access` | `authenticated` | Who may call `<base>/ai/chat`, using the same grammar as `[permissions]`: `public`, `authenticated`, `member`, `role:<name>`. Not `public` by default, since the endpoint consumes provider credit or GPU time on the caller's behalf. |
 | `timeout_secs` | `300` | Per completion. Intentionally generous, since a long answer from a local model is slow rather than failed. |
 

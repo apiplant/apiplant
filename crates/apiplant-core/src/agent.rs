@@ -96,6 +96,7 @@ pub struct AgentAiOverride {
     pub temperature: Option<f32>,
     pub reasoning: Option<bool>,
     pub thinking: Option<bool>,
+    pub reasoning_format: Option<String>,
     pub timeout_secs: Option<u64>,
 }
 
@@ -345,6 +346,9 @@ impl Agent {
             }
             if let Some(thinking) = ai.thinking {
                 merged.thinking = Some(thinking);
+            }
+            if let Some(format) = &ai.reasoning_format {
+                merged.reasoning_format = format.clone();
             }
             if let Some(timeout_secs) = ai.timeout_secs {
                 merged.timeout_secs = timeout_secs;
@@ -642,6 +646,7 @@ thinking = false
             access: "authenticated".to_string(),
             reasoning: false,
             thinking: None,
+            reasoning_format: "auto".to_string(),
             timeout_secs: 300,
         };
 

@@ -390,6 +390,8 @@ impl Provider {
 pub struct Ai {
     provider: Provider,
     config: AiConfig,
+    /// Parsed once at boot rather than per reply: it is a deployment fact.
+    reasoning_format: ReasoningFormat,
     url: String,
     client: reqwest::Client,
 }
@@ -436,6 +438,13 @@ impl Ai {
 
         Ok(Some(Ai {
             provider,
+            // Anthropic streams thinking in a block of its own and never
+            // writes a tag into the text, so there is nothing to read out of
+            // it — and reading anyway would only find a tag the user typed.
+            reasoning_format: match provider {
+                Provider::Anthropic => ReasoningFormat::Native,
+                _ => ReasoningFormat::parse(&config.reasoning_format),
+            },
             config: config.clone(),
             url,
             client,
@@ -478,7 +487,7 @@ impl Ai {
         let mut finished = false;
         // One per stream: inline thinking is separated here, so no consumer
         // downstream has to know that some servers tag it and some do not.
-        let mut thinking = ThinkingSplit::default();
+        let mut thinking = ThinkingSplit::new(self.reasoning_format);
         let bytes = response.bytes_stream();
 
         // One SSE frame does not map to one chunk of the response body: a
@@ -504,7 +513,14 @@ impl Ai {
                             Some(Event::Delta(chunk)) => {
                                 out.extend(thinking.push(&chunk).into_iter().map(Ok));
                             }
-                            Some(event) => out.push(Ok(event)),
+                            // A native reasoning field settles the question:
+                            // this server separates the thinking itself, so
+                            // the content is the answer and a block assumed
+                            // open in the text was never open at all.
+                            Some(event @ Event::Reasoning(_)) => {
+                                thinking.server_separates_reasoning();
+                                out.push(Ok(event));
+                            }
                             None => {}
                         }
                     }
@@ -573,7 +589,7 @@ impl Ai {
             .json()
             .await
             .map_err(|e| AiError::Transport(e.to_string()))?;
-        parse_complete(self.provider, &value)
+        parse_complete(self.provider, self.reasoning_format, &value)
             .map(|mut reply| {
                 reply.provider = self.provider.as_str().to_string();
                 reply.model = model;
@@ -813,6 +829,51 @@ const THINKING_TAGS: [(&str, &str); 3] = [
     ("<reasoning>", "</reasoning>"),
 ];
 
+/// Every closing tag, for a block whose opening tag was never sent.
+const CLOSING_TAGS: [&str; 3] = ["</think>", "</thinking>", "</reasoning>"];
+
+/// Where the thinking is, in the shape the *server* chose to send it.
+///
+/// This is a property of the deployment, not of the model: the same Qwen3
+/// weights answer with `reasoning_content`, with a matched `<think>…</think>`
+/// pair, or with a bare `</think>` and no opening tag, depending on the
+/// server's reasoning parser and chat template. Naming it turns "look at the
+/// text and guess" into "read it the way it is written".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReasoningFormat {
+    /// Native fields first; failing that, read whatever tag shape is in the
+    /// text, including a pre-opened block.
+    #[default]
+    Auto,
+    /// The server always fills `reasoning_content`; never scan the text.
+    Native,
+    /// A matched `<think>…</think>` pair inside the content.
+    Tags,
+    /// The chat template opened the block before generation started, so the
+    /// reply *begins* inside the thinking and the first closing tag ends it.
+    Implicit,
+}
+
+impl ReasoningFormat {
+    /// Parse the config string. Anything unrecognised is [`Auto`], with a
+    /// warning: a typo should not silently turn thinking into the answer.
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => ReasoningFormat::Auto,
+            "native" | "field" | "reasoning_content" => ReasoningFormat::Native,
+            "tags" | "tag" | "inline" => ReasoningFormat::Tags,
+            "implicit" | "open" | "pre-opened" | "deepseek" => ReasoningFormat::Implicit,
+            other => {
+                tracing::warn!(
+                    reasoning_format = other,
+                    "unknown ai.reasoning_format; treating it as `auto`"
+                );
+                ReasoningFormat::Auto
+            }
+        }
+    }
+}
+
 /// Separates inline thinking from the answer, once, at the transport boundary.
 ///
 /// The provider-native fields (`reasoning_content`, Anthropic's
@@ -833,47 +894,79 @@ const THINKING_TAGS: [(&str, &str); 3] = [
 /// arrive one character per chunk.
 #[derive(Debug, Default)]
 struct ThinkingSplit {
-    /// The closing tag being waited for, when inside a thinking block.
-    closing: Option<&'static str>,
+    /// The closing tags that would end the current thinking block. Empty means
+    /// the text being read is the answer. More than one means the block was
+    /// opened by the template rather than by the model, so any of them ends it.
+    closing: &'static [&'static str],
     /// Text held back because it may yet turn out to be the start of a tag.
     pending: String,
+    /// Still at the very start of a pre-opened block, where a template that
+    /// *also* emitted the opening tag has to be told apart from one that only
+    /// opened it in the prompt.
+    leading_open: bool,
 }
 
 impl ThinkingSplit {
+    /// Read the content the way `format` says the server writes it.
+    ///
+    /// A pre-opened block is only ever assumed on `implicit`, never on `auto`.
+    /// Mid-stream there is nothing to tell one apart from an ordinary answer —
+    /// the tag that would settle it has not arrived, and may never — and a
+    /// wrong guess hides the whole reply behind the reasoning toggle. `auto`
+    /// therefore guesses only where it can be checked: [`split_thinking`], on
+    /// text that has finished arriving.
+    fn new(format: ReasoningFormat) -> Self {
+        let implicit = matches!(format, ReasoningFormat::Implicit);
+        ThinkingSplit {
+            closing: if implicit { &CLOSING_TAGS } else { &[] },
+            pending: String::new(),
+            leading_open: implicit,
+        }
+    }
+
     /// Feed one chunk of `content`; get back what is safely classified.
     fn push(&mut self, chunk: &str) -> Vec<Event> {
         self.pending.push_str(chunk);
         let mut out = Vec::new();
+        // A pre-opened block whose server sends the opening tag anyway would
+        // otherwise keep `<think>` at the head of the reasoning text. Consume
+        // it — but only once, and only while nothing but whitespace has
+        // arrived, so a tag later in the thinking is left alone.
+        if self.leading_open && !self.consume_leading_open() {
+            return out;
+        }
         loop {
-            match self.closing {
-                None => {
-                    let opening = THINKING_TAGS
-                        .iter()
-                        .filter_map(|(open, close)| {
-                            self.pending.find(open).map(|at| (at, *open, *close))
-                        })
-                        .min_by_key(|(at, _, _)| *at);
-                    let Some((at, open, close)) = opening else {
-                        break;
-                    };
-                    let before = self.pending[..at].to_string();
-                    if !before.is_empty() {
-                        out.push(Event::Delta(before));
-                    }
-                    self.pending = self.pending[at + open.len()..].to_string();
-                    self.closing = Some(close);
+            if self.closing.is_empty() {
+                let opening = THINKING_TAGS
+                    .iter()
+                    .filter_map(|(open, close)| {
+                        self.pending.find(open).map(|at| (at, *open, *close))
+                    })
+                    .min_by_key(|(at, _, _)| *at);
+                let Some((at, open, close)) = opening else {
+                    break;
+                };
+                let before = self.pending[..at].to_string();
+                if !before.is_empty() {
+                    out.push(Event::Delta(before));
                 }
-                Some(close) => {
-                    let Some(at) = self.pending.find(close) else {
-                        break;
-                    };
-                    let thinking = self.pending[..at].to_string();
-                    if !thinking.is_empty() {
-                        out.push(Event::Reasoning(thinking));
-                    }
-                    self.pending = self.pending[at + close.len()..].to_string();
-                    self.closing = None;
+                self.pending = self.pending[at + open.len()..].to_string();
+                self.closing = closing_tag(close);
+            } else {
+                let found = self
+                    .closing
+                    .iter()
+                    .filter_map(|close| self.pending.find(close).map(|at| (at, *close)))
+                    .min_by_key(|(at, _)| *at);
+                let Some((at, close)) = found else {
+                    break;
+                };
+                let thinking = self.pending[..at].to_string();
+                if !thinking.is_empty() {
+                    out.push(Event::Reasoning(thinking));
                 }
+                self.pending = self.pending[at + close.len()..].to_string();
+                self.closing = &[];
             }
         }
 
@@ -884,33 +977,79 @@ impl ThinkingSplit {
         let ready = self.pending[..self.pending.len() - keep].to_string();
         self.pending = self.pending[self.pending.len() - keep..].to_string();
         if !ready.is_empty() {
-            out.push(match self.closing {
-                Some(_) => Event::Reasoning(ready),
-                None => Event::Delta(ready),
-            });
+            out.push(self.classify(ready));
         }
         out
     }
 
     /// The answer ended: nothing more is coming, so held-back text is just text.
     fn flush(&mut self) -> Option<Event> {
+        self.leading_open = false;
         if self.pending.is_empty() {
             return None;
         }
         let rest = std::mem::take(&mut self.pending);
         // An unterminated block means the model was cut off mid-thought. That
         // is reasoning, not an answer, however it ends.
-        Some(match self.closing {
-            Some(_) => Event::Reasoning(rest),
-            None => Event::Delta(rest),
-        })
+        Some(self.classify(rest))
+    }
+
+    /// The server sent thinking in a field of its own, so it is not also
+    /// hiding it in the content: abandon a block only assumed to be open.
+    ///
+    /// This is the net under a pre-opened guess. `auto` infers "the reply
+    /// starts inside `<think>`" from the app having asked for thinking, which
+    /// is wrong on a server that has a reasoning parser after all — and this
+    /// is that server saying so, before any content has been misfiled.
+    fn server_separates_reasoning(&mut self) {
+        if self.leading_open {
+            self.leading_open = false;
+            self.closing = &[];
+        }
+    }
+
+    /// Which side of the split text read in the current state belongs to.
+    fn classify(&self, text: String) -> Event {
+        if self.closing.is_empty() {
+            Event::Delta(text)
+        } else {
+            Event::Reasoning(text)
+        }
+    }
+
+    /// Eat the opening tag of a pre-opened block if the server sent one too.
+    ///
+    /// Returns whether the decision is made. `false` means the leading text so
+    /// far is still a possible prefix of an opening tag and the rest of `push`
+    /// must wait for another chunk — a wait bounded by the longest tag, since
+    /// anything longer either matches or cannot.
+    fn consume_leading_open(&mut self) -> bool {
+        let head = self.pending.trim_start();
+        if let Some((open, close)) = THINKING_TAGS
+            .iter()
+            .find(|(open, _)| head.starts_with(open))
+        {
+            let at = self.pending.len() - head.len() + open.len();
+            self.pending = self.pending[at..].to_string();
+            self.closing = closing_tag(close);
+            self.leading_open = false;
+            return true;
+        }
+        // Still short of a decision: nothing but whitespace so far, or `<thi`,
+        // which could become `<think>` or could be the thinking itself.
+        if head.is_empty() || THINKING_TAGS.iter().any(|(open, _)| open.starts_with(head)) {
+            return false;
+        }
+        self.leading_open = false;
+        true
     }
 
     /// How many trailing characters could still become a tag.
     fn partial_tag_length(&self) -> usize {
-        let candidates: Vec<&str> = match self.closing {
-            Some(close) => vec![close],
-            None => THINKING_TAGS.iter().map(|(open, _)| *open).collect(),
+        let candidates: Vec<&str> = if self.closing.is_empty() {
+            THINKING_TAGS.iter().map(|(open, _)| *open).collect()
+        } else {
+            self.closing.to_vec()
         };
         let max = candidates.iter().map(|tag| tag.len()).max().unwrap_or(0);
         let start = self.pending.len().saturating_sub(max - 1);
@@ -927,9 +1066,34 @@ impl ThinkingSplit {
     }
 }
 
+/// The one-element slice naming the tag that ends an explicitly opened block.
+fn closing_tag(close: &'static str) -> &'static [&'static str] {
+    match close {
+        "</think>" => &CLOSING_TAGS[0..1],
+        "</thinking>" => &CLOSING_TAGS[1..2],
+        _ => &CLOSING_TAGS[2..3],
+    }
+}
+
 /// Split a whole (non-streamed) `content` the same way.
-fn split_thinking(content: &str) -> (String, String) {
-    let mut split = ThinkingSplit::default();
+///
+/// Reading the finished text is the easy case: a closing tag with no opening
+/// one before it *is* a pre-opened block, and there is no guessing to do — so
+/// `auto` settles this without help from the config, whatever `thinking` says.
+fn split_thinking(content: &str, format: ReasoningFormat) -> (String, String) {
+    if format == ReasoningFormat::Native {
+        return (content.to_string(), String::new());
+    }
+    let implicit = match format {
+        ReasoningFormat::Implicit => true,
+        ReasoningFormat::Auto => dangling_close(content),
+        _ => false,
+    };
+    let mut split = ThinkingSplit::new(if implicit {
+        ReasoningFormat::Implicit
+    } else {
+        ReasoningFormat::Tags
+    });
     let mut text = String::new();
     let mut reasoning = String::new();
     for event in split.push(content).into_iter().chain(split.flush()) {
@@ -940,6 +1104,23 @@ fn split_thinking(content: &str) -> (String, String) {
         }
     }
     (text, reasoning)
+}
+
+/// Whether the text closes a thinking block it never opened — the signature of
+/// a chat template that opened it in the prompt (Qwen3, DeepSeek-R1) on a
+/// server with no reasoning parser in front of it.
+fn dangling_close(content: &str) -> bool {
+    let close = CLOSING_TAGS
+        .iter()
+        .filter_map(|close| content.find(close).map(|at| (at, *close)))
+        .min_by_key(|(at, _)| *at);
+    let Some((at, _)) = close else {
+        return false;
+    };
+    // An opening tag before it means the pair is matched and ordinary.
+    !THINKING_TAGS
+        .iter()
+        .any(|(open, _)| content[..at].contains(open))
 }
 
 fn take_frames(buffer: &mut String) -> Vec<String> {
@@ -1052,14 +1233,18 @@ fn parse_openai(value: &Value) -> Option<Event> {
     }
 }
 
-fn parse_complete(provider: Provider, value: &Value) -> Option<ChatReply> {
+fn parse_complete(
+    provider: Provider,
+    format: ReasoningFormat,
+    value: &Value,
+) -> Option<ChatReply> {
     match provider {
         Provider::Anthropic => parse_anthropic_complete(value),
-        _ => parse_openai_complete(value),
+        _ => parse_openai_complete(format, value),
     }
 }
 
-fn parse_openai_complete(value: &Value) -> Option<ChatReply> {
+fn parse_openai_complete(format: ReasoningFormat, value: &Value) -> Option<ChatReply> {
     if value.get("error").is_some() {
         return None;
     }
@@ -1073,6 +1258,7 @@ fn parse_openai_complete(value: &Value) -> Option<ChatReply> {
             .get("content")
             .and_then(Value::as_str)
             .unwrap_or_default(),
+        format,
     );
     // The native field is the interface; inline tags are what a server that
     // does not populate it leaves behind. A server can produce both.
@@ -1512,6 +1698,7 @@ mod tests {
     fn openai_complete_keeps_reasoning_separate_from_response_text() {
         let reply = parse_complete(
             Provider::OpenAi,
+            ReasoningFormat::Auto,
             &json!({
                 "choices": [{
                     "message": {
@@ -1569,7 +1756,12 @@ mod tests {
     /// A reasoning model streams its thinking first. It is not the answer, so
     /// it arrives as its own event and never lands in `text`.
     fn split_stream(chunks: &[&str]) -> (String, String) {
-        let mut split = ThinkingSplit::default();
+        split_stream_as(ReasoningFormat::Tags, chunks)
+    }
+
+    /// The same, for a server whose shape has been named.
+    fn split_stream_as(format: ReasoningFormat, chunks: &[&str]) -> (String, String) {
+        let mut split = ThinkingSplit::new(format);
         let (mut text, mut reasoning) = (String::new(), String::new());
         for event in chunks
             .iter()
@@ -1742,5 +1934,97 @@ mod tests {
             "model not found"
         );
         assert_eq!(brief("plain text failure"), "plain text failure");
+    }
+
+    /// The failure this whole thing exists for: Qwen3 and DeepSeek-R1 chat
+    /// templates open `<think>` in the *prompt*, so the model never generates
+    /// an opening tag and the reply is `thinking…</think>answer`. Read as a
+    /// matched pair that is no reasoning at all, and the thinking becomes the
+    /// message.
+    #[test]
+    fn a_pre_opened_block_is_thinking_not_the_answer() {
+        let whole = "The user greeted me.</think>Hello!";
+        let (text, reasoning) = split_thinking(whole, ReasoningFormat::Auto);
+        assert_eq!(text, "Hello!");
+        assert_eq!(reasoning, "The user greeted me.");
+
+        // Streamed, it takes the deployment's shape being named: mid-stream
+        // there is nothing yet to tell a pre-opened block from an answer.
+        let (text, reasoning) = split_stream_as(
+            ReasoningFormat::Implicit,
+            &["The user gre", "eted me.</thi", "nk>Hello!"],
+        );
+        assert_eq!(text, "Hello!");
+        assert_eq!(reasoning, "The user greeted me.");
+    }
+
+    /// A pre-opened block whose server emits the opening tag as well must not
+    /// leave `<think>` at the head of the reasoning.
+    #[test]
+    fn a_pre_opened_block_tolerates_the_opening_tag_arriving_too() {
+        let (text, reasoning) =
+            split_stream_as(ReasoningFormat::Implicit, &["<think>\nWhy.</think>Because."]);
+        assert_eq!(text, "Because.");
+        assert_eq!(reasoning, "\nWhy.");
+    }
+
+    /// Nothing to split: a model that was told not to think, on a server that
+    /// pre-opens nothing, must not have its answer swallowed as reasoning.
+    #[test]
+    fn an_answer_with_no_tags_is_all_answer() {
+        for format in [ReasoningFormat::Auto, ReasoningFormat::Tags] {
+            let (text, reasoning) = split_thinking("Just the answer.", format);
+            assert_eq!(text, "Just the answer.");
+            assert!(reasoning.is_empty(), "{format:?}");
+        }
+        let (text, reasoning) = split_stream_as(ReasoningFormat::Auto, &["Just the ", "answer."]);
+        assert_eq!(text, "Just the answer.");
+        assert!(reasoning.is_empty());
+    }
+
+    /// `native` is a promise that the server fills `reasoning_content`, so the
+    /// text is left exactly as it came — tags in a code block included.
+    #[test]
+    fn native_never_reads_the_text() {
+        let (text, reasoning) =
+            split_thinking("Write `<think>` to open one.", ReasoningFormat::Native);
+        assert_eq!(text, "Write `<think>` to open one.");
+        assert!(reasoning.is_empty());
+    }
+
+    /// A matched pair is still a matched pair when the reply also opens with
+    /// text, which is what tells `auto` not to reach for the implicit rule.
+    #[test]
+    fn a_matched_pair_after_text_is_not_a_pre_opened_block() {
+        let (text, reasoning) =
+            split_thinking("Sure. <think>brief</think> Done.", ReasoningFormat::Auto);
+        assert_eq!(text, "Sure.  Done.");
+        assert_eq!(reasoning, "brief");
+    }
+
+    #[test]
+    fn reasoning_format_parses_what_the_config_can_say() {
+        assert_eq!(ReasoningFormat::parse(""), ReasoningFormat::Auto);
+        assert_eq!(ReasoningFormat::parse(" Auto "), ReasoningFormat::Auto);
+        assert_eq!(ReasoningFormat::parse("native"), ReasoningFormat::Native);
+        assert_eq!(ReasoningFormat::parse("tags"), ReasoningFormat::Tags);
+        assert_eq!(ReasoningFormat::parse("implicit"), ReasoningFormat::Implicit);
+        // A typo is not a licence to show the thinking as the answer.
+        assert_eq!(ReasoningFormat::parse("deepseek-r1"), ReasoningFormat::Auto);
+    }
+
+    /// The guess `auto` makes has to lose to evidence: a server that fills
+    /// `reasoning_content` is not also pre-opening a block in the content, and
+    /// its answer must not disappear behind the reasoning toggle.
+    #[test]
+    fn a_native_reasoning_field_cancels_the_pre_opened_guess() {
+        let mut split = ThinkingSplit::new(ReasoningFormat::Implicit);
+        split.server_separates_reasoning();
+        let events: Vec<Event> = split
+            .push("Hello!")
+            .into_iter()
+            .chain(split.flush())
+            .collect();
+        assert_eq!(events, vec![Event::Delta("Hello!".to_string())]);
     }
 }

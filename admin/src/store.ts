@@ -465,6 +465,14 @@ function applyStreamFrame(
     if (typeof text === "string") onReasoning?.(text);
     return;
   }
+  // A warning is not a failure: the turn completed, but something about it —
+  // an answer cut short while the model was still thinking — needs saying, and
+  // saying it in the message body is what would put the thinking in the reply.
+  if (event.name === "warning") {
+    const text = payload?.text;
+    if (typeof text === "string" && text) notify("info", text);
+    return;
+  }
   if (event.name === "error") {
     const message = payload?.error;
     state.error = typeof message === "string" ? message : "The stream failed.";

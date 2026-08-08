@@ -57,6 +57,9 @@ configuration edit.
 | `system` | `""` | system prompt for conversations that don't carry one |
 | `max_tokens` | `2048` | cap on generated tokens. Anthropic requires one, so it is always sent |
 | `temperature` | unset | sent only when `>= 0`; otherwise the provider decides |
+| `reasoning` | `false` | whether the model's thinking is surfaced to callers |
+| `thinking` | unset | whether to ask the model to think, using the provider's own switch |
+| `reasoning_format` | `"auto"` | how the server hands the thinking back: `auto`, `native`, `tags`, `implicit` |
 | `access` | `"authenticated"` | who may call `<base>/ai/chat` |
 | `timeout_secs` | `300` | how long one completion may take |
 
@@ -74,6 +77,66 @@ A reasoning model (Qwen, DeepSeek, an `o`-series model) consumes tokens on
 internal reasoning before producing any output. If the budget is exhausted
 during that phase the result is an **empty answer**, which is a configuration
 problem rather than a bug. Set the limit generously for these models.
+
+### `reasoning_format` — where the thinking actually is
+
+`reasoning` and `thinking` are about the model. `reasoning_format` is about the
+**server**: the same Qwen3 weights hand their thinking back in three different
+shapes depending on the reasoning parser and chat template in front of them,
+and only one of them is a field of its own.
+
+| Value | The server sends |
+|-------|------------------|
+| `auto` (default) | whichever of the three it finds |
+| `native` | `reasoning_content` alongside the answer — llama.cpp `--reasoning-format deepseek`, vLLM `--reasoning-parser` |
+| `tags` | a matched `<think>…</think>` pair inside the content |
+| `implicit` | the template opened the block in the *prompt*, so every reply starts inside the thinking and the first `</think>` ends it |
+
+`implicit` is the one that surprises people. Qwen3 and DeepSeek-R1 templates
+append `<think>` to the assistant turn themselves, so the model never generates
+an opening tag and a raw llama.cpp reply looks like:
+
+```
+The user is greeting me, so a short reply.</think>Hello!
+```
+
+Read as a matched pair that is no pair at all, the thinking *is* the message —
+which is exactly what you see when a local model's answer arrives with its
+whole train of thought in front of it.
+
+`auto` settles this on its own for a reply read whole (`stream: false`): a
+closing tag with nothing opening it before it can only be a pre-opened block.
+While a reply is still **streaming** it cannot, and does not try — the first
+token of a pre-opened block is indistinguishable from the first token of an
+answer, and guessing wrong hides the whole reply behind the reasoning toggle.
+Name the shape instead:
+
+```toml
+[ai]
+reasoning_format = "implicit"
+```
+
+Then the thinking arrives as `reasoning` events and never as `delta`, so it
+shows up behind the **Show reasoning** toggle rather than in the message body.
+
+Most llama.cpp builds need none of this: `--reasoning-format deepseek` is the
+default, and they fill `reasoning_content` like any other server. Check before
+reaching for `implicit` — a raw `curl` at the endpoint answers it in one line.
+
+### An answer that is all thinking
+
+A reasoning model can spend its entire `max_tokens` budget thinking and stop
+with nothing left to say. The turn then has a full reasoning trace and an empty
+answer, and how that is reported depends on `reasoning`:
+
+- **shown** — the trace stays *reasoning*. The message is empty, and a
+  `warning` event says the model ran out of tokens before answering. The thinking
+  never becomes the reply.
+- **hidden** — the trace is about to be discarded and nothing else survives the
+  turn, so it is promoted to the answer with a `warning` saying so.
+
+Either way the fix is a larger `max_tokens`: a local Qwen can spend three
+thousand tokens deciding how to say hello.
 
 ### `access`
 

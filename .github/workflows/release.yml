@@ -226,11 +226,12 @@ jobs:
           docker buildx imagetools create "${args[@]}" \
             $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
 
-  # Repackaging, not building: both .debs are assembled on one runner from the
-  # archives the `binaries` job produced, because putting an already-built
-  # binary into an ar archive is architecture-independent work.
-  debian:
-    name: debian packages
+  # Repackaging, not building: both .debs and the pacman package are assembled
+  # on one runner from the archives the `binaries` job produced, because
+  # putting an already-built binary into an ar or zst archive is
+  # architecture-independent work.
+  packages:
+    name: distro packages
     needs: binaries
     runs-on: ubuntu-latest
     steps:
@@ -242,7 +243,7 @@ jobs:
           pattern: binary-*
           merge-multiple: true
 
-      - name: Build
+      - name: Build the Debian packages
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p debs
@@ -284,6 +285,50 @@ jobs:
           cd debs
           for deb in *.deb; do shasum -a 256 "$deb" > "$deb.sha256"; done
 
+      # Only x86_64: the pacman repository serves that one architecture, and an
+      # aarch64 package would need either an arm runner or emulation for no
+      # audience. The Arch tooling comes from a container rather than the
+      # runner, so this stays a step in the same job as the .debs.
+      - name: Build the pacman package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p pkg
+          sha=$(sha256sum "dist/apiplant-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)
+
+          sed \
+            -e "s/@VERSION@/$version/g" \
+            -e "s/@SHA_LINUX_X86_64@/$sha/" \
+            packaging/pacman/PKGBUILD > pkg/PKGBUILD
+
+          if grep -qE '@[A-Z_]+@' pkg/PKGBUILD; then
+            echo "::error::unsubstituted placeholder in the PKGBUILD" >&2
+            grep -nE '@[A-Z_]+@' pkg/PKGBUILD >&2
+            exit 1
+          fi
+
+          # The release does not exist yet, so the archive is placed under the
+          # name the source line gives it: makepkg checksums what is already
+          # there instead of fetching the URL.
+          cp "dist/apiplant-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" \
+             "pkg/apiplant-$version-x86_64.tar.gz"
+
+          # makepkg refuses to run as root, so the build runs as an unprivileged
+          # user inside the container — and the tree is handed back to the
+          # runner's own uid afterwards, or the steps below cannot write to it.
+          docker run --rm -v "$PWD/pkg:/pkg" -e "OWNER=$(id -u):$(id -g)" \
+            archlinux:base-devel bash -c '
+              set -eu
+              useradd -m builder
+              chown -R builder /pkg
+              su builder -c "cd /pkg && makepkg --cleanbuild --force --nodeps"
+              chown -R "$OWNER" /pkg
+            '
+
+          [ -f "pkg/apiplant-$version-1-x86_64.pkg.tar.zst" ]
+          cd pkg
+          shasum -a 256 "apiplant-$version-1-x86_64.pkg.tar.zst" \
+            > "apiplant-$version-1-x86_64.pkg.tar.zst.sha256"
+
       # A package that installs but declares the wrong architecture, or that
       # quietly lost the binary, is worth catching before it is a release asset.
       - name: Check
@@ -300,6 +345,19 @@ jobs:
           [ "$(apiplant version)" = "apiplant $version" ]
           sudo dpkg -r apiplant
 
+          # The pacman package cannot be installed on the runner, but its
+          # metadata and contents can be read back out of the archive.
+          docker run --rm -v "$PWD/pkg:/pkg" archlinux:base-devel bash -c "
+            set -eu
+            pkg=/pkg/apiplant-$version-1-x86_64.pkg.tar.zst
+            bsdtar -xOf \"\$pkg\" .PKGINFO | grep -qx 'pkgname = apiplant'
+            bsdtar -xOf \"\$pkg\" .PKGINFO | grep -qx 'pkgver = $version-1'
+            bsdtar -tf \"\$pkg\" | grep -qx 'usr/bin/apiplant'
+          "
+
+      # Two artifacts rather than one: the `apt` job wants only the .debs and
+      # the `pacman` job only the .pkg.tar.zst, and both download into a flat
+      # directory.
       - uses: actions/upload-artifact@v4
         with:
           name: debian-packages
@@ -308,9 +366,17 @@ jobs:
             debs/*.deb.sha256
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pacman-package
+          path: |
+            pkg/*.pkg.tar.zst
+            pkg/*.pkg.tar.zst.sha256
+          if-no-files-found: error
+
   release:
     name: publish release
-    needs: [binaries, manifest, debian]
+    needs: [binaries, manifest, packages]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -326,6 +392,11 @@ jobs:
         with:
           path: dist
           name: debian-packages
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          name: pacman-package
 
       # The image tags come from `{{version}}`, which drops the leading `v`;
       # the archive names keep the tag verbatim.
@@ -366,14 +437,29 @@ jobs:
             They declare no dependencies and need glibc 2.35 — Debian 12
             (bookworm) or newer, Ubuntu 22.04 or newer.
 
+            ## Arch package
+
+            ```
+            sudo pacman -U apiplant-${{ steps.version.outputs.version }}-1-x86_64.pkg.tar.zst
+            ```
+
+            | platform | package |
+            | --- | --- |
+            | Arch Linux x86_64 | `apiplant-${{ steps.version.outputs.version }}-1-x86_64.pkg.tar.zst` |
+
+            The same package is published to the signed pacman repository at
+            `apiplant.github.io/pacman`, which is the way to get updates with
+            `pacman -Syu` — see the README for the one-time setup.
+
             Each archive and package has a matching `.sha256` file. The macOS binaries are
             not yet signed — if you download one through a browser rather than
             with `curl`, clear the quarantine flag before running it:
             `xattr -d com.apple.quarantine ./apiplant`.
 
-  # The Homebrew formula, the AUR PKGBUILD and the pacman packages all point at
-  # the release archives by URL, so they can only be published once the
-  # release exists — hence `needs: release` rather than running alongside it.
+  # Every repository publish runs after `release`: the Homebrew formula points
+  # at the release archives by URL, and the apt and pacman repositories should
+  # only start serving a version the release itself already has — hence
+  # `needs: release` rather than running alongside it.
   # Each publish job is guarded on its credential: a fork, or this repository
   # before the secrets are set, skips it instead of failing the run.
   homebrew:
@@ -432,74 +518,6 @@ jobs:
           git commit -m "apiplant $version"
           git push
 
-  # Arch packaging has two outputs from the same PKGBUILD: the AUR metadata,
-  # and a pacman repository of built packages. The packages themselves need one
-  # native build per architecture so the archive metadata matches the target.
-  pacman-packages:
-    name: pacman package (${{ matrix.arch }})
-    needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ matrix.os }}
-    container: archlinux:base-devel
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            os: ubuntu-22.04
-          - arch: aarch64
-            os: ubuntu-22.04-arm
-    steps:
-      - name: Install the packaging tools
-        run: pacman -Sy --noconfirm --needed ca-certificates
-
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: binary-*
-          merge-multiple: true
-
-      - name: Render the PKGBUILD
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          sha() { sha256sum "dist/apiplant-${GITHUB_REF_NAME}-$1.tar.gz" | cut -d' ' -f1; }
-
-          mkdir -p /tmp/pkg
-          sed \
-            -e "s/@VERSION@/$version/g" \
-            -e "s/@SHA_LINUX_X86_64@/$(sha x86_64-unknown-linux-gnu)/" \
-            -e "s/@SHA_LINUX_ARM64@/$(sha aarch64-unknown-linux-gnu)/" \
-            packaging/aur/PKGBUILD > /tmp/pkg/PKGBUILD
-
-          if grep -qE '@[A-Z_]+@' /tmp/pkg/PKGBUILD; then
-            echo "::error::unsubstituted placeholder in the PKGBUILD" >&2
-            grep -nE '@[A-Z_]+@' /tmp/pkg/PKGBUILD >&2
-            exit 1
-          fi
-
-      - name: Build the package
-        run: |
-          useradd -m builder
-          chown -R builder /tmp/pkg
-          su builder -c 'cd /tmp/pkg && makepkg --cleanbuild --clean --force --nodeps'
-
-          pkg=$(echo /tmp/pkg/*.pkg.tar.zst)
-          case "$pkg" in
-            *"-${{ matrix.arch }}.pkg.tar.zst") ;;
-            *)
-              echo "::error::package archive does not match ${{ matrix.arch }}: $pkg" >&2
-              exit 1
-              ;;
-          esac
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pacman-package-${{ matrix.arch }}
-          path: /tmp/pkg/*.pkg.tar.zst
-          if-no-files-found: error
-
   # The apt repository is cumulative: the whole pool is cloned, the new
   # packages are added to it, and every index is regenerated over the result.
   # Regenerating from only the new .debs would publish a Packages file that
@@ -507,7 +525,7 @@ jobs:
   # stops working.
   apt:
     name: apt repository
-    needs: [debian, release]
+    needs: [packages, release]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # dpkg-scanpackages and apt-ftparchive are Debian's own tools; the runner
@@ -629,11 +647,12 @@ jobs:
           git push
 
   # The pacman repository is cumulative too, but its database only references
-  # the newest build of each package name. New package files are copied into
+  # the newest build of each package name. The new package file is copied into
   # the architecture directory, signed, and added to the repository database.
+  # x86_64 only, matching what the `packages` job builds.
   pacman:
     name: pacman repository
-    needs: [release, pacman-packages]
+    needs: [release, packages]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: archlinux:base-devel
@@ -646,8 +665,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: pacman-package-*
-          merge-multiple: false
+          name: pacman-package
 
       - name: Import the signing key
         if: env.PACMAN_REPO_TOKEN != ''
@@ -669,9 +687,8 @@ jobs:
           git clone --depth 1 \
             "https://x-access-token:${PACMAN_REPO_TOKEN}@github.com/apiplant/pacman.git" repo
 
-          mkdir -p repo/x86_64 repo/aarch64
-          cp dist/pacman-package-x86_64/*.pkg.tar.zst repo/x86_64/
-          cp dist/pacman-package-aarch64/*.pkg.tar.zst repo/aarch64/
+          mkdir -p repo/x86_64
+          cp dist/*.pkg.tar.zst repo/x86_64/
 
       - name: Sign, index and publish
         if: env.PACMAN_REPO_TOKEN != ''
@@ -681,11 +698,6 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           keyid=$(cat /tmp/keyid)
-
-          set --
-          if [ -n "$GPG_PASSPHRASE" ]; then
-            set -- --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE"
-          fi
 
           sign() {
             rm -f "$1.sig"
@@ -697,16 +709,24 @@ jobs:
             fi
           }
 
-          for arch in x86_64 aarch64; do
-            pkgs=$(printf '%s\n' "$PWD/$arch"/*.pkg.tar.zst)
-            for pkg in $pkgs; do
-              sign "$pkg"
-            done
-
-            repo-add --include-sigs "$arch/apiplant.db.tar.zst" $pkgs
-            sign "$arch/apiplant.db"
-            sign "$arch/apiplant.files"
+          pkgs=$(printf '%s\n' "$PWD/x86_64"/*.pkg.tar.zst)
+          for pkg in $pkgs; do
+            sign "$pkg"
           done
+
+          repo-add --include-sigs "x86_64/apiplant.db.tar.zst" $pkgs
+
+          # repo-add leaves apiplant.db and apiplant.files as symlinks to the
+          # .tar.zst files. git stores a symlink as its target path, and GitHub
+          # Pages serves that back as a 19-byte text file — so `pacman -Sy`
+          # would download the string "apiplant.db.tar.zst" instead of a
+          # database. Real copies are what gets committed.
+          for name in apiplant.db apiplant.files; do
+            cp --remove-destination "x86_64/$name.tar.zst" "x86_64/$name"
+          done
+
+          sign "x86_64/apiplant.db"
+          sign "x86_64/apiplant.files"
 
           gpg --armor --export "$keyid" > apiplant.gpg
           touch .nojekyll
@@ -718,8 +738,9 @@ jobs:
           git commit -m "apiplant $version"
           git push
 
-  # AUR publishing is paused for now: the AUR is rejecting package updates
-  # while under attack. Keep packaging/aur/PKGBUILD in-tree because the pacman
-  # packaging flow consumes the same manifest, but do not push to the AUR.
+  # AUR publishing is disabled: the AUR is rejecting package updates while
+  # under attack, and packaging/pacman/PKGBUILD is now written for the pacman
+  # repository (named `apiplant`, not `apiplant-bin`), so it is not an AUR
+  # manifest to push as-is.
   # aur:
   #   ...

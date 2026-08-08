@@ -82,9 +82,18 @@ same way:
 | event | means |
 |-------|-------|
 | `delta` | more of the answer — append it |
-| `reasoning` | more of the model's *thinking*, on a model that streams it separately. Not part of the answer; ignoring it is correct |
+| `reasoning` | more of the model's *thinking*. Never part of the answer; ignoring it is correct |
 | `error` | it stopped early, and why. Always followed by `done` |
 | `done` | nothing more is coming |
+
+The split between `delta` and `reasoning` is made once, on the server, whatever
+shape the provider used. A hosted model separates the two itself. A local
+Qwen/DeepSeek on llama.cpp with no reasoning parser does not: its chat template
+opens `<think>` in the *prompt*, so the reply arrives as
+`…the thinking…</think>the answer` with no opening tag in sight, and anything
+reading it as a matched pair shows the thinking as the message. `[ai]
+reasoning_format` names which of the three shapes your server uses —
+`reasoning_format = "implicit"` for that one. See `docs/ai.md`.
 
 In a browser that is four lines and no library:
 

@@ -41,7 +41,7 @@ brew tap apiplant/tap
 brew install apiplant/tap/apiplant
 ```
 
-On Arch Linux, from the pacman repository:
+On Arch Linux (x86_64), from the pacman repository:
 
 ```bash
 curl -sSfL https://apiplant.github.io/pacman/apiplant.gpg -o /tmp/apiplant.gpg
@@ -52,7 +52,7 @@ sudo pacman-key --lsign-key "$keyid"
 printf '\n[apiplant]\nSigLevel = Required DatabaseOptional\nServer = https://apiplant.github.io/pacman/$arch\n' \
   | sudo tee -a /etc/pacman.conf > /dev/null
 
-sudo pacman -Sy apiplant-bin
+sudo pacman -Sy apiplant
 ```
 
 On Debian or Ubuntu, from the apt repository:

@@ -1,37 +1,35 @@
 # Packaging
 
-Four package definitions live here. The `homebrew`, `pacman` and `debian` jobs
-in
+Four package definitions live here. The `packages`, `homebrew`, `apt` and
+`pacman` jobs in
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) substitute
 the `@VERSION@`, `@SHA_*@` and `@ARCH@` placeholders with the tag's version and
 the checksums of the archives that release just built, then publish the result.
 None of the definitions compiles the project from source — they all install the
 binaries the `binaries` job already produced, which is what keeps the packages
-and the release byte-identical. The pacman job is the exception in shape, not
-in content: it consumes the same `aur/PKGBUILD` to repackage those archives as
-native Arch packages and publish a repository database.
+and the release byte-identical.
 
 | File | Publishes to | Installs |
 | --- | --- | --- |
 | `homebrew/apiplant.rb` | `apiplant/homebrew-tap`, as `Formula/apiplant.rb` | macOS arm64, Linux x86_64 and aarch64 |
-| `aur/PKGBUILD` | kept as the source for pacman packaging; AUR publishing paused | Linux x86_64 and aarch64 |
+| `pacman/PKGBUILD` | the release itself, as a `.pkg.tar.zst` asset, and `apiplant/pacman` | Arch Linux x86_64 |
 | `debian/control` | the release itself, as `.deb` assets | Debian/Ubuntu amd64 and arm64 |
 | `apt/apt-ftparchive.conf` | `apiplant/apt`, served at `apt.apiplant.com` | the same `.deb`s, over `apt install` |
 
-Arch has two distribution paths from the same manifest. The AUR entry is just
-the PKGBUILD; the pacman repository uses that same PKGBUILD to build signed
-`.pkg.tar.zst` archives and then indexes them with `repo-add`. There is no
-second package manifest to keep in sync.
+The order is: build every package, publish the release, then publish to every
+repository. The `packages` job builds both `.deb`s and the pacman package —
+they carry the binary rather than pointing at it, so none of them needs the
+release to exist yet — and `release` attaches all of them alongside the
+archives. It needs no credential and always runs. Only then do `homebrew`,
+`apt` and `pacman` run: the formula references the release assets by URL and
+would checksum a 404 otherwise, and neither repository should serve a version
+the release itself does not have. Each publish job is guarded on its credential
+being present, so a fork — or this repository before the setup below is done —
+skips it rather than failing the release.
 
-The Homebrew and pacman jobs run *after* `release`, because the formula, the
-PKGBUILD and the pacman package build all reference the release assets by URL
-and would checksum a 404 otherwise. Each publish job is guarded on its
-credential being present, so a fork — or this repository before the setup below
-is done — skips it rather than failing the release. The Debian job is the other
-way round: the `.deb`s carry the binary rather than pointing at it, so they are
-built first and `release` attaches them alongside the archives. It needs no
-credential and always runs. The `apt` job then takes those same `.deb`s and
-folds them into the repository.
+The pacman package is x86_64 only. The aarch64 build is deliberately off: it
+would need an arm runner or emulation, and the Arch repository has no aarch64
+audience. The `.deb`s and the plain archives still cover Linux arm64.
 
 For one-off builds outside CI, run [`local-release.sh`](local-release.sh). It
 compiles apiplant for the host platform, writes release-shaped artifacts into
@@ -48,8 +46,8 @@ and `HOMEBREW_TAP_TOKEN` is set, uploads the archive and rewrites the tap
 formula from the release's available assets — which is how an extra platform
 such as macOS Intel can be added without waiting for CI support.
 
-On Linux x86_64 and aarch64 it also builds the `.deb` and pacman package for
-the host architecture, uploads the `.deb` to the GitHub release, and, if the
+On Linux x86_64 and aarch64 it also builds the `.deb` and, on x86_64, the
+pacman package for the host architecture, uploads the `.deb` to the GitHub release, and, if the
 version is not already present, updates `apt.apiplant.com` and
 `apiplant.github.io/pacman` using `APT_REPO_TOKEN` / `APT_GPG_PRIVATE_KEY` and
 `PACMAN_REPO_TOKEN` / `PACMAN_GPG_PRIVATE_KEY`.
@@ -64,10 +62,12 @@ scoped to that one repository with `Contents: read and write`, or a GitHub App
 installation token. The default `GITHUB_TOKEN` cannot be used: it is scoped to
 this repository only.
 
-**AUR.** Publishing is paused. The AUR is currently rejecting package updates,
-so the workflow no longer pushes `PKGBUILD` or `.SRCINFO` there. Keep
-`aur/PKGBUILD` anyway: the pacman packaging flow and the local release script
-both consume it.
+**AUR.** Publishing is disabled. The AUR is rejecting package updates while
+under attack, so the workflow pushes neither `PKGBUILD` nor `.SRCINFO` there.
+`pacman/PKGBUILD` is written for the pacman repository rather than the AUR: the
+package is named `apiplant` (not `apiplant-bin`) and carries no
+`provides`/`conflicts` pair. Re-enabling AUR publishing means adding a second,
+AUR-shaped manifest — not pushing this one.
 
 **pacman repo.** Create a public repository `apiplant/pacman` and serve it as
 static files — GitHub Pages is enough. The workflow pushes to it when the
@@ -76,29 +76,22 @@ directory per architecture:
 
 ```text
 pacman/
-├── x86_64/
+└── x86_64/
 │   ├── apiplant.db.tar.zst
 │   ├── apiplant.db.tar.zst.sig
 │   ├── apiplant.files.tar.zst
 │   ├── apiplant.files.tar.zst.sig
-│   ├── apiplant-bin-0.7.0-1-x86_64.pkg.tar.zst
-│   └── apiplant-bin-0.7.0-1-x86_64.pkg.tar.zst.sig
-└── aarch64/
-    ├── apiplant.db.tar.zst
-    ├── apiplant.db.tar.zst.sig
-    ├── apiplant.files.tar.zst
-    ├── apiplant.files.tar.zst.sig
-    ├── apiplant-bin-0.7.0-1-aarch64.pkg.tar.zst
-    └── apiplant-bin-0.7.0-1-aarch64.pkg.tar.zst.sig
+    ├── apiplant-0.8.0-1-x86_64.pkg.tar.zst
+    └── apiplant-0.8.0-1-x86_64.pkg.tar.zst.sig
 ```
 
-The package itself still comes from `aur/PKGBUILD`; the repository is the
-published result of building it once per architecture and then running
-`repo-add` over the output directory. The workflow does both automatically:
+The package itself comes from `pacman/PKGBUILD`; the repository is the
+published result of building it and then running `repo-add` over the output
+directory. The workflow does both automatically:
 
 ```bash
-# build natively on x86_64 and aarch64 runners
-makepkg --cleanbuild --clean --force --nodeps
+# in the packages job, in an archlinux:base-devel container
+makepkg --cleanbuild --force --nodeps
 
 # then, in the publish job
 gpg --batch --yes --detach-sign --local-user "$keyid" repo/$arch/*.pkg.tar.zst
@@ -133,7 +126,7 @@ printf '\n[apiplant]\nSigLevel = Required DatabaseOptional\nServer = https://api
 With that in place, installation is the ordinary pacman flow:
 
 ```bash
-sudo pacman -Sy apiplant-bin
+sudo pacman -Sy apiplant
 ```
 
 **Debian.** Nothing to set up — there is no repository to push to and no
@@ -239,15 +232,13 @@ and leave only `dists/` on Pages.
 ## Changing a package
 
 Edit the template here, never the copy in the tap — the next release
-overwrites it — and treat `aur/PKGBUILD` as the shared source for pacman too.
-To check an Arch packaging change without cutting a release, render it against
-a version that is already published and build it:
+overwrites it. To check an Arch packaging change without cutting a release,
+render it against a version that is already published and build it:
 
 ```bash
-sed -e 's/@VERSION@/0.7.0/g' \
-    -e "s/@SHA_LINUX_X86_64@/$(curl -sSfL https://github.com/apiplant/apiplant/releases/download/v0.7.0/apiplant-v0.7.0-x86_64-unknown-linux-gnu.tar.gz | sha256sum | cut -d' ' -f1)/" \
-    -e 's/@SHA_LINUX_ARM64@/SKIP/' \
-    aur/PKGBUILD > /tmp/PKGBUILD
+sed -e 's/@VERSION@/0.8.0/g' \
+    -e "s/@SHA_LINUX_X86_64@/$(curl -sSfL https://github.com/apiplant/apiplant/releases/download/v0.8.0/apiplant-v0.8.0-x86_64-unknown-linux-gnu.tar.gz | sha256sum | cut -d' ' -f1)/" \
+    pacman/PKGBUILD > /tmp/PKGBUILD
 (cd /tmp && makepkg -f)
 ```
 
@@ -260,6 +251,6 @@ docker run --rm -v "$PWD:/w" -w /w debian:bookworm bash -c '
 ```
 
 A version bump needs nothing here: the templates read the version from the tag,
-and both revision numbers only reset to `1` — bump `pkgrel` in `aur/PKGBUILD`,
+and both revision numbers only reset to `1` — bump `pkgrel` in `pacman/PKGBUILD`,
 or the `-1` in `debian/control`, by hand if a package has to be rebuilt for an
 unchanged upstream version.

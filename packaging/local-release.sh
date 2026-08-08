@@ -19,6 +19,74 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"
 }
 
+# True only when the URL really serves the file. `curl -f` alone is not that
+# check: both repositories are GitHub Pages sites with a custom domain, so
+# github.io answers every path — present or not — with a 301 to that domain,
+# and a 301 is not a failure. Without `-L` the probe therefore reported every
+# package as already published and skipped the upload. Redirects are followed
+# and only the final status decides.
+published() {
+  local code
+  code=$(curl -sSIL -o /dev/null -w '%{http_code}' --max-time 30 "$1" 2>/dev/null) || return 1
+  case "$code" in
+    2??) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Imports a signing key into a keyring of its own and prints its id.
+#
+# The keyring is a throwaway one because both alternatives are wrong on a
+# developer machine, and neither shows up in CI where the keyring starts empty:
+# importing into the user's own ~/.gnupg leaves the repository key in their
+# personal keyring, and "the first secret key in the keyring" then resolves to
+# whichever key sorts first — usually the developer's own — so the repository
+# gets signed with the wrong key. Here the keyring holds exactly one key, so
+# the lookup cannot pick the wrong one.
+#
+# The key material is accepted in the three shapes it actually arrives in: an
+# armoured block, a path to a file holding one, or base64 of either — a `.env`
+# or a secret store that cannot hold newlines usually produces the last.
+import_signing_key() {
+  local material="$1" home="$2" keyfile="$2/import.asc"
+  rm -rf "$home"
+  mkdir -p "$home"
+  chmod 700 "$home"
+
+  if [ -f "$material" ]; then
+    cat "$material" > "$keyfile"
+  else
+    printf '%s\n' "$material" > "$keyfile"
+    # Not armour, so try it as base64. `-d` failing leaves the original.
+    if ! grep -q 'BEGIN PGP' "$keyfile"; then
+      if base64 -d < "$keyfile" > "$keyfile.decoded" 2>/dev/null &&
+         grep -q 'BEGIN PGP' "$keyfile.decoded"; then
+        mv "$keyfile.decoded" "$keyfile"
+      fi
+      rm -f "$keyfile.decoded"
+    fi
+  fi
+
+  # gpg's own diagnosis, kept rather than discarded: an import that fails
+  # silently is what makes this look like a broken key when it is a mangled
+  # one — armour flattened onto a single line is the usual cause.
+  if ! GNUPGHOME="$home" gpg --batch --import "$keyfile" 2>"$home/import.log"; then
+    sed 's/^/  /' "$home/import.log" >&2
+  fi
+  GNUPGHOME="$home" gpg --list-secret-keys --with-colons \
+    | awk -F: '/^sec:/ { print $5; exit }'
+}
+
+# The publish subshells exit 97 when the repository already had everything
+# staged — a no-op re-run, not a failure.
+report_publish() {
+  case "$1" in
+    0) log "updated $2" ;;
+    97) log "$2 already up to date" ;;
+    *) die "failed to update $2" ;;
+  esac
+}
+
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | cut -d' ' -f1
@@ -262,6 +330,8 @@ build_deb() {
 
 build_pacman_pkg() {
   [ "$OS" = linux ] || return 0
+  # x86_64 only, matching the pacman repository the release workflow publishes.
+  [ "$PACMAN_ARCH" = x86_64 ] || { warn "pacman packages are x86_64 only; skipping"; return 0; }
   command -v makepkg >/dev/null 2>&1 || { warn "makepkg not found; skipping pacman package"; return 0; }
   [ "$(id -u)" -ne 0 ] || die "run packaging/local-release.sh as a non-root user when building pacman packages"
 
@@ -273,15 +343,13 @@ build_pacman_pkg() {
   cp "$ARCHIVE" "$builddir/"
 
   cat > "$builddir/PKGBUILD" <<EOF
-pkgname=apiplant-bin
+pkgname=apiplant
 pkgver=$VERSION
 pkgrel=1
 pkgdesc="Point it at an app directory and it serves an API"
 arch=('$PACMAN_ARCH')
 url="https://github.com/apiplant/apiplant"
 license=('MIT' 'Apache-2.0')
-provides=('apiplant')
-conflicts=('apiplant')
 source=("$(basename "$ARCHIVE")")
 sha256sums=('$pkgsha')
 options=('!strip' '!debug')
@@ -294,7 +362,10 @@ package() {
 EOF
 
   (cd "$builddir" && makepkg --cleanbuild --clean --force --nodeps >/dev/null)
-  PACMAN_PKG=$(echo "$builddir"/apiplant-bin-"$VERSION"-1-"$PACMAN_ARCH".pkg.tar.zst)
+  PACMAN_PKG="$builddir/apiplant-$VERSION-1-$PACMAN_ARCH.pkg.tar.zst"
+  # An unmatched glob used to be passed to `cp` verbatim; name the file outright
+  # and say which one is missing instead.
+  [ -f "$PACMAN_PKG" ] || die "makepkg did not produce $(basename "$PACMAN_PKG")"
   cp "$PACMAN_PKG" "$DIST/"
   PACMAN_PKG="$DIST/$(basename "$PACMAN_PKG")"
   printf '%s  %s\n' "$(sha256_file "$PACMAN_PKG")" "$(basename "$PACMAN_PKG")" > "$PACMAN_PKG.sha256"
@@ -337,7 +408,10 @@ publish_homebrew() {
 publish_apt() {
   [ "$OS" = linux ] || return 0
   [ -n "${DEB:-}" ] || { warn "no .deb built; skipping apt"; return 0; }
-  if curl -fsSI "https://apt.apiplant.com/pool/main/a/apiplant/$(basename "$DEB")" >/dev/null 2>&1; then
+  # Probed through github.io rather than apt.apiplant.com: the custom domain
+  # has no valid certificate for https, so every probe there fails the TLS
+  # handshake and reports a package that is published as missing.
+  if published "https://apiplant.github.io/apt/pool/main/a/apiplant/$(basename "$DEB")"; then
     log "apt already has $(basename "$DEB")"
     return 0
   fi
@@ -346,15 +420,15 @@ publish_apt() {
   [ -n "${APT_GPG_PRIVATE_KEY:-}" ] || die "APT_REPO_TOKEN is set but APT_GPG_PRIVATE_KEY is not"
 
   local repo="$TMP/apt-repo"
-  local keyid pass_args
+  local keyid pass_args rc
 
   git clone --depth 1 "https://x-access-token:${APT_REPO_TOKEN}@github.com/${APT_REPO}.git" "$repo"
   mkdir -p "$repo/pool/main/a/apiplant"
   cp "$DEB" "$repo/pool/main/a/apiplant/"
 
-  printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import >/dev/null 2>&1
-  keyid=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ { print $5; exit }')
-  [ -n "$keyid" ] || die "failed to load apt signing key"
+  export GNUPGHOME="$TMP/gnupg-apt"
+  keyid=$(import_signing_key "$APT_GPG_PRIVATE_KEY" "$GNUPGHOME")
+  [ -n "$keyid" ] || die "failed to load apt signing key from APT_GPG_PRIVATE_KEY"
 
   (
     cd "$repo"
@@ -384,16 +458,21 @@ publish_apt() {
     git config user.name "github-actions[bot]"
     git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
     git add -A
+    # Re-running for a version the repository already has is a no-op rather
+    # than an error: `git commit` with nothing staged exits non-zero, which
+    # under `set -e` would abort the whole script. 97 says so to the caller.
+    git diff --cached --quiet && exit 97
     git commit -m "apiplant $VERSION"
     git push
-  )
-  log "updated apt repository"
+  ) && rc=0 || rc=$?
+  report_publish "$rc" "apt repository"
 }
 
 publish_pacman() {
   [ "$OS" = linux ] || return 0
   [ -n "${PACMAN_PKG:-}" ] || { warn "no pacman package built; skipping pacman repo"; return 0; }
-  if curl -fsSI "https://apiplant.github.io/pacman/$PACMAN_ARCH/$(basename "$PACMAN_PKG")" >/dev/null 2>&1; then
+  command -v repo-add >/dev/null 2>&1 || { warn "repo-add not found; skipping pacman repo"; return 0; }
+  if published "https://apiplant.github.io/pacman/$PACMAN_ARCH/$(basename "$PACMAN_PKG")"; then
     log "pacman repo already has $(basename "$PACMAN_PKG")"
     return 0
   fi
@@ -402,15 +481,15 @@ publish_pacman() {
   [ -n "${PACMAN_GPG_PRIVATE_KEY:-}" ] || die "PACMAN_REPO_TOKEN is set but PACMAN_GPG_PRIVATE_KEY is not"
 
   local repo="$TMP/pacman-repo"
-  local keyid
+  local keyid rc
 
   git clone --depth 1 "https://x-access-token:${PACMAN_REPO_TOKEN}@github.com/${PACMAN_REPO}.git" "$repo"
   mkdir -p "$repo/$PACMAN_ARCH"
   cp "$PACMAN_PKG" "$repo/$PACMAN_ARCH/"
 
-  printf '%s\n' "$PACMAN_GPG_PRIVATE_KEY" | gpg --batch --import >/dev/null 2>&1
-  keyid=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ { print $5; exit }')
-  [ -n "$keyid" ] || die "failed to load pacman signing key"
+  export GNUPGHOME="$TMP/gnupg-pacman"
+  keyid=$(import_signing_key "$PACMAN_GPG_PRIVATE_KEY" "$GNUPGHOME")
+  [ -n "$keyid" ] || die "failed to load pacman signing key from PACMAN_GPG_PRIVATE_KEY"
 
   (
     cd "$repo"
@@ -426,6 +505,16 @@ publish_pacman() {
 
     sign "$PACMAN_ARCH/$(basename "$PACMAN_PKG")"
     repo-add --include-sigs "$PACMAN_ARCH/apiplant.db.tar.zst" "$PACMAN_ARCH/$(basename "$PACMAN_PKG")"
+
+    # repo-add leaves apiplant.db and apiplant.files as symlinks to the .tar.zst
+    # files. git stores a symlink as its target path, and GitHub Pages serves
+    # that back as a 19-byte text file — so `pacman -Sy` would download the
+    # string "apiplant.db.tar.zst" instead of a database. Real copies are what
+    # gets committed.
+    for name in apiplant.db apiplant.files; do
+      cp --remove-destination "$PACMAN_ARCH/$name.tar.zst" "$PACMAN_ARCH/$name"
+    done
+
     sign "$PACMAN_ARCH/apiplant.db"
     sign "$PACMAN_ARCH/apiplant.files"
     gpg --armor --export "$keyid" > apiplant.gpg
@@ -434,10 +523,14 @@ publish_pacman() {
     git config user.name "github-actions[bot]"
     git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
     git add -A
+    # Re-running for a version the repository already has is a no-op rather
+    # than an error: `git commit` with nothing staged exits non-zero, which
+    # under `set -e` would abort the whole script. 97 says so to the caller.
+    git diff --cached --quiet && exit 97
     git commit -m "apiplant $VERSION"
     git push
-  )
-  log "updated pacman repository"
+  ) && rc=0 || rc=$?
+  report_publish "$rc" "pacman repository"
 }
 
 main() {
@@ -457,7 +550,23 @@ main() {
   if [ "$OS" = linux ]; then
     build_deb
     build_pacman_pkg
-    [ -n "${DEB:-}" ] && gh_release_exists && ensure_release_asset "$DEB" && ensure_release_asset "$DEB.sha256"
+
+    # Written out rather than chained with `&&`: as the last command of an `if`
+    # body, a chain that short-circuits — no .deb, or no release to upload to —
+    # makes the whole block exit non-zero, and `set -e` then killed the script
+    # here, before any repository was published.
+    if gh_release_exists; then
+      if [ -n "${DEB:-}" ]; then
+        ensure_release_asset "$DEB"
+        ensure_release_asset "$DEB.sha256"
+      fi
+      # The release carries the pacman package too, matching what the release
+      # workflow attaches.
+      if [ -n "${PACMAN_PKG:-}" ]; then
+        ensure_release_asset "$PACMAN_PKG"
+        ensure_release_asset "$PACMAN_PKG.sha256"
+      fi
+    fi
   fi
 
   publish_homebrew
