@@ -1,7 +1,7 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import { A } from "@solidjs/router";
 import { Badge, LinkButton } from "./ui";
-import { Code, CopyLine } from "./Code";
+import { Code, CopyBlock, CopyLine } from "./Code";
 import { GITHUB_URL, STUDIO_URL, CRATE_URL } from "../lib/links";
 import {
   LATEST_RELEASE_URL,
@@ -390,72 +390,61 @@ function DownloadButton(props: { class?: string }) {
 }
 
 function Install() {
+  const stepCard =
+    "grid min-w-0 gap-5 rounded-2xl border bg-surface p-5 sm:p-6 lg:grid-cols-[minmax(14rem,0.7fr)_minmax(0,1.3fr)] lg:items-start";
+  const homebrewCommands = `brew tap apiplant/tap
+brew install apiplant/tap/apiplant`;
+  const pacmanCommands = `curl -sSfL https://apiplant.github.io/pacman/apiplant.gpg -o /tmp/apiplant.gpg
+keyid=$(gpg --show-keys --with-colons /tmp/apiplant.gpg | awk -F: '/^pub:/ { print $5; exit }') && sudo pacman-key --add /tmp/apiplant.gpg && sudo pacman-key --finger "$keyid" && sudo pacman-key --lsign-key "$keyid"
+printf '\\n[apiplant]\\nSigLevel = Required DatabaseOptional\\nServer = https://apiplant.github.io/pacman/$arch\\n' | sudo tee -a /etc/pacman.conf > /dev/null
+sudo pacman -Sy apiplant`;
+  const aptCommands = `curl -sSfL https://apt.apiplant.com/apiplant-archive-keyring.gpg | sudo tee /usr/share/keyrings/apiplant.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apt.apiplant.com stable main" | sudo tee /etc/apt/sources.list.d/apiplant.list > /dev/null
+sudo apt update && sudo apt install apiplant`;
+  const dockerCommands = `docker pull ghcr.io/apiplant/apiplant:latest
+docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant`;
+
   return (
-    <section id="install" class="mx-auto w-full max-w-6xl px-5 py-12 sm:py-16">
+    <section id="install" class="mx-auto w-full max-w-7xl px-5 py-12 sm:py-16">
       <h2 class="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Install</h2>
       <p class="mt-3 max-w-2xl leading-relaxed text-muted">
         Use Homebrew, pacman or apt when your platform has it. Otherwise take the prebuilt
         binary, or run the image — building from source is the slowest path.
       </p>
 
-      {/* `min-w-0` on every card because a grid item defaults to
-          `min-width: auto` — without it a long command sets the column's width
-          instead of scrolling. */}
-      <div class="mt-8 grid gap-4 sm:mt-10 md:grid-cols-2 xl:grid-cols-4">
-        <div class="flex min-w-0 flex-col rounded-2xl border border-accent-line bg-surface p-5 sm:p-6">
-          <div class="flex items-center gap-2">
-            <span class="font-mono text-xs text-accent">01</span>
-            <Badge tone="accent">Recommended</Badge>
+      <div class="mt-8 space-y-4 sm:mt-10">
+        <div class={`${stepCard} border-accent-line`}>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-xs text-accent">01</span>
+              <Badge tone="accent">Recommended</Badge>
+            </div>
+            <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Use a package manager</h3>
+            <p class="mt-2 text-sm leading-relaxed text-muted">
+              The quickest path on macOS, Arch, Debian and Ubuntu.
+            </p>
           </div>
-          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Use a package manager</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">
-            The quickest path on macOS, Arch, Debian and Ubuntu.
-          </p>
 
-          <div class="mt-5 space-y-4">
+          <div class="min-w-0 space-y-5">
             <div>
               <p class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-faint">
                 macOS / Homebrew
               </p>
-              <div class="space-y-2">
-                <CopyLine block command="brew tap apiplant/tap" />
-                <CopyLine block command="brew install apiplant/tap/apiplant" />
-              </div>
+              <CopyBlock command={homebrewCommands} />
             </div>
 
             <div>
               <p class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-faint">
                 Arch Linux / pacman
               </p>
-              <div class="space-y-2">
-                <CopyLine block command="curl -sSfL https://apiplant.github.io/pacman/apiplant.gpg -o /tmp/apiplant.gpg" />
-                <CopyLine
-                  block
-                  command={`keyid=$(gpg --show-keys --with-colons /tmp/apiplant.gpg | awk -F: '/^pub:/ { print $5; exit }') && sudo pacman-key --add /tmp/apiplant.gpg && sudo pacman-key --finger "$keyid" && sudo pacman-key --lsign-key "$keyid"`}
-                />
-                <CopyLine
-                  block
-                  command={`printf '\\n[apiplant]\\nSigLevel = Required DatabaseOptional\\nServer = https://apiplant.github.io/pacman/$arch\\n' | sudo tee -a /etc/pacman.conf > /dev/null`}
-                />
-                <CopyLine block command="sudo pacman -Sy apiplant-bin" />
-              </div>
+              <CopyBlock command={pacmanCommands} />
             </div>
 
             <div>
               <p class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-faint">
                 Debian / Ubuntu
               </p>
-              <div class="space-y-2">
-                <CopyLine
-                  block
-                  command="curl -sSfL https://apt.apiplant.com/apiplant-archive-keyring.gpg | sudo tee /usr/share/keyrings/apiplant.gpg > /dev/null"
-                />
-                <CopyLine
-                  block
-                  command='echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apt.apiplant.com stable main" | sudo tee /etc/apt/sources.list.d/apiplant.list > /dev/null'
-                />
-                <CopyLine block command="sudo apt update && sudo apt install apiplant" />
-              </div>
+              <CopyBlock command={aptCommands} />
               <p class="mt-2 text-xs leading-relaxed text-faint">
                 Or pin a release with{" "}
                 <code class="font-mono text-[0.9em]">sudo dpkg -i apiplant_0.7.0-1_amd64.deb</code>.
@@ -464,23 +453,25 @@ function Install() {
           </div>
         </div>
 
-        <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6">
-          <span class="font-mono text-xs text-accent">02</span>
-          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Download the binary</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">
-            Unpack it anywhere on your <code class="font-mono text-[0.9em]">PATH</code> and run it.
-            Every archive ships with a matching{" "}
-            <code class="font-mono text-[0.9em]">.sha256</code>.
-          </p>
+        <div class={`${stepCard} border-line`}>
+          <div>
+            <span class="font-mono text-xs text-accent">02</span>
+            <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Download the binary</h3>
+            <p class="mt-2 text-sm leading-relaxed text-muted">
+              Unpack it anywhere on your <code class="font-mono text-[0.9em]">PATH</code> and run it.
+              Every archive ships with a matching{" "}
+              <code class="font-mono text-[0.9em]">.sha256</code>.
+            </p>
 
-          <div class="mt-5">
-            <DownloadButton class="w-full sm:w-auto" />
+            <div class="mt-5">
+              <DownloadButton class="w-full sm:w-auto" />
+            </div>
           </div>
 
           {/* The whole row is the link. The label never shrinks and the asset
               name absorbs what is left, ellipsised when the column is narrow —
               the full name is in the tooltip and in the URL. */}
-          <ul class="mt-5 space-y-1 border-t border-line pt-4">
+          <ul class="min-w-0 space-y-1 border-t border-line pt-4 lg:border-t-0 lg:pt-0">
             <For each={PLATFORMS}>
               {(platform) => (
                 <li class="min-w-0">
@@ -503,52 +494,52 @@ function Install() {
             href={RELEASES_URL}
             target="_blank"
             rel="noreferrer noopener"
-            class="mt-4 text-sm font-medium text-accent hover:text-accent-dim"
+            class="lg:col-start-2 text-sm font-medium text-accent hover:text-accent-dim"
           >
             All releases and checksums
           </a>
         </div>
 
-        <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6">
-          <span class="font-mono text-xs text-accent">03</span>
-          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Run the image</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">
-            Multi-arch (amd64 and arm64) on the GitHub registry. Mount your app directory at{" "}
-            <code class="font-mono text-[0.9em]">/app</code> and the server picks it up.
-          </p>
-
-          <div class="mt-5 flex min-w-0 flex-col gap-2">
-            <CopyLine block command={`docker pull ghcr.io/apiplant/apiplant:latest`} />
-            <CopyLine
-              block
-              command={'docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant'}
-            />
+        <div class={`${stepCard} border-line`}>
+          <div>
+            <span class="font-mono text-xs text-accent">03</span>
+            <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Run the image</h3>
+            <p class="mt-2 text-sm leading-relaxed text-muted">
+              Multi-arch (amd64 and arm64) on the GitHub registry. Mount your app directory at{" "}
+              <code class="font-mono text-[0.9em]">/app</code> and the server picks it up.
+            </p>
           </div>
 
-          <p class="mt-4 text-sm leading-relaxed text-muted">
+          <div class="flex min-w-0 flex-col gap-2">
+            <CopyBlock command={dockerCommands} />
+          </div>
+
+          <p class="lg:col-start-2 text-sm leading-relaxed text-muted">
             The image carries no Rust toolchain, so Rust functions have to be built with{" "}
             <code class="font-mono text-[0.9em]">apiplant build</code> beforehand. TypeScript
             functions run in-process and need nothing.
           </p>
         </div>
 
-        <div class="flex min-w-0 flex-col rounded-2xl border border-line bg-surface p-5 sm:p-6">
-          <span class="font-mono text-xs text-faint">04</span>
-          <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Build from source</h3>
-          <p class="mt-2 text-sm leading-relaxed text-muted">
-            The last resort: this compiles the whole dependency tree. Worth it only if
-            you want a target nothing is published for, or your own patches.
-          </p>
+        <div class={`${stepCard} border-line`}>
+          <div>
+            <span class="font-mono text-xs text-faint">04</span>
+            <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Build from source</h3>
+            <p class="mt-2 text-sm leading-relaxed text-muted">
+              The last resort: this compiles the whole dependency tree. Worth it only if
+              you want a target nothing is published for, or your own patches.
+            </p>
+          </div>
 
-          <div class="mt-5 min-w-0">
-            <CopyLine block command="cargo install apiplant" />
+          <div class="min-w-0">
+            <CopyBlock command="cargo install apiplant" />
           </div>
 
           <a
             href={CRATE_URL}
             target="_blank"
             rel="noreferrer noopener"
-            class="mt-auto inline-flex items-center gap-2 pt-4 text-sm font-medium text-accent hover:text-accent-dim"
+            class="lg:col-start-2 inline-flex items-center gap-2 text-sm font-medium text-accent hover:text-accent-dim"
           >
             {/* The crates.io mark: a crate in three-quarter view. Drawn rather
                 than fetched, since the site inlines every icon. */}
