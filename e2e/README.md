@@ -23,7 +23,7 @@ the runner.
 
 | Step | The claim |
 |------|-----------|
-| boot | migrations build the schema from `models/` alone; `/_health` and the resource answer on an empty database; the manifest carries the app's `[app] name` |
+| boot | migrations build the schema from `resources/` alone; `/_health` and the resource answer on an empty database; the manifest carries the app's `[app] name` |
 | registration | `auth.allow_registration`, a real user row, a session token that logs in over the API too |
 | onboarding | creating an organisation makes the creator its admin, via a `membership` the server stamps |
 | navigation | the sidebar offers the app's resources and its non-private functions, and leaves the auth resources to their own screens |

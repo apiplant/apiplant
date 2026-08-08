@@ -8,7 +8,7 @@ already returned.
 ```
 23-queues/
 ├── main.toml               # [queues.subscribe]: topic → function
-├── models/
+├── resources/
 │   └── order.toml          # [publish]: announce a delete, with no function at all
 └── functions/
     ├── orders.ts           # one publisher, three subscribers
@@ -20,7 +20,7 @@ already returned.
 | `POST /api/functions/checkout` | publishing from a function, and returning without waiting |
 | `fulfilOrder` | a subscriber, `delivery()`, and an idempotent update |
 | `notifyOps` | a second subscriber on the same topic, with its own retries |
-| `releaseStock` | handling a topic a *model* announced |
+| `releaseStock` | handling a topic a *resource* announced |
 | `POST /api/queues/{topic}` | publishing from outside the app |
 
 ## Running it
@@ -71,9 +71,9 @@ INFO apiplant::function: fulfilled ORD-1 (1 row(s) changed)
 INFO apiplant::function: ops: order ORD-1 is paid
 ```
 
-## A model that announces its own writes
+## A resource that announces its own writes
 
-`models/order.toml` has three lines and no function:
+`resources/order.toml` has three lines and no function:
 
 ```toml
 [publish]

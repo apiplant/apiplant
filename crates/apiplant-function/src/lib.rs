@@ -44,7 +44,7 @@
 //! ## Functions as lifecycle hooks
 //!
 //! A function can also be attached to a resource's lifecycle from
-//! `models/<name>.toml`, in which case [`Context::hook`] carries the operation's
+//! `resources/<name>.toml`, in which case [`Context::hook`] carries the operation's
 //! context — the row created or fetched, the rows a list returned, the request
 //! URL, the caller's auth status — and the [`reply`] helpers say what should
 //! happen next. One function per event, so a handler never has to work out why
@@ -1388,7 +1388,7 @@ macro_rules! function {
 /// # fn main() {}
 /// ```
 ///
-/// Then, in `models/post.toml`:
+/// Then, in `resources/post.toml`:
 ///
 /// ```toml
 /// [hooks]

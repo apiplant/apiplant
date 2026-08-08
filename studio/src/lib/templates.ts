@@ -372,7 +372,7 @@ const typescriptSource = (name: string, kind: TemplateKind) =>
     ? `/**
  * \`${name}\` — an apiplant lifecycle hook in TypeScript.
  *
- * Point a resource's [hooks] at it (models/<resource>.toml), and it runs around
+ * Point a resource's [hooks] at it (resources/<resource>.toml), and it runs around
  * that resource's CRUD. \`apiplant build\` strips the types and writes
  * ${name}.js beside this file; the server runs it in a V8 isolate.
  *

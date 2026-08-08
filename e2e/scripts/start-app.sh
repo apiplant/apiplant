@@ -30,7 +30,7 @@ ADMIN_URL="${DB_URL%/*}/postgres"
 # --- a database with nothing in it ------------------------------------------
 #
 # Dropping rather than truncating: `auto_migrate` then builds every table from
-# the models as it would on a first deployment, so the migration path is part of
+# the resources as it would on a first deployment, so the migration path is part of
 # what the run proves.
 
 echo "e2e: resetting database $DB_NAME"

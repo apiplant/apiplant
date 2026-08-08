@@ -1,12 +1,12 @@
 # 02 · Resources
 
-One `models/<name>.toml` file becomes **one Postgres table and five endpoints**.
+One `resources/<name>.toml` file becomes **one Postgres table and five endpoints**.
 No migrations to write, no handlers to implement.
 
 ```
 02-resources/
 ├── main.toml
-└── models/
+└── resources/
     └── note.toml
 ```
 
@@ -17,7 +17,7 @@ createdb -h 127.0.0.1 -p 5432 -U postgres apiplant_resources
 cargo run -p apiplant -- run examples/02-resources
 ```
 
-`models/note.toml` publishes:
+`resources/note.toml` publishes:
 
 | Method | Path | Action |
 |--------|------|--------|
@@ -57,7 +57,7 @@ note with the same `slug` returns `409`.
 
 ## Migrations
 
-There are none to write. Your models *are* the desired state, and each boot adds
+There are none to write. Your resources *are* the desired state, and each boot adds
 missing tables, columns and foreign keys. Add a field to `note.toml`, restart,
 and the column appears — existing rows keep working. Nothing is ever dropped or
 retyped automatically; see [Resources](../../docs/resources.md#migrations).

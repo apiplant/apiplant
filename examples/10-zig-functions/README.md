@@ -8,7 +8,7 @@ slices, `defer` and error unions instead of raw pointers and manual frees.
 ```
 10-zig-functions/
 ├── main.toml
-├── models/
+├── resources/
 │   └── note.toml       # something for the function to count
 └── functions/
     ├── hello.zig       # both endpoints below, one file

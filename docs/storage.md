@@ -11,14 +11,14 @@ dir     = "storage"
 ```
 
 ```toml
-# models/product.toml
+# resources/product.toml
 [fields.photo]
 type = "file"
 ```
 
 That is the whole configuration. `local` is the default backend, so an app that
 writes no `[storage]` section at all already accepts uploads into a `storage/`
-directory beside its models.
+directory beside its resources.
 
 ## What a `file` field actually holds
 

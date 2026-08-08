@@ -1,6 +1,6 @@
 # The built-in `organization`, plus one field of our own: `domain`.
 #
-# A model file *replaces* the built-in of the same name rather than merging with
+# A resource file *replaces* the built-in of the same name rather than merging with
 # it, so everything the framework relies on — the `global` scope, the membership
 # -based permissions — is repeated here verbatim. Only `[fields.domain]` at the
 # bottom is new.

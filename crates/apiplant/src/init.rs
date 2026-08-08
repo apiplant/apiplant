@@ -116,11 +116,11 @@ fn clone(dir: &Path, repo: &str, branch: Option<&str>) -> anyhow::Result<()> {
             .with_context(|| format!("removing {}", git_dir.display()))?;
     }
 
-    if !dir.join("main.toml").exists() && !dir.join("models").is_dir() {
+    if !dir.join("main.toml").exists() && !dir.join("resources").is_dir() {
         // Not fatal: a template may be bare on purpose, and the clone already
         // succeeded. Saying so beats the user finding out from `run`.
         println!(
-            "note: {} has no main.toml and no models/ — it may not be an app directory",
+            "note: {} has no main.toml and no resources/ — it may not be an app directory",
             dir.display()
         );
     }
@@ -144,7 +144,7 @@ fn scaffold(dir: &Path, name: &str) -> anyhow::Result<()> {
 
     for (path, contents) in [
         ("main.toml", main_toml(name, &database)),
-        ("models/note.toml", NOTE_TOML.to_string()),
+        ("resources/note.toml", NOTE_TOML.to_string()),
         ("seed/organization.toml", SEED_ORGANIZATION.to_string()),
         ("seed/user.toml", SEED_USER.to_string()),
         ("seed/membership.toml", SEED_MEMBERSHIP.to_string()),
@@ -197,6 +197,19 @@ jwt_secret = "change-me-before-you-deploy"
 # a resource or a function narrows it — or lifts it — for its own.
 # default = "100/1m"
 
+[organization]
+# An organisation's `org_class` says what kind of tenant it is, and a permission
+# can be narrowed to one — `role:admin@org_class=customer` means admins, but
+# only in a customer organisation.
+#
+# Every new organisation starts as a `customer`, including the personal one each
+# account is given at registration; `seed/organization.toml` classes Operations
+# as `admin` instead. And because a class decides what people may do, no request
+# writes it: only somebody who is already in an `admin`-class organisation may
+# class anything, which is what the second line says.
+default_org_class = "customer"
+org_class_editors = "member@org_class=admin"
+
 [docs]
 enabled = true
 path = "/docs"
@@ -242,16 +255,28 @@ type       = "reference"
 references = "user"       # stamped by the server on create
 "#;
 
-const SEED_ORGANIZATION: &str = r#"# The organisation the app starts with.
+const SEED_ORGANIZATION: &str = r#"# The organisations the app starts with.
 #
 # `id = "acme"` is a name, not a UUID: seeding hashes it into the same id every
 # time, so the files below can point at this row by word, and running
 # `apiplant seed` twice inserts it once.
+#
+# `org_class` is server-owned — no API request writes it — so seeding is where
+# the first one comes from. Operations is the back office: `main.toml` says
+# `org_class_editors = "member@org_class=admin"`, so being in *this*
+# organisation is what lets somebody class the others.
+
+[[row]]
+id = "operations"
+name = "Operations"
+slug = "operations"
+org_class = "admin"
 
 [[row]]
 id = "acme"
 name = "Acme, Inc."
 slug = "acme"
+org_class = "customer"
 "#;
 
 const SEED_USER: &str = r#"# Someone to sign in as: admin@example.com / password.
@@ -274,6 +299,16 @@ id = "admin-at-acme"
 user_id = "admin"
 organization_id = "acme"
 role = "admin"
+
+# The same account in Operations, which is what lets it set an organisation's
+# `org_class` — with `x-organization` naming Operations on the request, since
+# the setting is answered against the organisation you have selected.
+
+[[row]]
+id = "admin-at-operations"
+user_id = "admin"
+organization_id = "operations"
+role = "admin"
 "#;
 
 const SEED_NOTE: &str = r#"# A row to look at, so the first GET returns something.
@@ -283,7 +318,7 @@ id = "welcome"
 organization_id = "acme"
 owner_id = "admin"
 title = "Welcome"
-body = "Edit models/note.toml, then run `apiplant run .` again."
+body = "Edit resources/note.toml, then run `apiplant run .` again."
 pinned = true
 "#;
 
@@ -356,7 +391,7 @@ reads at boot.
 
 ```
 main.toml            server, database, auth and docs
-models/note.toml     a resource → a table and five REST endpoints
+resources/note.toml     a resource → a table and five REST endpoints
 seed/                the rows the app starts with
 functions/greet.rs   a compiled plugin, mounted at /api/functions/greet
 ```
@@ -387,10 +422,22 @@ curl localhost:8099/api/note \
 The operator dashboard is at <http://127.0.0.1:8099/admin/>, the OpenAPI docs at
 `/api/docs`, and `apiplant cli .` is the same dashboard in a terminal.
 
+## Two organisations
+
+The seed creates **Acme** — where the notes live — and **Operations**, whose
+`org_class` is `admin`. A class says what kind of tenant an organisation is, and
+`main.toml` narrows one setting to it: only a member of an `admin`-class
+organisation may class the others, so `admin@example.com` can do that from
+Operations and from nowhere else. Every organisation created after this starts
+as a `customer`.
+
+Delete the `[organization]` section and the Operations rows if the app has one
+kind of tenant; nothing else depends on them.
+
 ## Changing it
 
-Add a field to `models/note.toml` and restart: migrations are additive and
-automatic, so the column appears. Add another `models/*.toml` and you have a
+Add a field to `resources/note.toml` and restart: migrations are additive and
+automatic, so the column appears. Add another `resources/*.toml` and you have a
 second resource. The full reference is at <https://framework.apiplant.com/docs>.
 
 **Before this is public**: change `auth.jwt_secret` in `main.toml`, and the
@@ -429,7 +476,7 @@ mod tests {
 
         for file in [
             "main.toml",
-            "models/note.toml",
+            "resources/note.toml",
             "seed/user.toml",
             "functions/greet.rs",
             "README.md",

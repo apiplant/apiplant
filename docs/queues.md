@@ -100,7 +100,7 @@ The shortest path from "a row changed" to "something happens about it". The row
 *is* the message.
 
 ```toml
-# models/order.toml
+# resources/order.toml
 [publish]
 after_create = "order.placed"
 after_update = "order.changed"
@@ -296,7 +296,7 @@ available to the publisher.
 ## See also
 
 * [`examples/23-queues`](../examples/23-queues) — a runnable app with a
-  publisher, three subscribers and a model that announces its own deletes.
+  publisher, three subscribers and a resource that announces its own deletes.
 * [Lifecycle hooks](hooks.md) — for work that must happen *before* the response,
   and is allowed to reject it.
 * [Functions](functions.md) — writing the handlers.

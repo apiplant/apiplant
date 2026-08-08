@@ -70,7 +70,7 @@ const PLACEHOLDER_DOMAIN: &str = "oauth.invalid";
 /// Refuse to boot an app whose `oauth_connection` cannot hold a connection.
 ///
 /// `oauth_connection` is a built-in, so this only fires for an app that
-/// replaced it with a `models/oauth_connection.toml` of its own and dropped
+/// replaced it with a `resources/oauth_connection.toml` of its own and dropped
 /// something. Failing here is the kind thing to do: the alternative is a 500
 /// in front of the first person who presses a sign-in button.
 pub fn check_resources(app: &apiplant_core::App) -> Result<(), String> {
@@ -93,7 +93,7 @@ pub fn check_resources(app: &apiplant_core::App) -> Result<(), String> {
             if !resource.fields.contains_key(*field) {
                 return Err(format!(
                     "[oauth] is configured, so `{name}` needs a `{field}` field — \
-                     models/{name}.toml replaces the built-in, which has one"
+                     resources/{name}.toml replaces the built-in, which has one"
                 ));
             }
         }
@@ -615,7 +615,7 @@ async fn resolve_account(
 /// Create the account behind a first-time sign-in.
 ///
 /// Through [`crate::auth_routes::create_account`], which is the same code
-/// `POST <base>/auth/register` runs: the `user` model's `before_register`,
+/// `POST <base>/auth/register` runs: the `user` resource's `before_register`,
 /// `before_create`, `after_create` and `after_register` hooks all fire, and the
 /// new account gets its own organisation to work in. An OAuth sign-up that
 /// skipped those would be a second kind of registration with a second set of
@@ -656,7 +656,7 @@ async fn create_account(
     let mut data = Map::new();
     data.insert(spec.identity_field.clone(), json!(identity));
     // Where a name and a picture go is the app's to say — `[oauth] name_field`
-    // and `avatar_field`, defaulting to the columns the built-in `user` model
+    // and `avatar_field`, defaulting to the columns the built-in `user` resource
     // declares. An empty setting writes neither, for an app that keeps its own.
     for (field, value) in [
         (&settings.name_field, &profile.display_name),
@@ -1017,13 +1017,13 @@ pub fn callback_base(state: &AppState) -> String {
 ///
 /// This is what lets the *app* decide how much of a profile it keeps. A
 /// sign-in offers `avatar_url` and `email_placeholder` for the `user` table;
-/// the default `user` model declares neither, so they are dropped here and the
-/// sign-in works exactly the same. Add either to `models/users.toml` and it
+/// the default `user` resource declares neither, so they are dropped here and the
+/// sign-in works exactly the same. Add either to `resources/users.toml` and it
 /// starts being filled, with no other change anywhere.
 ///
 /// A framework that added an `avatar_url` column to every app in case somebody
 /// might one day sign in with Google would be a framework deciding what your
-/// tables look like. This is the alternative: offer, and let the model answer.
+/// tables look like. This is the alternative: offer, and let the resource answer.
 fn keep_declared(
     resource: &apiplant_core::schema::Resource,
     data: Map<String, Value>,
@@ -1095,7 +1095,7 @@ async fn read_user(state: &AppState, user_id: Uuid) -> Result<Value, HttpRespons
 }
 
 /// Whether this account's address counts as confirmed. An app whose `user`
-/// model has no such column does not confirm addresses at all, so the question
+/// resource has no such column does not confirm addresses at all, so the question
 /// does not arise.
 fn verified_in(state: &AppState, user: &Value) -> bool {
     match state

@@ -18,7 +18,7 @@ import { DOC_GROUPS } from "../lib/docs";
    three rather than an excerpt of one. */
 const TABS = [
   {
-    name: "models/post.toml",
+    name: "resources/post.toml",
     lang: "toml",
     code: `# → GET/POST /api/post, GET/PATCH/DELETE /api/post/{id}
 [resource]
@@ -154,7 +154,7 @@ const STEPS = [
   {
     step: "02",
     title: "Describe and build",
-    body: "Edit models/*.toml until the API is the one you wanted. apiplant build ./my-app wraps every source in functions/ into a library beside it.",
+    body: "Edit resources/*.toml until the API is the one you wanted. apiplant build ./my-app wraps every source in functions/ into a library beside it.",
   },
   {
     step: "03",
@@ -314,7 +314,7 @@ function Anatomy() {
           code={`my-app/
 ├── main.toml       # server / database / auth; safe defaults if absent
 ├── https/          # cert + key here ⇒ the server runs HTTPS
-├── models/         # one <name>.toml per resource ⇒ table + endpoints
+├── resources/      # one <name>.toml per resource ⇒ table + endpoints
 ├── seed/           # optional <resource>.toml|csv ⇒ initial rows
 ├── agents/         # optional <name>.toml per configured AI agent
 └── functions/      # sources, per-function config, built libraries`}
@@ -606,7 +606,7 @@ function StudioCallout() {
             </h2>
             <p class="mt-3 max-w-2xl leading-relaxed text-muted">
               The studio is a local-first visual editor for app directories: it opens the folder on
-              your machine, reads <code class="font-mono text-[0.9em]">main.toml</code>, every model
+              your machine, reads <code class="font-mono text-[0.9em]">main.toml</code>, every resource
               and every function, and writes back only what you changed. Nothing is uploaded;
               there is no server behind the page.
             </p>
@@ -675,7 +675,7 @@ function Closing() {
         <p class="mx-auto mt-3 max-w-xl leading-relaxed text-muted">
           <code class="font-mono text-[0.9em]">init</code> writes a working app you can seed and
           run, or clones your own template from a git URL. An empty directory is also a valid
-          app: add one <code class="font-mono text-[0.9em]">models/*.toml</code> and you have an API.
+          app: add one <code class="font-mono text-[0.9em]">resources/*.toml</code> and you have an API.
         </p>
         <div class="mt-7 flex flex-wrap items-center justify-center gap-3">
           <CopyLine command="apiplant init my-app" />

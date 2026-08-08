@@ -54,7 +54,7 @@ test("the app boots on an empty database and serves its dashboard", async () => 
   expect(health.status).toBe(200);
   expect(health.body.framework).toBe("apiplant");
 
-  // Migrations ran from the models alone: the resource's table answers before
+  // Migrations ran from the resources alone: the resource's table answers before
   // anything has ever written to it.
   const notes = await api(anonymous, "/note");
   expect(notes.status, "note is a public resource").toBe(200);
@@ -129,7 +129,7 @@ test("every new account is given a personal organization it administers", async 
 
 test("the navigation offers exactly what the app declares", async () => {
   const nav = page.locator("nav");
-  // A resource from models/, and both functions as actions.
+  // A resource from resources/, and both functions as actions.
   await expect(nav.getByRole("button", { name: /Notes/i })).toBeVisible();
   await expect(nav.getByRole("button", { name: /^Greet$/i })).toBeVisible();
   await expect(nav.getByRole("button", { name: /^Stats$/i })).toBeVisible();

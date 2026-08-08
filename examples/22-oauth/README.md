@@ -24,7 +24,7 @@ mounts the endpoints and adds the table a half-finished sign-in lives in.
 └── seed/
 ```
 
-There is no `models/` directory: not one field has to be added for any of this,
+There is no `resources/` directory: not one field has to be added for any of this,
 because `display_name`, `avatar_url` and `email_placeholder` are all in the
 built-in `user`. There is no function either, no callback handler, no state
 table to declare, and no code that knows what GitHub is.
@@ -245,7 +245,7 @@ for an app that would rather nothing happen automatically.
   it can never resolve, the flag records that apiplant invented it, and the
   framework will not try to mail it. A real app shows those accounts a *tell us
   your email* prompt.
-* **Move the profile somewhere else.** Add a `models/users.toml` that calls the
+* **Move the profile somewhere else.** Add a `resources/users.toml` that calls the
   picture `picture`, point `[oauth] avatar_field` at it, and it lands there
   instead — or set either field to `""` and apiplant stops writing it.
 * **Add a fifth provider with a logo.** Uncomment the `[oauth.gitlab]` block at

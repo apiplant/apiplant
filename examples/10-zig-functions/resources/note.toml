@@ -1,5 +1,5 @@
 # Something for the `notes` function to count. See example 02 for the resource
-# model itself.
+# itself.
 
 [resource]
 name = "note"

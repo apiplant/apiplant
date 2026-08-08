@@ -102,7 +102,7 @@ fn delete_echo(
     Ok(json!({ "data": { "deleted": row["title"] } }).to_string())
 }
 
-const HOOKED_POST_MODEL: &str = r#"
+const HOOKED_POST_RESOURCE: &str = r#"
 [resource]
 name = "post"
 
@@ -136,7 +136,7 @@ type = "text"
 type = "boolean"
 "#;
 
-const AUDIT_MODEL: &str = r#"
+const AUDIT_RESOURCE: &str = r#"
 [resource]
 name = "audit"
 scope = "global"
@@ -169,8 +169,8 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
                     db.url
                 ),
             ),
-            ("models/post.toml", HOOKED_POST_MODEL),
-            ("models/audit.toml", AUDIT_MODEL),
+            ("resources/post.toml", HOOKED_POST_RESOURCE),
+            ("resources/audit.toml", AUDIT_RESOURCE),
         ],
     );
 
@@ -513,7 +513,7 @@ async fn functions_see_no_hook_over_http_and_missing_hooks_fail_closed() {
                 ),
             ),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"
@@ -643,7 +643,7 @@ fn user_join(host: &HostApi_TO<'_, RBox<()>>, hook: &str, input: &str) -> Result
     Ok(json!({ "data": row }).to_string())
 }
 
-const DOMAIN_ORG_MODEL: &str = r#"
+const DOMAIN_ORG_RESOURCE: &str = r#"
 [resource]
 name = "organization"
 scope = "global"
@@ -665,7 +665,7 @@ type = "string"
 unique = true
 "#;
 
-const HOOKED_USER_MODEL: &str = r#"
+const HOOKED_USER_RESOURCE: &str = r#"
 [resource]
 name = "user"
 scope = "global"
@@ -713,8 +713,8 @@ async fn registering_runs_the_user_resources_create_hooks() {
                     db.url
                 ),
             ),
-            ("models/organization.toml", DOMAIN_ORG_MODEL),
-            ("models/users.toml", HOOKED_USER_MODEL),
+            ("resources/organization.toml", DOMAIN_ORG_RESOURCE),
+            ("resources/users.toml", HOOKED_USER_RESOURCE),
         ],
     );
 
@@ -886,7 +886,7 @@ fn evict(_host: &HostApi_TO<'_, RBox<()>>, _hook: &str, input: &str) -> Result<S
     Ok(json!({}).to_string())
 }
 
-const CACHED_NOTE_MODEL: &str = r#"
+const CACHED_NOTE_RESOURCE: &str = r#"
 [resource]
 name = "note"
 scope = "global"
@@ -923,7 +923,7 @@ async fn a_before_read_hook_answers_from_cache_without_querying_the_database() {
                     db.url
                 ),
             ),
-            ("models/note.toml", CACHED_NOTE_MODEL),
+            ("resources/note.toml", CACHED_NOTE_RESOURCE),
         ],
     );
 

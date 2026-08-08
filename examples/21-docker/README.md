@@ -80,7 +80,7 @@ enough for a readiness probe.
 ## Uploads, and the one volume they need
 
 `[storage]` decides where an uploaded file goes, and the `file` field type is
-how a model asks for one — `note.toml` has an `attachment`. In the dashboard
+how a resource asks for one — `note.toml` has an `attachment`. In the dashboard
 that field is an upload button *and* a URL box: the first stores the file and
 writes back the link, the second takes a link to something already hosted.
 
@@ -139,9 +139,9 @@ instead, trading the portability for the hop.
 
 ## Migrations, and why there is no migration step
 
-`auto_migrate = true`, so the container reconciles the database with `models/`
+`auto_migrate = true`, so the container reconciles the database with `resources/`
 on boot. There is no release job and no separate migration container: start the
-image, and the schema is what the models say. The `seed` service in
+image, and the schema is what the resources say. The `seed` service in
 `compose.yaml` is a one-shot `apiplant seed /app`, kept behind a profile because
 fixtures are a first-run thing — it is idempotent, so running it again never
 overwrites a row you changed.
@@ -160,7 +160,7 @@ docker compose --profile dev up dev
 open http://localhost:8081/api/docs
 ```
 
-Edit `models/note.toml` or `functions/version.ts` on the host and watch the
+Edit `resources/note.toml` or `functions/version.ts` on the host and watch the
 container restart with the change. It is `apiplant run /app --watch`, which
 polls for changes rather than waiting for inotify — a host editor's writes do
 not deliver filesystem events across a bind mount, so a watcher that subscribed

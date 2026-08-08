@@ -6,7 +6,7 @@ one plain `.rs` file that becomes an endpoint.
 ```
 07-functions/
 ├── main.toml
-├── models/
+├── resources/
 │   └── note.toml       # something for the functions to query
 └── functions/
     ├── greet.rs        # POST /api/functions/greet — public, typed, configurable

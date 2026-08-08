@@ -4,7 +4,7 @@
  * `scripts/gen-builtins.mjs` — do not edit by hand.
  *
  * The studio shows them alongside custom resources; editing one writes a
- * `models/*.toml` that replaces the default, exactly as the framework intends.
+ * `resources/*.toml` that replaces the default, exactly as the framework intends.
  * The billing set is conditional: the framework adds it only when `[payments]`
  * names a provider, so the studio lists it on the same condition.
  */

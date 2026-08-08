@@ -7,7 +7,7 @@ module and runs `go build -buildmode=c-shared`.
 ```
 11-go-functions/
 ├── main.toml
-├── models/
+├── resources/
 │   └── note.toml       # something for the function to count
 └── functions/
     ├── hello.go        # both endpoints below, one file

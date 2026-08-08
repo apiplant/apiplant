@@ -285,7 +285,7 @@ async fn org_admins_can_list_and_read_owner_scoped_rows_for_everyone() {
                 ),
             ),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"
@@ -426,7 +426,7 @@ async fn org_admins_only_see_global_owner_rows_for_the_active_org() {
                 ),
             ),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"
@@ -688,7 +688,7 @@ async fn expanding_a_relation_respects_the_target_permissions() {
                 ),
             ),
             (
-                "models/post.toml",
+                "resources/post.toml",
                 r#"
 [resource]
 name = "post"
@@ -710,7 +710,7 @@ references = "user"
             // `user` ships with `read = "member"`, which co-members pass. Narrow
             // it to `owner` so the expansion below has a policy to be refused by.
             (
-                "models/user.toml",
+                "resources/user.toml",
                 r#"
 [resource]
 name = "user"
@@ -864,7 +864,7 @@ async fn roles_are_a_set_that_admins_hold_all_of_and_cannot_resign_from() {
             ),
             (
                 // A resource only a `buyer` may create: the role check under test.
-                "models/order.toml",
+                "resources/order.toml",
                 r#"
 [resource]
 name = "order"

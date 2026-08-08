@@ -236,7 +236,10 @@ impl Db {
             ))
             .await?
             .ok_or_else(|| Error::Db(sea_orm::DbErr::Custom("no aggregate row".into())))?;
-        Ok(row.try_get::<serde_json::Value>("", "result")?)
+        Ok(cased_rows(
+            r,
+            row.try_get::<serde_json::Value>("", "result")?,
+        ))
     }
 
     /// `GET /<resource>/<id>` — one row or `None`.
@@ -263,7 +266,10 @@ impl Db {
             ))
             .await?;
         match row {
-            Some(row) => Ok(Some(row.try_get::<serde_json::Value>("", "result")?)),
+            Some(row) => Ok(Some(cased_rows(
+                r,
+                row.try_get::<serde_json::Value>("", "result")?,
+            ))),
             None => Ok(None),
         }
     }
@@ -283,7 +289,9 @@ impl Db {
             if let Some(v) = data.get(name) {
                 cols.push(quote_ident(name)?);
                 placeholders.push(format!("${n}"));
-                params.push(value::json_to_sql(field.ty, v).map_err(Error::BadInput)?);
+                params.push(
+                    value::json_to_sql(field.ty, field.text_case(), v).map_err(Error::BadInput)?,
+                );
                 n += 1;
             }
         }
@@ -308,7 +316,10 @@ impl Db {
             ))
             .await?
             .ok_or_else(|| Error::Db(sea_orm::DbErr::Custom("insert returned no row".into())))?;
-        Ok(row.try_get::<serde_json::Value>("", "result")?)
+        Ok(cased_rows(
+            r,
+            row.try_get::<serde_json::Value>("", "result")?,
+        ))
     }
 
     /// `PATCH /<resource>/<id>` — update present fields, return the new row.
@@ -326,7 +337,9 @@ impl Db {
         for (name, field) in &r.fields {
             if let Some(v) = data.get(name) {
                 assignments.push(format!("{} = ${n}", quote_ident(name)?));
-                params.push(value::json_to_sql(field.ty, v).map_err(Error::BadInput)?);
+                params.push(
+                    value::json_to_sql(field.ty, field.text_case(), v).map_err(Error::BadInput)?,
+                );
                 n += 1;
             }
         }
@@ -359,7 +372,10 @@ impl Db {
             ))
             .await?;
         match row {
-            Some(row) => Ok(Some(row.try_get::<serde_json::Value>("", "result")?)),
+            Some(row) => Ok(Some(cased_rows(
+                r,
+                row.try_get::<serde_json::Value>("", "result")?,
+            ))),
             None => Ok(None),
         }
     }
@@ -560,6 +576,31 @@ impl Db {
 /// sea-orm flattens the sqlx error into its message, so the SQLSTATE for
 /// `invalid_catalog_name` (`3D000`) is matched on text — that code only ever
 /// means a missing database.
+/// Force every cased text field into its case, on a row or a list of rows.
+///
+/// Applied to what comes *back* rather than only to what goes in, because a
+/// column is written by more than this API: seeds, the payments webhook, a
+/// migration somebody ran by hand. `case = "upper"` promising uppercase only
+/// for rows that arrived through `POST` would be a guarantee with a hole in it
+/// exactly where the interesting data is.
+///
+/// Costs nothing for the resources that force no case, which is nearly all of
+/// them — the check is an empty iterator.
+fn cased_rows(r: &Resource, mut result: serde_json::Value) -> serde_json::Value {
+    if r.cased_fields().next().is_none() {
+        return result;
+    }
+    match &mut result {
+        serde_json::Value::Array(rows) => {
+            for row in rows {
+                r.apply_text_case(row);
+            }
+        }
+        row => r.apply_text_case(row),
+    }
+    result
+}
+
 fn is_missing_database(err: &Error) -> bool {
     let Error::Db(err) = err else { return false };
     let msg = err.to_string();

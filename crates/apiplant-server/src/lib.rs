@@ -862,7 +862,7 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
     //    generating anything; an `admin/` directory in the app (from `apiplant
     //    admin`) overrides the embedded build file for file. Either way the
     //    manifest is derived here, from the app being served, and the dashboard
-    //    talks to its own origin — no CORS, and no rebuild after a model change.
+    //    talks to its own origin — no CORS, and no rebuild after a resource change.
     let statics = Statics::resolve(&app);
     let banner_admin_path = statics.admin_path.clone();
     let banner_site = !statics.public_routes.is_empty();

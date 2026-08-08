@@ -178,7 +178,7 @@ Hooks are functions, so they send mail the same way. `after_create` is the usual
 place, since the row already exists by then:
 
 ```toml
-# models/invoice.toml
+# resources/invoice.toml
 [hooks]
 after_create = "invoice_after_create"
 ```

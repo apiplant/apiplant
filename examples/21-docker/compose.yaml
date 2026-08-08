@@ -80,7 +80,7 @@ services:
       JWT_SECRET: compose-secret-change-me
       STORAGE_DIR: /data/uploads
     volumes:
-      # The whole app directory, live. Edit `models/note.toml` or
+      # The whole app directory, live. Edit `resources/note.toml` or
       # `functions/version.ts` on the host and the server inside restarts with
       # the change — apiplant polls mtimes rather than waiting for inotify,
       # which a bind mount does not deliver across the boundary.

@@ -136,7 +136,7 @@ fn organization_join_config(app: &App) -> String {
 /// * `email` (whatever the app's identity field is) — looked up here.
 ///
 /// The lookup belongs on this side of the API. A member listing users only sees
-/// the people they already share an organisation with (see the `user` model's
+/// the people they already share an organisation with (see the `user` resource's
 /// `read = "member"`), so the person doing the adding cannot resolve an outsider's
 /// address to an id — which is exactly who they are trying to add. Doing it in a
 /// hook keeps that asymmetry: the address is resolved for the one purpose it was

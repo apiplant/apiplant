@@ -116,12 +116,12 @@ export function OverviewPage(props: {
 
       <div class="mt-3 grid gap-3 lg:grid-cols-2">
         <Card>
-          <CardHeader title="Resources" hint="Your models, plus any built-in you have overridden." />
+          <CardHeader title="Resources" hint="Your resources, plus any built-in you have overridden." />
           <Show
             when={custom().length || overridden().length}
             fallback={
               <p class="px-4 py-8 text-center text-xs text-muted">
-                No models on disk — the app serves only the built-in auth and tenancy resources.
+                No resources on disk — the app serves only the built-in auth and tenancy resources.
               </p>
             }
           >

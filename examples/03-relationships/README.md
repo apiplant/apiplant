@@ -5,7 +5,7 @@ directions for free.
 
 ```
 03-relationships/
-└── models/
+└── resources/
     ├── author.toml     # name, country
     ├── book.toml       # author_id → author
     └── review.toml     # book_id → book, plus reviewer_id and endorsed_by_id → author

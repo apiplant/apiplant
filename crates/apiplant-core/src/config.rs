@@ -1038,7 +1038,7 @@ pub struct OAuthConfig {
     /// | `json` | no redirect at all: the callback answers `{ "token": …, "user": … }`, which is what a single-page app posting the code itself wants |
     pub token_delivery: String,
     /// The `user` column a provider's name is written to on sign-in, or empty
-    /// to write none. `display_name` is in the built-in model; an app that
+    /// to write none. `display_name` is in the built-in resource; an app that
     /// calls it something else names it here, and one that would rather keep
     /// its own copy of a name sets this to `""`.
     pub name_field: String,

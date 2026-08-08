@@ -7,7 +7,7 @@ The smallest app there is: **one config file and nothing else**.
 └── main.toml
 ```
 
-There are no models, yet the server still starts, connects to Postgres, migrates,
+There are no resources, yet the server still starts, connects to Postgres, migrates,
 serves interactive docs, and exposes the built-in resources every app gets
 (`organization`, `membership`, `user`, `api_key`, `oauth_connection`).
 
@@ -39,7 +39,7 @@ curl -s -XPOST localhost:8099/api/auth/register \
 | Section | Purpose |
 |---------|---------|
 | `[server]` | bind address, port, and the `base_path` everything is mounted under |
-| `[database]` | connection URL; `auto_migrate` reconciles tables with your models each boot |
+| `[database]` | connection URL; `auto_migrate` reconciles tables with your resources each boot |
 | `[auth]` | JWT signing secret for sessions (set a real one in production) |
 | `[docs]` | the Swagger UI page and its title |
 

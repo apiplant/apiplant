@@ -17,7 +17,11 @@ genuinely different problems:
 ```
 18-payments/
 ├── main.toml                     # [payments] provider, keys, tax, shipping
-├── models/
+├── public/                       # the shop itself — three static files
+│   ├── index.html
+│   ├── shop.js                   # catalogue, register-at-checkout, redirect
+│   └── style.css
+├── resources/
 │   ├── document.toml             # needs a subscription
 │   └── download.toml             # needs a purchase
 └── functions/
@@ -27,7 +31,7 @@ genuinely different problems:
     └── require_purchase.toml     # …which payment statuses count as bought
 ```
 
-Nothing in `models/` or `functions/` mentions Stripe. That is the shape of the
+Nothing in `resources/` or `functions/` mentions Stripe. That is the shape of the
 integration: `[payments]` brings the machinery, and the app talks about
 documents, downloads and plans.
 
@@ -145,16 +149,22 @@ invoice.
 recurs. Nothing has to restate it at the checkout, because it is a fact about
 the price.
 
+**The currency comes back `EUR` though it was sent as `eur`.** That column
+declares `case = "upper"`, so one spelling is stored, `?currency=eur` still
+finds it, and a row the *webhook* wrote — Stripe reports currencies in
+lowercase — reads back the same as one written here. See [Forcing a
+case](../../docs/resources.md#forcing-a-case).
+
 ## 3. Try to use the app without paying
 
 ```bash
 curl -s -X POST $API/document "${auth[@]}" -d '{"title":"Q3 plan"}'
-curl -s -X POST $API/download "${auth[@]}" -d '{"product":"Field Guide"}'
+curl -s -X POST $API/download "${auth[@]}" -d '{"product_id":"'$GUIDE'"}'
 ```
 
 ```json
 { "error": "this organization is not on a plan; see /api/billing_price" }
-{ "error": "nobody here has bought \"Field Guide\"; see /api/billing_price" }
+{ "error": "nobody here has bought that; see /api/billing_price" }
 ```
 
 Both **402 Payment Required** — not `403`. A client can tell those apart: one
@@ -209,8 +219,10 @@ And now both paywalls open — each for its own thing:
 
 ```bash
 curl -s -X POST $API/document "${auth[@]}" -d '{"title":"Q3 plan"}' | jq -r .title
-curl -s -X POST $API/download "${auth[@]}" -d '{"product":"Field Guide"}' | jq -r .product
-curl -s -X POST $API/download "${auth[@]}" -d '{"product":"Enamel Mug"}'   # still 402
+ME=$(curl -s $API/auth/me -H "Authorization: Bearer $TOKEN" | jq -r .user_id)
+curl -s -X POST $API/download "${auth[@]}" \
+  -d '{"product_id":"'$GUIDE'","delivered_to":"'$ME'"}' | jq -r .id
+curl -s -X POST $API/download "${auth[@]}" -d '{"product_id":"'$MUG'"}'   # still 402
 ```
 
 Buying the guide does not entitle you to the mug. `require_purchase` matches the
@@ -218,6 +230,27 @@ Buying the guide does not entitle you to the mug. `require_purchase` matches the
 the old one, so somebody who bought at last year's price holds a price id that
 is no longer on the shelf, and matching the product is what stops a price rise
 from repossessing what people already own.
+
+Both columns on `download` are **references**, not copies. `product_id` points
+into the catalogue, so a download cannot name something that was never sold;
+`delivered_to` points at the account, so nobody's address is duplicated into a
+column that goes stale the moment they change it. Which means the record reads
+as what it is:
+
+```bash
+curl -s "$API/download?expand=product,delivered_to" "${auth[@]}" \
+  | jq -c '[.[] | {product: .product.name, to: .delivered_to.email}]'
+```
+
+```json
+[{"product":"Field Guide","to":"admin@example.com"}]
+```
+
+They differ in what a deletion means, and the difference is the interesting
+part. Deleting a product **cascades** — the record of downloading something the
+app no longer sells is noise. Deleting a *person* **nulls** — a closed account
+must not erase the fact that something was delivered, which is exactly what
+support and an auditor need to look up afterwards.
 
 ## 5. Let them manage it themselves
 
@@ -232,6 +265,59 @@ re-exporting one would be a worse version of a page that already exists.
 
 The dashboard's **Billing** screen is the same three calls with buttons on them.
 
+## 6. The shop
+
+Everything above is `curl`, which is the wrong way to look at a shop. Open
+<http://localhost:8101/> instead: `public/` is served at the site root, so three
+static files — no build, no bundler, no framework — are the storefront.
+
+It renders itself from the same two public tables you filled in above, so
+whatever you added in step 1 is what it sells, and the card it draws follows the
+`shippable` column: **Instant download**, **Posted to you**, or
+**Subscription**. Nothing in the page knows what those mean; it knows one
+boolean and one interval.
+
+### Registering *at* the checkout
+
+The interesting part is who is allowed to buy. Reading the price list needs
+nobody — `billing_product` and `billing_price` are `public` — but
+`POST /billing/checkout` needs an **admin of an organisation**, because a
+purchase commits a company's card.
+
+A shop cannot answer that by sending a first-time visitor away to register,
+start a company and come back. So the buy dialog does the whole thing on one
+submit:
+
+```
+register  →  (or sign in, if that address is taken)
+          →  find the organisation registration just created
+          →  name it after the company they typed
+          →  POST /billing/checkout
+          →  redirect to Stripe
+```
+
+Registering creates an organisation with the new account as its admin, so by the
+time the checkout call happens the buyer already satisfies `role:admin` — and a
+returning customer's existing organisation is reused, which is what keeps their
+invoices, their card and their subscriptions together instead of scattered
+across one organisation per purchase.
+
+The form never asks "do you already have an account?" It tries to register, and
+a duplicate address falls back to signing in. That is a question the shop can
+answer for itself.
+
+### What the page does not do
+
+No card details, no 3-D Secure, no wallet buttons, no VAT number field, no
+address form, no receipt. All of it is on the other side of one redirect, on
+Stripe's domain. `shop.js` is about 200 lines and the payment integration inside
+it is three: ask for a URL, and go there.
+
+Coming back, `?checkout=success` draws a thank-you and is then stripped from the
+URL so a refresh is not a second one. It is deliberately *not* what records the
+order — the webhook already did that, which is why closing the tab on the way
+back could not have lost it.
+
 ## What is where
 
 | Question | Where it is answered |
@@ -244,6 +330,7 @@ The dashboard's **Billing** screen is the same three calls with buttons on them.
 | May they do this? | a query, in `functions/plan.rs` or `functions/require_purchase.rs` |
 | How do they pay? | `POST /billing/checkout` → a Stripe URL |
 | How do they change it? | `POST /billing/portal` → a Stripe URL |
+| What does a customer see? | `public/` — a static shop, served at `/` |
 
 The split is deliberate and it is the whole design: **the catalogue is yours,
 what has been paid for is Stripe's.** That is why `billing_subscription` is

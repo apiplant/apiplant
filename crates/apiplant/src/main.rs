@@ -13,7 +13,7 @@
 //! apiplant version             # print the version and exit
 //! ```
 //!
-//! An *app directory* holds an optional `main.toml`, an optional `models/`
+//! An *app directory* holds an optional `main.toml`, an optional `resources/`
 //! directory of resource definitions, an optional `functions/` directory of
 //! function sources (Rust, C, Zig, Go or TypeScript) and what `apiplant build`
 //! produced from them, and — to

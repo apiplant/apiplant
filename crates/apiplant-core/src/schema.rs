@@ -1,6 +1,6 @@
 //! The declarative resource model.
 //!
-//! A *resource* is one `models/<name>.toml` file. It declares fields and a
+//! A *resource* is one `resources/<name>.toml` file. It declares fields and a
 //! per-action permission policy; the framework turns it into a Postgres table
 //! and a set of RESTful CRUD endpoints. Users, roles and api-keys are ordinary
 //! resources that ship with built-in defaults (see [`crate::defaults`]).
@@ -428,7 +428,7 @@ impl Resource {
             path: path.to_path_buf(),
             source: e,
         })?;
-        // Model files get the same `$VAR` expansion `main.toml` does — a
+        // Resource files get the same `$VAR` expansion `main.toml` does — a
         // resource can name an environment variable anywhere it takes a string.
         let source = path.file_name().unwrap_or_default().to_string_lossy();
         let resource: Resource =
@@ -529,9 +529,9 @@ pub struct FieldAdmin {
     pub placeholder: Option<String>,
     /// Collect this field on the registration form.
     ///
-    /// Only meaningful on the `user` model. Unset means "decide from the field"
+    /// Only meaningful on the `user` resource. Unset means "decide from the field"
     /// — see [`FieldAdmin::in_signup`] — which is what every app that never
-    /// thinks about this gets. Setting it is how a model says *this* is one of
+    /// thinks about this gets. Setting it is how a resource says *this* is one of
     /// the things we ask a new person for: adding `name` and `surname` to
     /// `user` and marking them `signup = true` puts two boxes on the form
     /// without making either of them mandatory.
@@ -562,7 +562,7 @@ impl FieldAdmin {
     /// Whether the registration form collects this field.
     ///
     /// An explicit `signup` always wins. Otherwise a field is asked for exactly
-    /// when leaving it out would break the signup — i.e. when the model
+    /// when leaving it out would break the signup — i.e. when the resource
     /// *requires* it — which is the behaviour every app had before this
     /// attribute existed.
     pub fn in_signup(&self, field: &Field) -> bool {
@@ -1434,7 +1434,7 @@ impl Default for AuthSpec {
 
 /// One point in an auth endpoint's lifecycle at which a function may run.
 ///
-/// These are declared in the `user` model's ordinary `[hooks]` section, next to
+/// These are declared in the `user` resource's ordinary `[hooks]` section, next to
 /// its CRUD hooks, and are only meaningful there — the built-in endpoints are
 /// the `user` resource's other door. They sit alongside the [`HookEvent`]s
 /// rather than replacing them: registration is still a `create` on `user`, so
@@ -1529,6 +1529,103 @@ mod tests {
         let resource: Resource = toml::from_str(src).unwrap();
         resource.validate().unwrap();
         resource
+    }
+
+    /// `case` is about codes, and a code is only a code on a text column.
+    #[test]
+    fn a_case_is_only_forced_on_text_fields() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "order"
+
+[fields.currency]
+type = "string"
+case = "upper"
+
+[fields.note]
+type = "text"
+case = "lower"
+
+[fields.reference]
+type = "string"
+
+# Nonsense, and quietly ignored rather than upper-casing the digits.
+[fields.amount]
+type = "big_int"
+case = "upper"
+"#,
+        );
+
+        let case = |name: &str| resource.fields.get(name).unwrap().text_case();
+        assert_eq!(case("currency"), Some(TextCase::Upper));
+        assert_eq!(case("note"), Some(TextCase::Lower));
+        assert_eq!(case("reference"), None);
+        assert_eq!(case("amount"), None, "a number has no case to force");
+
+        let mut cased: Vec<&str> = resource
+            .cased_fields()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        cased.sort();
+        assert_eq!(cased, ["currency", "note"]);
+    }
+
+    /// A row is forced into shape on the way out too, so a value written by a
+    /// seed or a webhook reads back the same as one written through the API.
+    #[test]
+    fn a_row_is_returned_in_the_case_its_fields_declare() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "order"
+
+[fields.currency]
+type = "string"
+case = "upper"
+
+[fields.note]
+type = "text"
+case = "lower"
+
+[fields.reference]
+type = "string"
+"#,
+        );
+
+        let mut row = serde_json::json!({
+            "currency": "eur",
+            "note": "SHIPPED LATE",
+            "reference": "Left Alone",
+            "missing": null,
+        });
+        resource.apply_text_case(&mut row);
+
+        assert_eq!(row["currency"], "EUR");
+        assert_eq!(row["note"], "shipped late");
+        assert_eq!(row["reference"], "Left Alone", "no case declared");
+        // A null column stays null rather than becoming the string "null".
+        assert!(row["missing"].is_null());
+    }
+
+    /// A resource that declares no case is left exactly as it came back.
+    #[test]
+    fn a_resource_with_no_cased_fields_is_untouched() {
+        let resource = parse_resource(
+            r#"
+[resource]
+name = "note"
+
+[fields.title]
+type = "string"
+"#,
+        );
+        assert_eq!(resource.cased_fields().count(), 0);
+
+        let before = serde_json::json!({ "title": "Mixed Case Stays" });
+        let mut row = before.clone();
+        resource.apply_text_case(&mut row);
+        assert_eq!(row, before);
     }
 
     #[test]
@@ -1635,7 +1732,7 @@ type = "string"
     }
 
     #[test]
-    fn access_parser_and_permissions_defaults_match_org_membership_model() {
+    fn access_parser_and_permissions_defaults_match_org_membership_resource() {
         assert_eq!(Access::parse("public"), Access::Public);
         assert_eq!(Access::parse("authenticated"), Access::Authenticated);
         assert_eq!(Access::parse("member"), Access::Member);

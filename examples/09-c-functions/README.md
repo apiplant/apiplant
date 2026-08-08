@@ -7,7 +7,7 @@ function is a single `.c` file.
 ```
 09-c-functions/
 ├── main.toml
-├── models/
+├── resources/
 │   └── note.toml       # something for the function to count
 └── functions/
     ├── hello.c         # both endpoints below, one translation unit

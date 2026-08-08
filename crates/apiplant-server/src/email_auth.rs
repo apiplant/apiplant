@@ -64,7 +64,7 @@ const KIND_RESET: &str = "password_reset";
 /// already registered.
 ///
 /// Issued by anyone who may add members — `role:admin` in a default app, or
-/// whatever the app's `membership` model says `create` takes. The check is
+/// whatever the app's `membership` resource says `create` takes. The check is
 /// against `membership` rather than against `invitation` on purpose: an
 /// invitation is a membership that has not happened yet, and having two
 /// answers to "who may let people in" is how they end up disagreeing.
@@ -241,7 +241,7 @@ pub async fn preview_invitation(state: State<AppState>, token: Path<String>) -> 
 /// Two shapes, decided by whether the address already has an account:
 ///
 /// * **No account** — the body carries `password` (plus whatever else the
-///   `user` model asks a new person for) and the account is created here. It is
+///   `user` resource asks a new person for) and the account is created here. It is
 ///   marked as having a confirmed address without a second email: opening this
 ///   link is the proof that a confirmation email would have been asking for.
 /// * **An account exists** — nothing is created and no password is wanted. The
@@ -559,7 +559,7 @@ pub async fn reset_password(state: State<AppState>, body: Json<Value>) -> HttpRe
 
 /// Whether `principal` may add people to `org`.
 ///
-/// Read from the `membership` model's `create` policy so that an app which has
+/// Read from the `membership` resource's `create` policy so that an app which has
 /// changed who manages its team gets invitations that agree with it. A policy
 /// this code cannot express as a role check — `public`, say — falls back to
 /// requiring `admin`, because handing out organisation membership is not
@@ -930,7 +930,7 @@ async fn send(state: &AppState, message: apiplant_email::Message) -> Result<(), 
 /// `.invalid` is reserved by RFC 2606 precisely so that it can never resolve,
 /// which makes delivery to it not unlikely but impossible — it is the domain
 /// apiplant synthesises an address at when a provider gives none (see the
-/// `user` model's `email_placeholder`). Asking a provider to deliver there
+/// `user` resource's `email_placeholder`). Asking a provider to deliver there
 /// wastes a call and, in bulk, spends the sender's reputation on mail that
 /// cannot arrive.
 ///
@@ -1013,7 +1013,7 @@ mod tests {
     fn a_policy_that_is_not_a_role_check_falls_back_to_admin() {
         let org = Uuid::new_v4();
         // Handing out membership of an organisation is not something to open
-        // up because a permission happened to say `public`, and a model with
+        // up because a permission happened to say `public`, and a resource with
         // no `membership` at all is not an invitation to improvise.
         let public: apiplant_core::Policy = Access::Public.into();
         for policy in [Some(&public), None] {

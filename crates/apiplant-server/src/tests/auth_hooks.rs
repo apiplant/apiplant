@@ -1,5 +1,5 @@
 //! Auth hooks: the extension points on the built-in auth endpoints, declared
-//! in the `user` model's `[hooks]` section next to its CRUD hooks.
+//! in the `user` resource's `[hooks]` section next to its CRUD hooks.
 
 use super::*;
 
@@ -134,7 +134,7 @@ fn key_stamp(_host: &HostApi_TO<'_, RBox<()>>, _hook: &str, input: &str) -> Resu
     Ok(json!({ "data": { "label": row["name"], "api_key": "forged" } }).to_string())
 }
 
-const AUTH_HOOKED_USER_MODEL: &str = r#"
+const AUTH_HOOKED_USER_RESOURCE: &str = r#"
 [resource]
 name = "user"
 scope = "global"
@@ -169,7 +169,7 @@ type = "string"
 hidden = true
 "#;
 
-const AUDIT_MODEL: &str = r#"
+const AUDIT_RESOURCE: &str = r#"
 [resource]
 name = "audit"
 scope = "global"
@@ -203,8 +203,8 @@ async fn auth_hooks_shape_registration_login_and_key_issuance() {
                     db.url
                 ),
             ),
-            ("models/audit.toml", AUDIT_MODEL),
-            ("models/users.toml", AUTH_HOOKED_USER_MODEL),
+            ("resources/audit.toml", AUDIT_RESOURCE),
+            ("resources/users.toml", AUTH_HOOKED_USER_RESOURCE),
         ],
     );
 
@@ -372,7 +372,7 @@ async fn auth_hooks_shape_registration_login_and_key_issuance() {
     db.cleanup().await;
 }
 
-/// A model with no `[auth.hooks]` at all behaves exactly as before.
+/// A resource with no `[auth.hooks]` at all behaves exactly as before.
 #[ntex::test]
 async fn auth_endpoints_are_unchanged_without_hooks() {
     let db = TempDatabase::create("auth_no_hooks").await;

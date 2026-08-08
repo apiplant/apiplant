@@ -262,17 +262,17 @@ mod tests {
         std::fs::write(dir.join(".apiplant-build/target/x"), "…").unwrap();
         assert_eq!(fingerprint(&dir), before, "a build must not trigger itself");
 
-        // A new source, a new model, and a deletion each are a change.
+        // A new source, a new resource, and a deletion each are a change.
         std::fs::write(dir.join("functions/greet.toml"), "name = \"greet\"\n").unwrap();
         let after_config = fingerprint(&dir);
         assert_ne!(after_config, before);
 
-        std::fs::create_dir_all(dir.join("models")).unwrap();
-        std::fs::write(dir.join("models/note.toml"), "name = \"note\"\n").unwrap();
-        let after_model = fingerprint(&dir);
-        assert_ne!(after_model, after_config);
+        std::fs::create_dir_all(dir.join("resources")).unwrap();
+        std::fs::write(dir.join("resources/note.toml"), "name = \"note\"\n").unwrap();
+        let after_resource = fingerprint(&dir);
+        assert_ne!(after_resource, after_config);
 
-        std::fs::remove_file(dir.join("models/note.toml")).unwrap();
+        std::fs::remove_file(dir.join("resources/note.toml")).unwrap();
         assert_eq!(fingerprint(&dir), after_config);
 
         std::fs::remove_dir_all(&dir).ok();

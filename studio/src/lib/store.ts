@@ -3,8 +3,8 @@
  * to be written back.
  *
  * Files are the single source of truth for what gets saved. Every form in the
- * studio edits a model (a `Resource`, the config table) and immediately re-emits
- * that model into `files[path].current`; saving then walks the file map and
+ * studio edits a resource (a `Resource`, the config table) and immediately re-emits
+ * that resource into `files[path].current`; saving then walks the file map and
  * writes only what differs from what was read. That keeps "what will change on
  * disk" answerable at any moment, and makes discarding a rescan.
  */
@@ -118,7 +118,7 @@ export function dismissToast(id: number) {
 
 /** An app directory is anything carrying one of the framework's own pieces. */
 export function looksLikeApp(entryNames: string[]): boolean {
-  return ["main.toml", "models", "agents", "functions", "https"].some((name) => entryNames.includes(name));
+  return ["main.toml", "resources", "agents", "functions", "https"].some((name) => entryNames.includes(name));
 }
 
 export interface AppCandidate {
@@ -247,9 +247,9 @@ function buildResources(
   }
 
   for (const file of scanned) {
-    if (!file.path.startsWith("models/") || !file.path.endsWith(".toml") || file.text === null) continue;
-    // Only top-level files in models/ are loaded by the framework.
-    if (file.path.slice("models/".length).includes("/")) continue;
+    if (!file.path.startsWith("resources/") || !file.path.endsWith(".toml") || file.text === null) continue;
+    // Only top-level files in resources/ are loaded by the framework.
+    if (file.path.slice("resources/".length).includes("/")) continue;
     try {
       const resource = parseResource(file.text);
       const existing = byName.get(resource.name);
@@ -783,15 +783,15 @@ export function resourceEntry(name: string): ResourceEntry | undefined {
 }
 
 function pathForResource(name: string): string {
-  if ((BUILTIN_NAMES as readonly string[]).includes(name)) return `models/${BUILTIN_FILENAME[name as BuiltinName]}`;
-  return `models/${name}.toml`;
+  if ((BUILTIN_NAMES as readonly string[]).includes(name)) return `resources/${BUILTIN_FILENAME[name as BuiltinName]}`;
+  return `resources/${name}.toml`;
 }
 
 /**
  * Apply an edit to a resource and re-emit its file.
  *
  * Editing a built-in that has no file materialises one — which is exactly what
- * the framework means by "drop a same-named model in to replace the default".
+ * the framework means by "drop a same-named resource in to replace the default".
  */
 export function updateResource(name: string, update: (resource: Resource) => void) {
   const project = state.project;

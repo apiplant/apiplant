@@ -38,15 +38,15 @@ impl Default for Settings {
     }
 }
 
-/// Whether this organisation has ever paid, outright, for the product behind
-/// the given price.
+/// Whether this organisation has ever paid, outright, for the given product.
 ///
 /// The join runs payment → price → product rather than matching on the price
 /// id directly, and that is deliberate: changing an amount in Stripe mints a
 /// *new* price and archives the old one, so somebody who bought the ebook at
 /// last year's price holds a `price_id` that no longer exists on the shelf.
 /// Matching the product is what stops a price rise from repossessing what
-/// people already own.
+/// people already own — and it is why `download` references a product rather
+/// than a price.
 ///
 /// "Outright" is two conditions, not one. `subscription_id IS NULL` says this
 /// charge was not an instalment of anything; `interval = ''` says the price
@@ -61,13 +61,15 @@ fn has_bought(ctx: &Context<Settings>, organization: &str, product: &str) -> Res
         .map(|status| json!(status))
         .collect();
 
+    // Joined through the price rather than compared to `pay.price_id`: what
+    // was bought is the product, and a payment points at whichever price was
+    // current on the day.
     let row = ctx.query_one(
         "SELECT 1 AS found \
          FROM apiplant_billing_payment pay \
          JOIN apiplant_billing_price pr ON pr.id = pay.price_id \
-         JOIN apiplant_billing_product prod ON prod.id = pr.product_id \
          WHERE pay.organization_id = $1::uuid \
-           AND prod.name = $2 \
+           AND pr.product_id = $2::uuid \
            AND pay.status IN (SELECT jsonb_array_elements_text($3::jsonb)) \
            AND pay.subscription_id IS NULL \
            AND coalesce(pr.interval, '') = '' \
@@ -92,23 +94,27 @@ fn require_purchase(ctx: &Context<Settings>, input: Value) -> Result<Value, Stri
         ));
     };
 
-    // The row names what is being fetched; the catalogue says what it costs.
-    // An empty title is refused rather than treated as "anything", because a
-    // paywall whose default is "let them through" is not a paywall.
+    // The row names what is being fetched, as a `billing_product` id. Absent
+    // is refused rather than treated as "anything", because a paywall whose
+    // default is "let them through" is not a paywall — and the reference
+    // itself is what guarantees the id names something the app really sells.
     let product = input
-        .get("product")
+        .get("product_id")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .trim()
         .to_string();
     if product.is_empty() {
-        return Ok(reply::abort(422, "`product` is required — what to download"));
+        return Ok(reply::abort(
+            422,
+            "`product_id` is required — the billing_product to download",
+        ));
     }
 
     if !has_bought(ctx, &organization, &product)? {
         return Ok(reply::abort(
             402,
-            &format!("nobody here has bought {product:?}; see /api/billing_price"),
+            "nobody here has bought that; see /api/billing_price",
         ));
     }
 

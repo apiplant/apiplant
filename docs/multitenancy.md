@@ -40,10 +40,10 @@ For an organisation-scoped resource, on every request the framework:
 4. then applies the resource's [permission](permissions.md) for *who among the
    members* may act.
 
-So a plain model with no tenancy code is already isolated:
+So a plain resource with no tenancy code is already isolated:
 
 ```toml
-# models/project.toml: organisation-scoped automatically
+# resources/project.toml: organisation-scoped automatically
 [resource]
 name = "project"
 

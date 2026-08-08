@@ -136,7 +136,7 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
       params.set("offset", String(key.page * PAGE_SIZE));
       const expand = expandParam(resource);
       if (expand) params.set("expand", expand);
-      // `?search=` is the API's substring match across every field the model
+      // `?search=` is the API's substring match across every field the resource
       // names. Matching only whole values would make this a filter rather than
       // a search.
       if (key.search && searchable(resource)) params.set("search", key.search);

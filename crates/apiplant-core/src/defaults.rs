@@ -18,7 +18,7 @@
 //! provider ([`billing_builtins`]), and `oauth_state` with an `[oauth]` one
 //! ([`oauth_builtins`]).
 //!
-//! Drop a `models/<name>.toml` with the same `name` to replace a built-in and
+//! Drop a `resources/<name>.toml` with the same `name` to replace a built-in and
 //! add fields or tweak permissions while keeping the machinery working.
 
 use crate::schema::Resource;
@@ -148,7 +148,7 @@ required = true
 "#;
 
 /// The default `user`: global (users are shared across organisations) with
-/// email + password auth. Extend via `models/users.toml`.
+/// email + password auth. Extend via `resources/users.toml`.
 pub const USER_TOML: &str = r#"
 [resource]
 name = "user"
@@ -189,7 +189,7 @@ visible = false
 # What to call somebody, and what to show beside their name.
 #
 # Both are ordinary nullable columns nothing requires — an app that has no use
-# for either can leave them empty or drop them by replacing this model. They are
+# for either can leave them empty or drop them by replacing this resource. They are
 # here because they are what almost every app wants and what every identity
 # provider hands over: a sign-in through [`[oauth]`](crate::config::OAuthConfig)
 # fills them in, so an account that arrives that way arrives with a name and a
@@ -716,9 +716,17 @@ required = true
 [fields.unit_amount.admin]
 help = "In the smallest unit of the currency — 1000 is 10.00."
 
+# ISO 4217; empty takes [payments] currency.
+#
+# `case = "upper"` because that is how the standard writes a currency and how
+# an invoice, a price list and an accountant all expect to read it. Stripe
+# accepts either and answers in lowercase, so without this the same currency
+# arrives spelled two ways depending on which row you look at — and `?currency`
+# filters match only whichever the caller guessed.
 [fields.currency]
 type = "string"
-max_length = 3             # ISO 4217; empty takes [payments] currency
+max_length = 3
+case = "upper"
 
 # How often it recurs: "month", "year", "week", "day", or empty for a price
 # that is charged once. This is what decides whether buying it starts a
@@ -941,9 +949,13 @@ required = true
 type = "big_int"
 default = 0
 
+# Upper-cased like the price's, so a payment and the price it paid for read the
+# same — this column is written by the webhook, from a provider that reports
+# lowercase.
 [fields.currency]
 type = "string"
 max_length = 3
+case = "upper"
 
 # "succeeded", "pending", "failed", "refunded".
 [fields.status]
@@ -1227,7 +1239,7 @@ mod tests {
         }
     }
 
-    /// The prefix is what keeps a shop's own `product` model out of the
+    /// The prefix is what keeps a shop's own `product` resource out of the
     /// framework's way, so it holds for every billing resource, not just the
     /// two that would have collided today.
     #[test]

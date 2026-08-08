@@ -1,6 +1,6 @@
 //! Two ways an app sends mail, in one library.
 //!
-//! * `welcome_email` is a **hook**: `models/users.toml` points the `user`
+//! * `welcome_email` is a **hook**: `resources/users.toml` points the `user`
 //!   resource's `after_create` event at it, so registering triggers it.
 //! * `notify` is an **endpoint**: `POST /api/functions/notify` mails a message
 //!   to an existing account.

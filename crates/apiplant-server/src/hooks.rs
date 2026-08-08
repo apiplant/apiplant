@@ -257,7 +257,7 @@ pub async fn announce(
 /// Same contract as [`run`]: `Ok(None)` carries on, `Ok(Some(value))` is a
 /// replacement, `Err(response)` aborts the request. `resource` is the resource
 /// the endpoint operates on — `user` for register/login, `api_key` for key
-/// issuance — but the hook is always looked up on the `user` model, which is
+/// issuance — but the hook is always looked up on the `user` resource, which is
 /// the resource the auth endpoints belong to.
 pub async fn run_auth(
     state: &AppState,

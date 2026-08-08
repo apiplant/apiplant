@@ -6,7 +6,7 @@ field**. Declaring one produces a real Postgres foreign key, a navigable
 filtering by the foreign key, with no further configuration.
 
 ```toml
-# models/comment.toml
+# resources/comment.toml
 [resource]
 name = "comment"
 
@@ -137,7 +137,7 @@ owner scoping from an `owner` permission is always applied in addition.
 ## Full example
 
 ```toml
-# models/post.toml
+# resources/post.toml
 [resource]
 name = "post"
 [permissions]
@@ -155,7 +155,7 @@ references = "user"
 ```
 
 ```toml
-# models/comment.toml  (as above): comment belongs_to post AND user
+# resources/comment.toml  (as above): comment belongs_to post AND user
 ```
 
 Gives you:

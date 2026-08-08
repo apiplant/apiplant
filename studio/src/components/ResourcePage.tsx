@@ -150,7 +150,7 @@ export function ResourcePage(props: { entry: ResourceEntry }) {
           <div class="mt-3 flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2">
             <p class="flex-1 text-xs leading-relaxed text-muted">
               This resource exists without a file. Editing anything writes{" "}
-              <Mono>models/…</Mono> to replace the framework default — the framework keeps using it for auth,
+              <Mono>resources/…</Mono> to replace the framework default — the framework keeps using it for auth,
               ownership and org resolution.
             </p>
             <Button size="sm" onClick={() => customizeBuiltin(props.entry.name)}>
@@ -860,7 +860,7 @@ function SettingsTab(props: {
                 }
               >
                 A term matches a row when any of {chosen().join(", ")} contains it. Callers that know the
-                model can still narrow one request with <Mono>?search_fields=</Mono>.
+                resource can still narrow one request with <Mono>?search_fields=</Mono>.
               </Show>
             </p>
           </Show>
@@ -938,7 +938,7 @@ function SettingsTab(props: {
           hint={
             props.entry.builtin
               ? "Removes the file; the framework goes back to shipping its own definition."
-              : "Removes the model file. The table and its rows stay in Postgres — apiplant never drops anything."
+              : "Removes the resource file. The table and its rows stay in Postgres — apiplant never drops anything."
           }
         >
           <Show

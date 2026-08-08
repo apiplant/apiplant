@@ -7,7 +7,7 @@
 //! underneath for the dashboard to have something to show.
 //!
 //! TOML is the primary format, because it is the format the app is already
-//! written in — a seed file looks like the model beside it:
+//! written in — a seed file looks like the resource beside it:
 //!
 //! ```toml
 //! [[row]]
@@ -41,7 +41,7 @@
 //! Seeding runs in dependency order, so a file may reference rows from a file
 //! it is listed before.
 
-use apiplant_core::schema::FieldType;
+use apiplant_core::schema::{FieldType, TextCase};
 use apiplant_core::{App, Resource};
 use sea_orm::sea_query::Value as SqlValue;
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
@@ -225,7 +225,7 @@ async fn seed_file(
             }
 
             let field = &r.fields[&column];
-            let sql = to_sql(field.ty, &raw)
+            let sql = to_sql(field.ty, field.text_case(), &raw)
                 .map_err(|e| Error::Schema(format!("{origin}: row {position}: `{column}`: {e}")))?;
             let Some(sql) = sql else { continue };
             columns.push(column);
@@ -281,7 +281,7 @@ fn as_key(raw: &Raw) -> Result<String, String> {
 
 /// Convert one written value for one column, or `None` when the row leaves the
 /// column out and the database's own default should apply.
-fn to_sql(ty: FieldType, raw: &Raw) -> Result<Option<SqlValue>, String> {
+fn to_sql(ty: FieldType, case: Option<TextCase>, raw: &Raw) -> Result<Option<SqlValue>, String> {
     // A reference or an id is written as the alias its target row uses, in
     // either format.
     if matches!(ty, FieldType::Reference | FieldType::Uuid) {
@@ -293,7 +293,7 @@ fn to_sql(ty: FieldType, raw: &Raw) -> Result<Option<SqlValue>, String> {
         Raw::Text(s) if ty == FieldType::Json => {
             SqlValue::from(serde_json::from_str::<Json>(s).map_err(|e| format!("not JSON: {e}"))?)
         }
-        Raw::Text(s) => value::string_to_sql(ty, s)?,
+        Raw::Text(s) => value::string_to_sql(ty, case, s)?,
         Raw::Typed(Json::Null) => return Ok(None),
         // TOML is typed, but a number written for a text column (a postcode, a
         // version) is a spelling, not a mistake — so a scalar is accepted
@@ -304,10 +304,13 @@ fn to_sql(ty: FieldType, raw: &Raw) -> Result<Option<SqlValue>, String> {
         {
             match v {
                 Json::Object(_) | Json::Array(_) => return Err("expected a string".to_string()),
-                other => SqlValue::from(other.to_string()),
+                other => SqlValue::from(match case {
+                    Some(case) => case.apply(&other.to_string()),
+                    None => other.to_string(),
+                }),
             }
         }
-        Raw::Typed(v) => value::json_to_sql(ty, v)?,
+        Raw::Typed(v) => value::json_to_sql(ty, case, v)?,
     }))
 }
 
@@ -602,14 +605,14 @@ mod tests {
     #[test]
     fn a_toml_datetime_becomes_a_timestamp() {
         let rows = toml_rows("[[row]]\nat = 2024-01-31T09:00:00Z\n").unwrap();
-        let sql = to_sql(FieldType::Timestamp, column(&rows[0], "at")).unwrap();
+        let sql = to_sql(FieldType::Timestamp, None, column(&rows[0], "at")).unwrap();
         assert!(sql.is_some());
     }
 
     #[test]
     fn a_number_is_accepted_where_a_string_column_wants_one() {
         let rows = toml_rows("[[row]]\npostcode = 90210\n").unwrap();
-        let sql = to_sql(FieldType::String, column(&rows[0], "postcode")).unwrap();
+        let sql = to_sql(FieldType::String, None, column(&rows[0], "postcode")).unwrap();
         assert_eq!(sql, Some(SqlValue::from("90210".to_string())));
     }
 

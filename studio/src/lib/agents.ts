@@ -45,8 +45,8 @@ export function isAgentStorageBuiltinName(name: string): boolean {
 
 function generatedResourceSummary(agent: AgentEntry, kind: "thread" | "message"): string {
   return kind === "thread"
-    ? `Generated persisted-history threads for the ${agent.name} agent. Create a model file to extend the default fields or permissions.`
-    : `Generated persisted-history messages for the ${agent.name} agent. Create a model file to extend the default fields or permissions.`;
+    ? `Generated persisted-history threads for the ${agent.name} agent. Create a resource file to extend the default fields or permissions.`
+    : `Generated persisted-history messages for the ${agent.name} agent. Create a resource file to extend the default fields or permissions.`;
 }
 
 function generatedResourceToml(agent: AgentEntry, kind: "thread" | "message"): string {

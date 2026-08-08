@@ -43,7 +43,7 @@ fn temp_dir(label: &str) -> PathBuf {
         "apiplant-server-test-{label}-{}-{stamp}",
         std::process::id()
     ));
-    fs::create_dir_all(dir.join("models")).unwrap();
+    fs::create_dir_all(dir.join("resources")).unwrap();
     dir
 }
 
@@ -322,7 +322,7 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
     // Real, like the storage above: `queue_message` is a built-in, so the test
     // database has the table and a test that publishes actually writes a row.
     let queue = apiplant_queue::Queue::new(&db, &app);
-    // Real, from the app's own `[rate_limit]` and whatever its models and
+    // Real, from the app's own `[rate_limit]` and whatever its resources and
     // functions say beside it: a test app that sets no limit gets a policy that
     // refuses nothing, and one that does gets 429s.
     let rate_limit = crate::rate_limit::RateLimitPolicy::build(&app, &functions);

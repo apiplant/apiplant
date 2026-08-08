@@ -395,7 +395,7 @@ rather than exposing one.
 ## Running as a lifecycle hook
 
 The same function can be wired into a resource's CRUD lifecycle from
-`models/<name>.toml`:
+`resources/<name>.toml`:
 
 ```toml
 [hooks]

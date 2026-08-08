@@ -287,7 +287,7 @@ async fn a_resource_announces_its_writes_on_the_topics_it_declares() {
                 ),
             ),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"
@@ -613,7 +613,7 @@ async fn the_queue_follows_the_table_the_app_declares() {
         &[
             ("main.toml", &main_toml(&db.url, "")),
             (
-                "models/queue_message.toml",
+                "resources/queue_message.toml",
                 r#"
 [resource]
 name = "queue_message"

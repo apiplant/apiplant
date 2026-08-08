@@ -180,7 +180,7 @@ default = "100/1m"
 ```
 
 ```toml
-# models/order.toml — this resource, per action
+# resources/order.toml — this resource, per action
 [rate_limit]
 all    = "60/1m"
 create = "5/1m"    # expensive, so stricter
@@ -255,7 +255,7 @@ section names a provider.
 
 The dashboard is served entirely from the binary: the files come from the
 embedded build and the manifest from the app being served. Nothing on disk feeds
-into it, so it requires no CORS and cannot become stale after a model change.
+into it, so it requires no CORS and cannot become stale after a resource change.
 For a custom console, set `enabled = false` and serve one from `public/admin/`.
 To host a copy of this one on another origin, build it with `apiplant admin`.
 See [Admin dashboard](admin.md).
@@ -474,7 +474,7 @@ say).
 | `failure_redirect` | *(empty)* | Where a failed sign-in lands. Empty answers with a JSON error instead, which is what you want while setting a provider up. |
 | `token_delivery` | `fragment` | `fragment` (`…/#token=…`, never sent to a server, so it stays out of logs and `Referer`), `query` (`…?token=…`, easier for a server-rendered page), or `json` (no redirect: the callback answers with the body). A client that knows what it can read may override this per flow with `?token_delivery=` on `…/start` — the admin dashboard asks for `fragment` whatever an app has configured for its own front end. |
 | `name_field` | `display_name` | The `user` column a provider's name is written to on every sign-in. `""` writes none. |
-| `avatar_field` | `avatar_url` | The `user` column its picture is written to. `""` writes none. Both columns are in the built-in `user` model; a model that does not declare one simply does not get it filled. `email_placeholder` is filled too and is not configurable — see [Authentication](authentication.md#what-lands-on-the-account). |
+| `avatar_field` | `avatar_url` | The `user` column its picture is written to. `""` writes none. Both columns are in the built-in `user` resource; a resource that does not declare one simply does not get it filled. `email_placeholder` is filled too and is not configurable — see [Authentication](authentication.md#what-lands-on-the-account). |
 
 And per provider, under `[oauth.<name>]`:
 
@@ -497,7 +497,7 @@ byte. `apiplant run` prints the string to register for each provider on the way
 up.
 
 An unusable configuration fails the boot: a `client_id` without a secret, an
-unknown provider without endpoints, or a replaced `oauth_connection` model
+unknown provider without endpoints, or a replaced `oauth_connection` resource
 missing a column the handshake writes.
 
 ## `[ai]`
@@ -650,7 +650,7 @@ trace, and passes its own id back as `X-Trace-Id`.
 ## Environment variables
 
 **Any** string value in **any** of the app's TOML files (`main.toml`, every
-`models/*.toml` and every `functions/*.toml`) may reference the environment:
+`resources/*.toml` and every `functions/*.toml`) may reference the environment:
 
 ```toml
 [database]

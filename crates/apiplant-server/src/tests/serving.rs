@@ -195,7 +195,7 @@ async fn a_public_directory_is_served_at_the_root_alongside_the_api() {
         &[
             ("main.toml", &format!("[database]\nurl = \"{}\"\n", db.url)),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"

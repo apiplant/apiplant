@@ -7,7 +7,7 @@ is one line of `main.toml`, and changing it changes nothing else.
 ```
 15-email/
 ├── main.toml                     # [email] provider = "smtp" (+ every other provider, commented)
-├── models/
+├── resources/
 │   └── users.toml                # the built-in + [hooks] after_create
 └── functions/
     ├── mail.rs                   # welcome_email (a hook) + notify (an endpoint)

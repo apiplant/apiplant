@@ -1553,7 +1553,7 @@ mod tests {
             "apiplant-openapi-{label}-{}-{stamp}",
             std::process::id()
         ));
-        fs::create_dir_all(dir.join("models")).unwrap();
+        fs::create_dir_all(dir.join("resources")).unwrap();
         dir
     }
 
@@ -1609,7 +1609,7 @@ title = "Test API"
         )
         .unwrap();
         fs::write(
-            dir.join("models/post.toml"),
+            dir.join("resources/post.toml"),
             r#"
 [resource]
 name = "post"
@@ -1633,7 +1633,7 @@ required = true
         )
         .unwrap();
         fs::write(
-            dir.join("models/comment.toml"),
+            dir.join("resources/comment.toml"),
             r#"
 [resource]
 name = "comment"
@@ -1650,7 +1650,7 @@ required = true
         )
         .unwrap();
         fs::write(
-            dir.join("models/plan.toml"),
+            dir.join("resources/plan.toml"),
             r#"
 [resource]
 name = "plan"

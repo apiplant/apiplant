@@ -8,7 +8,7 @@ the generated CRUD endpoints without writing server code.
 Declare them in the resource's `[hooks]` section, one function name per event:
 
 ```toml
-# models/post.toml
+# resources/post.toml
 [resource]
 name = "post"
 
@@ -119,12 +119,12 @@ new account directly into the organisation that owns its email domain.
 
 The create hooks above fire on *both* routes into the `user` table, which is
 their purpose, and also why they are unsuitable for logic specific to signup, or
-for events with no `create` at all, such as a login. The `user` model's
+for events with no `create` at all, such as a login. The `user` resource's
 `[hooks]` section carries six further events for that, alongside its CRUD
 ones:
 
 ```toml
-# models/users.toml
+# resources/users.toml
 [hooks]
 after_create = "index_user"     # the table's own lifecycle
 before_login = "check_lockout"  # and the endpoints in front of it
@@ -132,7 +132,7 @@ after_login  = "record_attempt"
 ```
 
 They are meaningful only on `user`, the resource the auth endpoints belong to;
-the same key on any other model fails to load, since nothing would fire it. The
+the same key on any other resource fails to load, since nothing would fire it. The
 protocol is as above: a returned `{"error": …}` aborts and a returned
 `{"data": …}` replaces.
 
@@ -450,4 +450,4 @@ afterwards, retries on its own, and cannot fail the write. See
 * [Functions](functions.md): writing, building and configuring the functions
   hooks point at.
 * [Permissions](permissions.md): the checks that run before any hook.
-* [Resources](resources.md): the rest of `models/<name>.toml`.
+* [Resources](resources.md): the rest of `resources/<name>.toml`.

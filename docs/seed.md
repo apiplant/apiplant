@@ -6,7 +6,7 @@ after it, holding the initial rows for that resource.
 ```
 my-app/
 ├── main.toml
-├── models/
+├── resources/
 │   └── product.toml
 └── seed/
     ├── organization.toml
@@ -35,7 +35,7 @@ registration endpoint followed by a manual promotion.
 
 `seed/` captures that setup once: an administrator who can sign in, the
 organisation they administer, and enough supporting data for the dashboard to
-be useful. It is checked in alongside the models, so every developer machine
+be useful. It is checked in alongside the resources, so every developer machine
 and CI start from the same state.
 
 ## The file format

@@ -182,7 +182,12 @@ impl PriceSpec {
     /// [`upsert_price`](crate::Payments::upsert_price) sometimes replaces one.
     pub fn differs_materially_from(&self, current: &PriceSpec) -> bool {
         self.unit_amount != current.unit_amount
-            || self.currency != current.currency
+            // Compared without case: the row stores `EUR` (see the `case` on
+            // `billing_price.currency`) and Stripe answers `eur`, and reading
+            // that as a change would archive and re-mint the price on every
+            // save — quietly moving each one to a new id nothing is subscribed
+            // to.
+            || !self.currency.eq_ignore_ascii_case(&current.currency)
             || self.interval != current.interval
             || self.interval_count.max(1) != current.interval_count.max(1)
             || self.trial_days != current.trial_days
@@ -390,6 +395,14 @@ mod tests {
             ..base.clone()
         };
         assert!(!renamed.differs_materially_from(&base));
+
+        // The row stores the currency upper-cased and Stripe answers it in
+        // lower — the same currency, and not a reason to replace the price.
+        let from_the_row = PriceSpec {
+            currency: "EUR".into(),
+            ..base.clone()
+        };
+        assert!(!from_the_row.differs_materially_from(&base));
 
         for changed in [
             PriceSpec {

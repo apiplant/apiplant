@@ -7,7 +7,7 @@ directory on disk, and the app cannot tell which.
 ```
 26-file-upload/
 ├── main.toml           # the [storage] block; everything else is example 04
-├── models/photo.toml   # a resource with two `file` fields
+├── resources/photo.toml   # a resource with two `file` fields
 └── seed/               # the usual two organisations and three users
 ```
 

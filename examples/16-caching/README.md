@@ -8,7 +8,7 @@ what makes it stale.
 ```
 16-caching/
 ├── main.toml                # [cache] url, prefix, default TTL
-├── models/
+├── resources/
 │   └── reading.toml         # read-through cached rows + invalidation hooks
 └── functions/
     ├── stats.rs             # report + quota, the cached read, and the hooks
@@ -87,7 +87,7 @@ framework won't guess when that happened, but it will *tell* you: `reading` puts
 `report` wrote.
 
 ```toml
-# models/reading.toml
+# resources/reading.toml
 [hooks]
 after_create  = "reading_changed"
 before_update = "reading_before_update"
@@ -142,7 +142,7 @@ and the framework still isn't the one deciding when that goes stale — three
 hooks are.
 
 ```toml
-# models/reading.toml
+# resources/reading.toml
 [hooks]
 before_read  = "reading_before_read"   # a hit *is* the response
 after_read   = "reading_after_read"    # only runs on a miss

@@ -6,7 +6,7 @@ is automatic.
 
 ```
 04-multitenancy/
-└── models/
+└── resources/
     ├── project.toml    # no organization_id field, no filtering code
     └── task.toml       # project_id → project
 ```

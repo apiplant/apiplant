@@ -23,7 +23,7 @@ url = "{}"
                 ),
             ),
             (
-                "models/users.toml",
+                "resources/users.toml",
                 r#"
 [resource]
 name = "user"
@@ -206,7 +206,7 @@ url = "{}"
                 ),
             ),
             (
-                "models/users.toml",
+                "resources/users.toml",
                 r#"
 [resource]
 name = "user"
@@ -331,7 +331,7 @@ url = "{}"
             (
                 // The built-in `user`, but deletable — the framework's own keeps
                 // `delete = "private"`, and the closing act needs the door.
-                "models/users.toml",
+                "resources/users.toml",
                 r#"
 [resource]
 name = "user"

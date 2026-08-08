@@ -3,7 +3,7 @@
 apiplant ships a complete identity system built out of ordinary resources.
 `organization`, `membership`, `user`, `api_key`, and `oauth_connection` exist by
 default, and any of them can be extended by adding a same-named file in
-`models/`.
+`resources/`.
 
 ## Built-in resources
 
@@ -22,10 +22,10 @@ permissions), migrations and relationships like any other.
 
 ## The `[auth]` section
 
-The `user` model carries an optional `[auth]` block controlling how login works:
+The `user` resource carries an optional `[auth]` block controlling how login works:
 
 ```toml
-# models/users.toml
+# resources/users.toml
 [resource]
 name = "user"
 
@@ -48,13 +48,13 @@ hidden = true
 type = "string"
 ```
 
-Without a `models/users.toml`, the defaults are `identity_field = "email"`,
+Without a `resources/users.toml`, the defaults are `identity_field = "email"`,
 `password_field = "password_hash"`, no OAuth providers and no hooks.
 
 ### Auth hooks
 
 The endpoints below are extension points, not fixed behaviour: the `user`
-model's ordinary `[hooks]` section carries an event for each point in their
+resource's ordinary `[hooks]` section carries an event for each point in their
 lifecycle, alongside the resource's CRUD hooks.
 
 ```toml
@@ -106,14 +106,14 @@ POST /api/auth/register
 * Requires a `password`; all other properties map to `user` fields.
 * The password is argon2id-hashed into the `password_field`; the plaintext is
   never stored.
-* Honours `auth.allow_registration` (`403` when disabled). The `user` model
+* Honours `auth.allow_registration` (`403` when disabled). The `user` resource
   ships with `create = "public"` so that this endpoint works, so the same switch
   also closes anonymous `POST <base>/user`; otherwise signup would simply move
   to that route.
 * Returns `{ "token": "...", "user": { ... } }` (with hidden fields stripped).
 * The new account is given a [personal organisation](multitenancy.md) it
   administers, so no session begins without an organisation to work in.
-* Registering is a `create` on the `user` resource, so the `user` model's
+* Registering is a `create` on the `user` resource, so the `user` resource's
   `before_create` / `after_create` [hooks](hooks.md#registration-fires-the-user-create-hooks)
   also fire here. This is the usual place to assign a new account a starting
   organisation, as [`examples/14-email-domains`](../examples/14-email-domains)
@@ -205,7 +205,7 @@ Emails a link and creates an `invitation` row. The address does not need an
 existing account, which is why this endpoint exists alongside
 `POST <base>/membership`, which can only add users who have already registered.
 
-Permission to issue one is read from the **`membership` model's `create`
+Permission to issue one is read from the **`membership` resource's `create`
 policy** (`role:admin` by default), so an app that has changed who manages its
 team gets consistent behaviour rather than a second, independent rule.
 
@@ -228,7 +228,7 @@ POST /api/auth/invitations/{token}/accept
 ```
 
 Without an existing account, this *is* a registration: it fires the `user`
-model's `before_register`, `before_create`, `after_create` and `after_register`
+resource's `before_register`, `before_create`, `after_create` and `after_register`
 [hooks](hooks.md) exactly as `POST <base>/auth/register` does, so rules about
 who may sign up cannot be bypassed via an invitation. The new account is marked
 as having a confirmed address without a second email, since opening the link
@@ -397,7 +397,7 @@ The one decision worth reading carefully. In order:
    password, came back through Google" case. Governed by
    `[oauth] link_by_verified_email`.
 4. **Otherwise a new account**, created through the same path
-   `POST <base>/auth/register` uses: the `user` model's `before_register`,
+   `POST <base>/auth/register` uses: the `user` resource's `before_register`,
    `before_create`, `after_create` and `after_register` hooks all fire, and the
    account gets its own organisation. An OAuth sign-up is not a second kind of
    registration with a second set of rules.
@@ -427,8 +427,8 @@ are already there.
 
 ### What lands on the account
 
-Three columns, all of them in the built-in `user` model, so a sign-in fills them
-in an app with no `models/users.toml` at all:
+Three columns, all of them in the built-in `user` resource, so a sign-in fills them
+in an app with no `resources/users.toml` at all:
 
 | Field | Filled with |
 |-------|-------------|
@@ -447,10 +447,10 @@ name_field   = "display_name"   # "" to write no name
 avatar_field = "avatar_url"     # "" to write no picture
 ```
 
-A model that does not declare a column simply does not get it filled, so
-removing one from `models/users.toml` is a complete way to opt out.
+A resource that does not declare a column simply does not get it filled, so
+removing one from `resources/users.toml` is a complete way to opt out.
 
-`email_placeholder` is not configurable, and is in the built-in model rather
+`email_placeholder` is not configurable, and is in the built-in resource rather
 than left to apps, because apiplant is the one *inventing* the value it
 describes. An app that has never heard of the flag is exactly the app that would
 otherwise mail an address the framework made up. It is also the one field here
@@ -510,7 +510,7 @@ the [dashboard](admin.md) will use it.
 Every setting is in [Configuration](configuration.md#oauth);
 [`examples/22-oauth`](../examples/22-oauth) is the whole thing running.
 
-## Extending the user model
+## Extending the user resource
 
 Because `user` is an ordinary resource, you can:
 
@@ -520,5 +520,5 @@ Because `user` is an ordinary resource, you can:
 * relate it to other resources with `reference` fields,
 * hook the auth endpoints themselves with [auth hooks](#auth-hooks).
 
-Create `models/users.toml` to replace the default; authentication remains
+Create `resources/users.toml` to replace the default; authentication remains
 wired up.

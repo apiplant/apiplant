@@ -7,12 +7,12 @@ black box.
 ```
 05-auth/
 ├── main.toml
-└── models/
+└── resources/
     ├── users.toml      # replaces the built-in `user`: log in with a username
     └── api_keys.toml   # extends `api_key` with a name and last_used_at
 ```
 
-A model named `user` replaces the default one, and the framework keeps using it
+A resource named `user` replaces the default one, and the framework keeps using it
 for login, ownership, API keys and organisation membership.
 
 ## Run it
@@ -64,12 +64,12 @@ curl -s localhost:8099/api/user -H "x-api-key: $KEY"
   else's returns `404` (an owned row you don't own is invisible, not forbidden).
 * Set `allow_registration = false` under `[auth]` in `main.toml` and registration
   starts returning `403`, while login keeps working — handy for invite-only apps.
-* Add a field to `models/users.toml`, restart, and it appears on the resource;
+* Add a field to `resources/users.toml`, restart, and it appears on the resource;
   existing rows keep working.
 
 ## OAuth
 
-`oauth_connection` is a built-in resource that models linked third-party
+`oauth_connection` is a built-in resource that resources linked third-party
 identities. The handshake itself is built in too: two credentials in an
 `[oauth.github]` block mount `<base>/auth/oauth/…`, and the session it issues is
 the same token this example's `POST /auth/login` returns.

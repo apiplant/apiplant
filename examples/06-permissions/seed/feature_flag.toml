@@ -1,6 +1,6 @@
 # Global rows: no `organization_id`, because the resource is `scope = "global"`.
 # Who may change them is decided by the caller's *active* organisation being of
-# class `admin` — see `models/feature_flag.toml`.
+# class `admin` — see `resources/feature_flag.toml`.
 
 [[row]]
 id = "flag-new-editor"

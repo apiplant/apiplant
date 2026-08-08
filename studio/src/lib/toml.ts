@@ -117,7 +117,7 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
   return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
-/** Parse one `models/*.toml` into the studio's model. Throws on invalid TOML. */
+/** Parse one `resources/*.toml` into the studio's resource. Throws on invalid TOML. */
 export function parseResource(text: string): Resource {
   const table = parseTable(text);
   const meta = isTable(table.resource) ? table.resource : {};
@@ -182,7 +182,7 @@ export function parseResource(text: string): Resource {
     };
   }
 
-  // `[admin]` is presentation; the studio models one key of it and carries the
+  // `[admin]` is presentation; the studio resources one key of it and carries the
   // rest through untouched rather than making the form the authority on a
   // section it only half understands.
   if (isTable(table.admin)) {

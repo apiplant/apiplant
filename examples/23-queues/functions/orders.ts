@@ -4,7 +4,7 @@
  *   POST /api/functions/checkout   authenticated  - marks an order paid, publishes
  *   fulfilOrder                    subscriber     - the slow work, done afterwards
  *   notifyOps                      subscriber     - a second handler, same topic
- *   releaseStock                   subscriber     - handles the model's [publish]
+ *   releaseStock                   subscriber     - handles the resource's [publish]
  *
  * The thing to notice is what `checkout` does *not* do: it does not send the
  * receipt, does not tell the warehouse, and does not wait for either. It writes
@@ -119,7 +119,7 @@ export default defineFunctions({
 
     /**
      * Nothing published this: the `[publish] after_delete` line in
-     * `models/order.toml` did, and the message is the deleted row itself. The
+     * `resources/order.toml` did, and the message is the deleted row itself. The
      * DELETE returned 204 without waiting for any of this.
      */
     handler(input: { reference?: string; total_cents?: number }) {

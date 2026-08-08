@@ -32,8 +32,8 @@ header, it starts from your system preference, and it is remembered.
 | Piece | What the studio gives you |
 |-------|---------------------------|
 | `main.toml` | The form covers `[server]`, `[database]`, `[email]`, `[email.smtp]`, `[cache]`, `[queues]` (including the topic → function subscriptions), `[payments]`, `[ai]`, `[auth]`, `[docs]` and `[observability]` (logs, traces, metrics and the OTLP collector, with resource attributes and export headers as key/value rows), with the framework's default shown as the placeholder. TLS is reported, not configured — it comes from `https/`. |
-| `models/*.toml` | Fields (type, `required`/`unique`/`hidden`, `max_length`, `default`, `references`, `on_delete`), the five permission actions including `role:<name>`, tenancy scope, `table`, `owner_field`, timestamps, `[admin] search_fields` (which columns one `?search=` term is matched against), and `[auth]` on `user`. Other `[admin]` keys are carried through untouched. |
-| Built-in resources | `organization`, `user`, `membership`, `api_key` and `oauth_connection` are listed with the definitions the framework ships. Editing one writes a `models/*.toml` that replaces the default — the framework's own override mechanism. |
+| `resources/*.toml` | Fields (type, `required`/`unique`/`hidden`, `max_length`, `default`, `references`, `on_delete`), the five permission actions including `role:<name>`, tenancy scope, `table`, `owner_field`, timestamps, `[admin] search_fields` (which columns one `?search=` term is matched against), and `[auth]` on `user`. Other `[admin]` keys are carried through untouched. |
+| Built-in resources | `organization`, `user`, `membership`, `api_key` and `oauth_connection` are listed with the definitions the framework ships. Editing one writes a `resources/*.toml` that replaces the default — the framework's own override mechanism. |
 | `[hooks]` | All ten events, with a picker over the function names the libraries in `functions/` actually export. A hook naming a function nothing exports is flagged. |
 | `functions/` | New functions in **Rust, TypeScript, C, Zig or Go**, as a single file or a directory (a crate, a Go module, an npm project, a multi-file C or Zig project). Sources and per-function `<name>.toml` config are editable in place; build output — `lib*.so`, or `<name>.js` for TypeScript — is listed with its size and never touched. |
 
@@ -50,7 +50,7 @@ compiled libraries, `https/` material and files the studio does not model.
 
 Two things worth knowing:
 
-* **Form edits rewrite the file.** A model file is re-emitted from the form, so
+* **Form edits rewrite the file.** A resource file is re-emitted from the form, so
   hand-written comments in it are lost. The studio warns when the file on disk
   has comments; edit on the **TOML** tab to keep them. Every resource and the
   config have that tab, and it is the same file either way.
@@ -91,7 +91,7 @@ src/
 │   ├── fs.ts          File System Access: pick, scan, write, delete
 │   ├── functions.ts   reading functions/ the way `apiplant build` does
 │   ├── templates.ts   the per-language function scaffolds
-│   ├── store.ts       the open project: models, the file map, and pending changes
+│   ├── store.ts       the open project: resources, the file map, and pending changes
 │   ├── theme.ts       light/dark, remembered, system preference by default
 │   └── nav.ts         which page is showing
 └── components/
@@ -101,7 +101,7 @@ src/
 ```
 
 `store.ts` is the piece to read first. Files are the single source of truth for
-what gets saved: every form edits a model and immediately re-emits it into the
+what gets saved: every form edits a resource and immediately re-emits it into the
 file map, so "what will change on disk" is answerable at any moment and
 discarding is just a rescan.
 

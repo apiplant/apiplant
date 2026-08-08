@@ -143,7 +143,7 @@ default = "100/1m"
 ```
 
 ```toml
-# models/user.toml — registration, the one endpoint anonymous callers can write
+# resources/user.toml — registration, the one endpoint anonymous callers can write
 # rows through
 [rate_limit]
 create = "5/1h"

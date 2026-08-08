@@ -1,7 +1,7 @@
 /**
  * The way in: sign in, or create an account.
  *
- * One card with two tabs. Extra profile fields the `user` model marks required
+ * One card with two tabs. Extra profile fields the `user` resource marks required
  * are collected as ordinary inputs, so creating an account never requires
  * entering JSON.
  */

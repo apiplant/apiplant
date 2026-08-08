@@ -2,7 +2,7 @@
 //! [`examples/demo-app`](../../demo-app).
 //!
 //! One function per event — no dispatcher, no matching on the event name. The
-//! library exports all five through `functions!`, and `models/post.toml` points
+//! library exports all five through `functions!`, and `resources/post.toml` points
 //! each event at the one it wants:
 //!
 //! ```toml

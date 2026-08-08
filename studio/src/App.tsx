@@ -95,7 +95,7 @@ export function App() {
     }
     if (selection.candidates.length === 0) {
       toast(
-        `No apiplant app found in ${selection.parent.name}. An app directory holds a main.toml, a models/ folder, an agents/ folder, or a functions/ folder.`,
+        `No apiplant app found in ${selection.parent.name}. An app directory holds a main.toml, a resources/ folder, an agents/ folder, or a functions/ folder.`,
         "error",
       );
       return;

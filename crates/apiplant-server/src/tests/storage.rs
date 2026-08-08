@@ -31,7 +31,7 @@ allowed_types = ["image/*", "application/pdf"]
                 ),
             ),
             (
-                "models/brand.toml",
+                "resources/brand.toml",
                 r#"
 [resource]
 name = "brand"
@@ -192,7 +192,7 @@ async fn a_file_field_is_a_string_to_every_client() {
                 ),
             ),
             (
-                "models/doc.toml",
+                "resources/doc.toml",
                 r#"
 [resource]
 name = "doc"

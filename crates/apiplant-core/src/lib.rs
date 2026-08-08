@@ -24,7 +24,6 @@ pub use env::{expand_document, parse_toml};
 pub use error::{Error, Result};
 pub use schema::{
     relation_name, Access, AuthEvent, CrudAction, Field, FieldType, HookEvent, Hooks, OnDelete,
-    TextCase,
     Permissions, Policy, Publishes, RateLimitRule, RateLimits, Reference, Resource, Scope,
-    ORG_CLASS_FIELD, ORG_CLASS_SUFFIX,
+    TextCase, ORG_CLASS_FIELD, ORG_CLASS_SUFFIX,
 };

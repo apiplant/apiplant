@@ -7,7 +7,7 @@ where the surprises are.
 
 ```
 24-nested-resources/
-└── models/
+└── resources/
     ├── municipality.toml      # global — the shared reference table
     ├── ingestion_job.toml     # global,     municipality_id → municipality
     ├── collection_point.toml  # org-scoped, municipality_id → municipality

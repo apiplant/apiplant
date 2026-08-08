@@ -16,7 +16,7 @@ import {
 const PROMISES = [
   {
     title: "Reads your app directory",
-    body: "main.toml, every models/*.toml, every agents/*.toml, and everything under functions/ — sources, per-function config and the built libraries.",
+    body: "main.toml, every resources/*.toml, every agents/*.toml, and everything under functions/ — sources, per-function config and the built libraries.",
   },
   {
     title: "Edits resources, agents and functions",
@@ -94,7 +94,7 @@ function NewAppDialog(props: { target: NewAppTarget; onClose: () => void }) {
         />
 
         <p class="text-xs leading-relaxed text-faint">
-          The directory is created now; <Mono>main.toml</Mono> and the models are staged like any other
+          The directory is created now; <Mono>main.toml</Mono> and the resources are staged like any other
           edit and hit disk when you press <strong>Save</strong>.
         </p>
 
@@ -144,7 +144,7 @@ export function Landing(props: { rememberedProjectName?: string | null; onReopen
       if (result.candidates.length === 0) {
         setCandidates([]);
         setError(
-          `No apiplant app found in ${result.parent.name}. An app directory holds a main.toml, a models/ folder, an agents/ folder, or a functions/ folder.`,
+          `No apiplant app found in ${result.parent.name}. An app directory holds a main.toml, a resources/ folder, an agents/ folder, or a functions/ folder.`,
         );
         return;
       }

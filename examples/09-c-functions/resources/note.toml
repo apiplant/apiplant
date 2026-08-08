@@ -1,5 +1,5 @@
-# A small resource for the functions to query. Nothing special here — see
-# example 02 for the resource model itself.
+# Something for the `notes` function to count. See example 02 for the resource
+# itself.
 
 [resource]
 name = "note"

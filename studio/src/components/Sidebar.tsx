@@ -155,7 +155,7 @@ export function Sidebar(props: {
           when={custom().length}
           fallback={
             <p class="px-2.5 py-1 text-xs leading-relaxed text-faint">
-              No models yet — the app runs on the built-ins below.
+              No resources yet — the app runs on the built-ins below.
             </p>
           }
         >

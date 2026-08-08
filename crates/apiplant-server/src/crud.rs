@@ -472,7 +472,7 @@ fn field_filters(
             filters.push(Filter::contains(name.to_string(), raw.clone()));
             continue;
         }
-        match value::string_to_sql(field.ty, raw) {
+        match value::string_to_sql(field.ty, field.text_case(), raw) {
             Ok(v) => filters.push(Filter::Eq {
                 column: key.clone(),
                 value: v,
@@ -540,7 +540,7 @@ fn sort_keys(r: &Resource, params: &HashMap<String, String>) -> Result<Vec<Sort>
 ///
 /// Which columns is the resource's decision (`[admin] search_fields`, falling
 /// back to the single search field), so a search box needs to know nothing
-/// about the model. `?search_fields=a,b` narrows that to named columns for
+/// about the resource. `?search_fields=a,b` narrows that to named columns for
 /// callers that do: it is an API-only refinement, and every field it names is
 /// checked the same way `?field~=` is.
 fn search_filter(

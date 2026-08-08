@@ -12,7 +12,7 @@ something a single file couldn't:
 ```
 12-function-dependencies/
 ├── main.toml
-├── models/
+├── resources/
 │   └── article.toml      # something for `slug` to check names against
 └── functions/
     ├── token/            # Rust crate — depends on the `uuid` crate

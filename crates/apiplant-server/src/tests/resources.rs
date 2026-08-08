@@ -24,7 +24,7 @@ url = "{}"
                 ),
             ),
             (
-                "models/post.toml",
+                "resources/post.toml",
                 r#"
 [resource]
 name = "post"
@@ -47,7 +47,7 @@ references = "user"
 "#,
             ),
             (
-                "models/comment.toml",
+                "resources/comment.toml",
                 r#"
 [resource]
 name = "comment"
@@ -75,7 +75,7 @@ references = "user"
 "#,
             ),
             (
-                "models/plan.toml",
+                "resources/plan.toml",
                 r#"
 [resource]
 name = "plan"
@@ -454,7 +454,7 @@ async fn substring_search_matches_parts_of_a_value_without_loosening_filters() {
                 ),
             ),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"

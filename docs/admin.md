@@ -13,7 +13,7 @@ apiplant run ./my-app     # → http://localhost:8080/admin/
 The interface is embedded in the `apiplant` binary. Its manifest, describing the
 resources, permissions, auth model and callable functions covered below, is
 derived from the app on boot, so the dashboard talks to its own origin and
-cannot fall out of step with the models it displays. Disable or relocate it in
+cannot fall out of step with the resources it displays. Disable or relocate it in
 `main.toml`:
 
 ```toml
@@ -83,7 +83,7 @@ same structure the [OpenAPI document](openapi.md) already publishes, and every
 request it makes is authenticated as the signed-in user.
 
 Unlike the built-in dashboard, this copy's manifest is **frozen at build time**,
-so re-run the command when models or functions change. The server never reads it
+so re-run the command when resources or functions change. The server never reads it
 back; a directory left in the app is inert.
 
 ## What an operator sees
@@ -155,7 +155,7 @@ Every key is optional; a resource with no `[admin]` section still appears, with
 labels and columns inferred.
 
 ```toml
-# models/product.toml
+# resources/product.toml
 [resource]
 name = "product"
 
@@ -245,10 +245,10 @@ what the column holds is a string either way.
 
 ### Fields on the registration form
 
-The `user` model has one extra option, because it has one extra form:
+The `user` resource has one extra option, because it has one extra form:
 
 ```toml
-# models/users.toml
+# resources/users.toml
 [fields.first_name]
 type = "string"
 
@@ -260,7 +260,7 @@ When unset, a field is collected exactly when it is `required`, since omitting a
 required field would fail the signup regardless. `signup` covers the other case:
 extending `user` with `first_name` and `last_name` and collecting both on the
 form **without** making either mandatory. `signup = false` does the reverse,
-keeping a required field off the form for a model that populates it from a
+keeping a required field off the form for a resource that populates it from a
 [hook](hooks.md).
 
 The list is used by the dashboard's register screen, the same screen when
@@ -320,7 +320,7 @@ Your account and API keys) and omits them from the resource navigation.
 That is only the default. An app that wants the generic table can enable it:
 
 ```toml
-# models/user.toml
+# resources/user.toml
 [admin]
 visible = true
 group   = "Administration"
@@ -415,7 +415,7 @@ See [Functions § Visibility](functions.md#visibility) and
 ## Deploying it
 
 There is nothing to deploy for the built-in dashboard: it ships inside the
-`apiplant` binary and its manifest is rebuilt on every boot, so a changed model
+`apiplant` binary and its manifest is rebuilt on every boot, so a changed resource
 or function is described correctly as soon as the server restarts. Compile
 functions before starting, or the actions that depend on them will not be
 listed:

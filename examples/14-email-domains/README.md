@@ -7,7 +7,7 @@ without an invite and without an admin doing anything.
 ```
 14-email-domains/
 ├── main.toml
-├── models/
+├── resources/
 │   ├── organization.toml       # the built-in + a `domain` field
 │   ├── users.toml              # the built-in + [hooks] after_create
 │   └── note.toml               # ordinary org-scoped data, to prove access
@@ -36,8 +36,8 @@ INFO apiplant_server:   hook user.after_create -> user_after_create
 
 ## `domain` on the organisation
 
-`models/organization.toml` is the built-in `organization` copied out and given
-one more field. A model file **replaces** the built-in of the same name rather
+`resources/organization.toml` is the built-in `organization` copied out and given
+one more field. A resource file **replaces** the built-in of the same name rather
 than merging into it, so the `global` scope and the membership-based permissions
 are repeated verbatim; only this part is new:
 
@@ -57,7 +57,7 @@ organisation that never sets a domain simply never auto-admits anyone.
 
 `POST /api/auth/register` writes a row to the `user` table, so it is a `create`
 on the `user` resource and the resource's create hooks fire there, exactly as
-they do on `POST /api/user`. That's all `models/users.toml` has to say:
+they do on `POST /api/user`. That's all `resources/users.toml` has to say:
 
 ```toml
 [hooks]

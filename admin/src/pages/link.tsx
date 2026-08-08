@@ -110,7 +110,7 @@ const DEAD_LINK = "This link is no longer valid. It may have expired, or already
  * Whether the address already has an account determines the entire form. With
  * one, there is nothing to fill in: the token proves control of the registered
  * address, so joining is a single button. Without one, this is also a sign-up,
- * and it collects a password along with whatever else the `user` model
+ * and it collects a password along with whatever else the `user` resource
  * requires.
  */
 export function AcceptInvitePage(props: { token: string }) {

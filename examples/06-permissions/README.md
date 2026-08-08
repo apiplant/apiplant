@@ -5,7 +5,7 @@ whole access model.
 
 ```
 06-permissions/
-└── models/
+└── resources/
     ├── plan.toml           # public catalogue, private writes
     ├── diary.toml          # owner-only rows
     └── announcement.toml   # org-scoped, role-gated

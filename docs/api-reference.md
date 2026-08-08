@@ -59,10 +59,10 @@ indicating so is worse than rejecting the request.
 ### Searching several fields at once
 
 `?field~=` searches one column. `?search=` searches the set declared by the
-model, so a search box needs no knowledge of the underlying fields:
+resource, so a search box needs no knowledge of the underlying fields:
 
 ```toml
-# models/order.toml
+# resources/order.toml
 [admin]
 search_fields = ["reference", "customer_note"]
 ```
@@ -73,7 +73,7 @@ search_fields = ["reference", "customer_note"]
 
 When undeclared, the set is the single `search_field`, which itself defaults to
 the `display_field`, so behaviour is unchanged for a resource that does not
-configure one. A caller with knowledge of the model can override the set per
+configure one. A caller with knowledge of the resource can override the set per
 request with `?search_fields=`, an API-only refinement; the dashboard always
 uses the configured set. Both forms follow the same rules as `~`: only `string`
 and `text` columns, never a `hidden` one, `%` and `_` matched literally, and
@@ -108,7 +108,7 @@ sends them:
 |--------|--------|
 | `organization_id` (org-scoped resources) | The tenant is stamped from the active organisation. Accepting it on update would allow a caller to *move* a row into an organisation they do not belong to, since the `WHERE` clause only establishes that they may modify the row in its current organisation. |
 | The resource's `owner_field` | Stamped from the caller, so ownership cannot be assigned or given away. |
-| The `user` model's `password_field` | Holds an argon2 hash. The only endpoint that writes it is `POST <base>/auth/register`, which hashes a plaintext first. |
+| The `user` resource's `password_field` | Holds an argon2 hash. The only endpoint that writes it is `POST <base>/auth/register`, which hashes a plaintext first. |
 
 This applies to hook replacements too: a `before_create`/`before_update` hook
 that returns one of these keys has it dropped the same way, so a hook cannot

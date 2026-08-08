@@ -7,7 +7,7 @@ container to point them at.
 25-observability/
 ├── main.toml          # the [observability] blocks; everything else is example 02
 ├── compose.yaml       # grafana/otel-lgtm: Loki, Grafana, Tempo, Prometheus
-├── models/note.toml   # an ordinary resource, here to be traffic
+├── resources/note.toml   # an ordinary resource, here to be traffic
 └── functions/work.ts  # one slow endpoint, one that throws, one that works
 ```
 

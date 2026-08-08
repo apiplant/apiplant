@@ -249,7 +249,7 @@ in another. See [Multitenancy](multitenancy.md#roles-are-per-organisation).
 
 An admin of an organisation satisfies **every** `role:` check in it. Granting
 someone `admin` grants them `role:billing`, `role:support` and anything else the
-app defines, without requiring a row per role, so adding a new role to a model
+app defines, without requiring a row per role, so adding a new role to a resource
 never locks out the organisation's administrators.
 
 This is a rule about *checks*, not about stored data: `admin` is never expanded
@@ -321,7 +321,7 @@ A policy decides who may perform an action; three things are decided regardless
 of it, because no policy can express them safely:
 
 * **Server-owned columns.** `organization_id`, the owner column and the `user`
-  model's password column are stamped by the server and stripped from any body
+  resource's password column are stamped by the server and stripped from any body
   that carries them, on create and on update alike. Details in the
   [API reference](api-reference.md#server-owned-columns).
 * **Expansion.** `?expand=` is a read of the *target* resource and runs that

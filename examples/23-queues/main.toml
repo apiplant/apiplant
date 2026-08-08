@@ -39,7 +39,7 @@ publish = "authenticated"
 # Which function handles which topic. One name, or a list.
 #
 # Nothing here names the *publisher*: `order.paid` is announced by the `order`
-# model below and by the `checkout` function, and neither of them knows this
+# resource below and by the `checkout` function, and neither of them knows this
 # table exists. That indirection is the entire point — adding `notifyOps` to
 # this line adds a second handler without touching either publisher.
 [queues.subscribe]

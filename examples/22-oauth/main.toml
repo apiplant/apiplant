@@ -72,7 +72,7 @@ token_delivery = "fragment"
 state_ttl_secs = 600
 
 # Where a provider's name and picture are written on every sign-in. These are
-# the columns the built-in `user` model declares, so they are also the defaults;
+# the columns the built-in `user` resource declares, so they are also the defaults;
 # an app that calls them something else names it here, and one that would rather
 # keep its own copy of a name sets the field to "".
 name_field = "display_name"

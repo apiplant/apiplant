@@ -7,7 +7,7 @@ lifecycle.
 ```
 08-hooks/
 ├── main.toml
-├── models/
+├── resources/
 │   ├── post.toml               # org-scoped, with a [hooks] section
 │   └── comment.toml            # post_id → post, owner_id → user
 └── functions/
@@ -28,7 +28,7 @@ cargo run -p apiplant -- build examples/08-hooks   # needs cargo on PATH
 cargo run -p apiplant -- run examples/08-hooks
 ```
 
-The build step is required: `models/post.toml` declares hooks, and a hook whose
+The build step is required: `resources/post.toml` declares hooks, and a hook whose
 function isn't loaded fails its requests closed with a `500` rather than silently
 skipping validation. The boot log lists what resolved:
 
@@ -44,7 +44,7 @@ hooks run whatever a function's visibility.
 ## The hooks
 
 `post_hooks.rs` exports five independent functions — one per event, no
-dispatcher — and `models/post.toml` points each event at one:
+dispatcher — and `resources/post.toml` points each event at one:
 
 | Event | Function | Behaviour |
 |-------|----------|-----------|

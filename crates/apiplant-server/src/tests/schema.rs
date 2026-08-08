@@ -1,5 +1,5 @@
 //! Schema evolution: migrations against a table that already has rows, and
-//! apps that override the built-in models with their own.
+//! apps that override the built-in resources with their own.
 
 use super::*;
 
@@ -21,7 +21,7 @@ url = "{}"
                 ),
             ),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"
@@ -52,7 +52,7 @@ required = true
     write_files(
         &root,
         &[(
-            "models/note.toml",
+            "resources/note.toml",
             r#"
 [resource]
 name = "note"
@@ -89,7 +89,7 @@ default = "draft"
 }
 
 #[ntex::test]
-async fn complex_overrides_and_mixed_permission_models_work_together() {
+async fn complex_overrides_and_mixed_permission_resources_work_together() {
     let db = TempDatabase::create("complex").await;
     let root = temp_dir("complex");
     write_files(
@@ -113,7 +113,7 @@ title = "Complex App"
                 ),
             ),
             (
-                "models/users.toml",
+                "resources/users.toml",
                 r#"
 [resource]
 name = "user"
@@ -144,7 +144,7 @@ type = "string"
 "#,
             ),
             (
-                "models/organization.toml",
+                "resources/organization.toml",
                 r#"
 [resource]
 name = "organization"
@@ -173,7 +173,7 @@ default = "standard"
 "#,
             ),
             (
-                "models/membership.toml",
+                "resources/membership.toml",
                 r#"
 [resource]
 name = "membership"
@@ -204,7 +204,7 @@ type = "string"
 "#,
             ),
             (
-                "models/api_key.toml",
+                "resources/api_key.toml",
                 r#"
 [resource]
 name = "api_key"
@@ -236,7 +236,7 @@ required = true
 "#,
             ),
             (
-                "models/news.toml",
+                "resources/news.toml",
                 r#"
 [resource]
 name = "news"
@@ -255,7 +255,7 @@ required = true
 "#,
             ),
             (
-                "models/bulletin.toml",
+                "resources/bulletin.toml",
                 r#"
 [resource]
 name = "bulletin"
@@ -274,7 +274,7 @@ required = true
 "#,
             ),
             (
-                "models/preference.toml",
+                "resources/preference.toml",
                 r#"
 [resource]
 name = "preference"
@@ -301,7 +301,7 @@ required = true
 "#,
             ),
             (
-                "models/project.toml",
+                "resources/project.toml",
                 r#"
 [resource]
 name = "project"
@@ -323,7 +323,7 @@ references = "user"
 "#,
             ),
             (
-                "models/deployment.toml",
+                "resources/deployment.toml",
                 r#"
 [resource]
 name = "deployment"

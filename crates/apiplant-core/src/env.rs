@@ -1,7 +1,7 @@
 //! Environment-variable references in an app's TOML files.
 //!
 //! Every TOML file apiplant reads from an app directory — `main.toml`, each
-//! `models/*.toml`, each `functions/*.toml` — goes through [`expand_document`]
+//! `resources/*.toml`, each `functions/*.toml` — goes through [`expand_document`]
 //! before it is deserialized, so any string value may name variables:
 //!
 //! ```toml
@@ -49,7 +49,7 @@ use std::borrow::Cow;
 /// Parse a TOML file, expanding environment references in its string values.
 ///
 /// This is how every app-directory file is read, so `$VAR` works the same in
-/// `main.toml`, in a model and in a function's config.
+/// `main.toml`, in a resource and in a function's config.
 ///
 /// A file with no `$` in it is deserialized straight from its text rather than
 /// through [`toml::Value`], which keeps the line and column in a parse error.

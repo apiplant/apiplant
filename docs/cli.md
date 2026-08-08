@@ -12,7 +12,7 @@ browser.
 It is a *client*. Point it at a server (`apiplant cli api.example.com`) and that
 address is all it needs. Everything else (which resources exist, which fields
 they have, which functions are callable, and what you are permitted to do) comes
-from the running server, via the same manifest the dashboard loads. A model
+from the running server, via the same manifest the dashboard loads. A resource
 change is visible as soon as the server restarts, and the console cannot
 describe an app other than the one actually running.
 
@@ -269,7 +269,7 @@ identifies which.
 ## What it is not
 
 The console is an operator tool rather than a development tool. It does not edit
-models, compile functions or run migrations; those are handled by
+resources, compile functions or run migrations; those are handled by
 `apiplant build`, `apiplant run` and [studio](../README.md#studio). It only
 calls the public API, using your credentials and permissions, so it can do
 exactly what the same requests via `curl` would allow.

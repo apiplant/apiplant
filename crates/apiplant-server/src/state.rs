@@ -448,7 +448,7 @@ impl AppState {
 
     /// Quoted-safe physical table name for a resource by logical name.
     /// The `SELECT` fragment and `JOIN` that bring an organisation's class into
-    /// a membership query — both empty when the app's `organization` model has
+    /// a membership query — both empty when the app's `organization` resource has
     /// no `org_class` column, so a replaced built-in still loads memberships.
     fn org_class_join(&self) -> (String, String) {
         let has_class = self

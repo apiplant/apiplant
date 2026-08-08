@@ -1,5 +1,5 @@
 # Something for the `slug` function to check against. Nothing here is specific
-# to functions — see example 02 for the resource model itself.
+# to functions — see example 02 for the resource itself.
 
 [resource]
 name = "article"

@@ -3,7 +3,7 @@
 Everything so far, at the size of an actual product: **20 resources, 52 foreign
 keys, no code**. It's the back office of a small distributor — catalogue,
 stock, procurement, orders, fulfilment, payments and support — and it is all
-`models/*.toml`.
+`resources/*.toml`.
 
 ```
                        ┌── product_category ─┐ (self-referencing tree)
@@ -28,7 +28,7 @@ stock, procurement, orders, fulfilment, payments and support — and it is all
         └── support_ticket ── ticket_message
 ```
 
-## The models
+## The resources
 
 | Resource | Scope | Shows |
 |----------|-------|-------|
@@ -279,13 +279,13 @@ get country "$BOT"   # → [DE, FR]    3 global ones, shared
 ## A back office for it
 
 Twenty resources is exactly the point at which a raw table of rows stops being
-usable by anyone who did not write the models. So each one carries an `[admin]`
+usable by anyone who did not write the resources. So each one carries an `[admin]`
 section saying what to call it and where it belongs, and the fields whose
 comments already listed their values (`status`, `priority`, `tier`) declare
 those values properly so they render as dropdowns:
 
 ```toml
-# models/product.toml
+# resources/product.toml
 [admin]
 group   = "Catalogue"
 order   = 1

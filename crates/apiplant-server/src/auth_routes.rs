@@ -1,10 +1,10 @@
 //! Built-in authentication endpoints, mounted under `<base>/auth`.
 //!
 //! These operate on the `user` and `api_key` resources — which are just ordinary
-//! resources — but understand the `[auth]` section on the user model
+//! resources — but understand the `[auth]` section on the user resource
 //! (configurable identity/password field names).
 //!
-//! Each endpoint is extensible through the `user` model's ordinary `[hooks]`
+//! Each endpoint is extensible through the `user` resource's ordinary `[hooks]`
 //! section, which carries these events alongside the CRUD ones:
 //!
 //! ```toml
@@ -56,7 +56,7 @@ pub(crate) fn auth_spec(state: &AppState) -> AuthSpec {
 }
 
 pub(crate) fn quote(ident: &str) -> String {
-    // auth field names come from the developer's own model; still refuse
+    // auth field names come from the developer's own resource; still refuse
     // anything that isn't a plain identifier.
     if ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !ident.is_empty() {
         format!("\"{ident}\"")
@@ -67,7 +67,7 @@ pub(crate) fn quote(ident: &str) -> String {
 
 /// `POST <base>/auth/register` — create a user and return a session token.
 ///
-/// Registration is a `create` on the `user` resource, so the `user` model's
+/// Registration is a `create` on the `user` resource, so the `user` resource's
 /// `before_create` / `after_create` [hooks](crate::hooks) fire here exactly as
 /// they do on `POST <base>/user` — the same function serves both doors into the
 /// same table. Two differences follow from what registration is:
@@ -139,7 +139,7 @@ pub async fn register(
 /// Shared by `POST <base>/auth/register` and by
 /// [accepting an invitation](crate::email_auth::accept_invitation), because the
 /// two are the same event seen from different doors: somebody who did not have
-/// an account now has one. A model's `before_register` fires for both, which is
+/// an account now has one. A resource's `before_register` fires for both, which is
 /// the point — a rule about who may sign up should not be bypassable by getting
 /// invited.
 ///
@@ -158,7 +158,7 @@ pub(crate) async fn create_account(
     // no organisation, so the hook context carries the request alone.
     let hook_req = HookRequest::new(req, &parse_query(req.query_string()), None, None);
 
-    // `before_register` runs outside `before_create`, so a model can reject a
+    // `before_register` runs outside `before_create`, so a resource can reject a
     // signup without also rejecting an administrative `POST <base>/user`.
     match hooks::run_auth(
         state,
@@ -411,7 +411,7 @@ pub async fn login(
     let Some(user_tbl) = table(&state, "user") else {
         return error(500, "missing user resource");
     };
-    // `email_verified_at` is a built-in column, but the `user` model is
+    // `email_verified_at` is a built-in column, but the `user` resource is
     // replaceable — an app that dropped it is an app that does not confirm
     // addresses, and asking for the column would be a 500 rather than a login.
     let verification_required =
@@ -607,7 +607,7 @@ pub async fn create_api_key(
         active_org,
     );
 
-    // A `before_api_key` replacement writes the row, so a model can stamp an
+    // A `before_api_key` replacement writes the row, so a resource can stamp an
     // expiry or a scope onto every key it issues.
     match hooks::run_auth(
         &state,

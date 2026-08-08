@@ -35,7 +35,7 @@ default = "3/1m"
                 ),
             ),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"
@@ -215,7 +215,7 @@ default = "1/1h"
                 ),
             ),
             (
-                "models/note.toml",
+                "resources/note.toml",
                 r#"
 [resource]
 name = "note"

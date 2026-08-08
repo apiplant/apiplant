@@ -123,7 +123,7 @@ export interface Resource {
 /** A resource as it exists in a project: on disk, or still a framework default. */
 export interface ResourceEntry {
   name: string;
-  /** `models/<file>.toml`, or null while the resource is an unmodified built-in. */
+  /** `resources/<file>.toml`, or null while the resource is an unmodified built-in. */
   path: string | null;
   /** One of the five resources the framework defines with or without a file. */
   builtin: boolean;

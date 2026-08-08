@@ -528,7 +528,7 @@ fn build_manifest(
                 .iter()
                 .filter(|(name, field)| {
                     // The identity and password have their own inputs on the
-                    // form. Of the rest, a field is asked for when the model
+                    // form. Of the rest, a field is asked for when the resource
                     // says so — `[fields.<name>.admin] signup`, which is how an
                     // app adds `name` and `surname` to the form without making
                     // them mandatory — and otherwise when it is `required`,
@@ -664,7 +664,7 @@ fn billing_manifest(app: &App) -> Option<BillingManifest> {
 }
 
 /// Every organisation class named by a permission anywhere in the app —
-/// models, agents, and the `org_class_editors` setting itself.
+/// resources, agents, and the `org_class_editors` setting itself.
 fn known_classes(app: &App) -> Vec<String> {
     let mut classes: BTreeSet<String> = BTreeSet::new();
     let mut note = |policy: &Policy| {
@@ -1125,20 +1125,20 @@ mod tests {
         dir
     }
 
-    fn build_manifest_for(models: &[(&str, &str)]) -> Value {
+    fn build_manifest_for(resources: &[(&str, &str)]) -> Value {
         build_manifest_with_config(
             "[server]\nbase_path = \"/api\"\n\n[auth]\nallow_registration = true\n",
-            models,
+            resources,
         )
     }
 
-    fn build_manifest_with_config(main_toml: &str, models: &[(&str, &str)]) -> Value {
+    fn build_manifest_with_config(main_toml: &str, resources: &[(&str, &str)]) -> Value {
         let app_dir = temp_dir("app");
         let out_dir = temp_dir("out");
-        fs::create_dir_all(app_dir.join("models")).unwrap();
+        fs::create_dir_all(app_dir.join("resources")).unwrap();
         fs::write(app_dir.join("main.toml"), main_toml).unwrap();
-        for (name, src) in models {
-            fs::write(app_dir.join(format!("models/{name}.toml")), src).unwrap();
+        for (name, src) in resources {
+            fs::write(app_dir.join(format!("resources/{name}.toml")), src).unwrap();
         }
 
         build(
@@ -1224,7 +1224,7 @@ mod tests {
     fn build_writes_static_admin_files_and_manifest() {
         let app_dir = temp_dir("files");
         let out_dir = temp_dir("files-out");
-        fs::create_dir_all(app_dir.join("models")).unwrap();
+        fs::create_dir_all(app_dir.join("resources")).unwrap();
         fs::write(
             app_dir.join("main.toml"),
             "[server]\nbase_path = \"/api\"\n",

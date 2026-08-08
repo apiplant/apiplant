@@ -51,7 +51,7 @@ export function NewAgentDialog(props: { onClose: () => void }) {
 
         <p class="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[0.6875rem] leading-relaxed text-muted">
           The studio starts the file with authenticated chat access and a placeholder prompt. Tweak the TOML after
-          creation for model overrides, scope, and a fuller system prompt.
+          creation for resource overrides, scope, and a fuller system prompt.
         </p>
 
         <div class="flex justify-end gap-2">
@@ -84,7 +84,7 @@ export function NewResourceDialog(props: { onClose: () => void }) {
   return (
     <Modal
       title="New resource"
-      subtitle="One models/*.toml — a table, five CRUD endpoints, and its own permissions."
+      subtitle="One resources/*.toml — a table, five CRUD endpoints, and its own permissions."
       onClose={props.onClose}
     >
       <div class="space-y-4">

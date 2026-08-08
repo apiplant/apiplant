@@ -1,12 +1,12 @@
 # Resources
 
-A **resource** is one `models/<name>.toml` file. apiplant turns it into a
+A **resource** is one `resources/<name>.toml` file. apiplant turns it into a
 Postgres table and a set of RESTful CRUD endpoints. Everything about the table
 and its API is declared in that file; there are no migrations or handlers to
 write.
 
 ```toml
-# models/post.toml
+# resources/post.toml
 [resource]
 name       = "post"          # required; also the URL segment (/api/post)
 # table    = "posts"         # optional physical table name (default apiplant_post)
@@ -96,9 +96,45 @@ Each `[fields.<name>]` table declares one column.
 | `unique` | any | `UNIQUE` constraint. A conflict returns **409**. |
 | `hidden` | any | Column is **stripped from every API response**, for example password hashes. It remains writable. |
 | `max_length` | `string`, `file` | Emits `varchar(N)`. A `file` defaults to `varchar(1024)`. |
+| `case` | `string`, `text` | `upper` or `lower`. The value is forced into that case. See [Forcing a case](#forcing-a-case). |
 | `default` | scalar (bool/number/string) | Column `DEFAULT`. |
 | `references` | `reference` | Target resource name (required for references). |
 | `on_delete` | `reference` | Referential action: `restrict` (default), `set_null`, `cascade`, `no_action`. |
+
+### Forcing a case
+
+Some text is prose and some is a **code** — a currency, a country, a ticket
+prefix, a coupon. A code has a conventional spelling, and `eur` and `EUR` are
+the same value written two ways. Left alone that produces two of everything: two
+rows a `unique` constraint sees as distinct, two groups in a report, and a
+`?currency=eur` filter that finds only whichever the caller guessed.
+
+```toml
+[fields.currency]
+type       = "string"
+max_length = 3
+case       = "upper"        # or "lower"
+```
+
+This applies in three places, which together are what make it a guarantee
+rather than a convention:
+
+* **On write.** The column stores one spelling, so `unique`, sorting and
+  equality all mean what they look like.
+* **On filters.** `?currency=eur` is cased the same way before it is compared,
+  so it matches the rows stored as `EUR`.
+* **On read.** Rows are cased on the way out as well, so a value written by a
+  seed file, a webhook or a hand-run `UPDATE` reads back like one written
+  through the API. Without this the promise would hold only for rows that
+  happened to arrive through `POST` — which is rarely where the interesting
+  data comes from.
+
+Ignored on non-text fields: there is no case to force on a number, and quietly
+doing nothing is better than upper-casing the digits of a price.
+
+Case folding is ASCII-only, deliberately. These are codes, and full Unicode
+folding turns a Turkish `i` into a character that no longer matches the code it
+came from.
 
 A field may also carry a `[fields.<name>.admin]` sub-table describing how it is
 *presented* in the generated dashboard: a label, help text, a widget, or a set
@@ -233,7 +269,7 @@ directly, or disable `auto_migrate`.
 ## Built-in resources
 
 `organization`, `membership`, `user`, `api_key`, and `oauth_connection` exist in
-every app with sensible defaults. Add a `models/<name>.toml` with the same
+every app with sensible defaults. Add a `resources/<name>.toml` with the same
 `name` to **replace** the default, adding fields or changing permissions; the
 framework continues to use it for auth, ownership, organisation resolution and
 key lookup. See [Authentication](authentication.md).

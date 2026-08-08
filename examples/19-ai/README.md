@@ -2,14 +2,14 @@
 
 An app names an assistant, and gets a streaming chat endpoint plus a `chat`
 call every function can make. Swapping a local model for OpenAI or Anthropic is
-three lines of `main.toml`; nothing in `models/` or `functions/` changes.
+three lines of `main.toml`; nothing in `resources/` or `functions/` changes.
 
 ```
 19-ai/
 ├── main.toml                  # [ai] provider, endpoint, model, system prompt
 ├── agents/
 │   └── coach.toml             # one configured agent, with stored history
-├── models/
+├── resources/
 │   └── note.toml              # owner-scoped rows the assistant answers about
 └── functions/
     ├── ask.rs                 # a function in front of the model — and still streaming

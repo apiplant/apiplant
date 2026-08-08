@@ -94,15 +94,15 @@ impl App {
             }
         }
 
-        // 2. Load user-defined models, overriding built-ins by name.
-        let models_dir = root.join("models");
-        if models_dir.is_dir() {
-            for entry in std::fs::read_dir(&models_dir).map_err(|e| crate::Error::Io {
-                path: models_dir.clone(),
+        // 2. Load user-defined resources, overriding built-ins by name.
+        let resources_dir = root.join("resources");
+        if resources_dir.is_dir() {
+            for entry in std::fs::read_dir(&resources_dir).map_err(|e| crate::Error::Io {
+                path: resources_dir.clone(),
                 source: e,
             })? {
                 let entry = entry.map_err(|e| crate::Error::Io {
-                    path: models_dir.clone(),
+                    path: resources_dir.clone(),
                     source: e,
                 })?;
                 let path = entry.path();
@@ -110,7 +110,7 @@ impl App {
                     continue;
                 }
                 let resource = Resource::load(&path)?;
-                tracing::info!(resource = %resource.meta.name, "loaded model");
+                tracing::info!(resource = %resource.meta.name, "loaded resource");
                 resources.insert(resource.meta.name.clone(), resource);
             }
         }
@@ -262,7 +262,7 @@ mod tests {
             "apiplant-app-{label}-{}-{stamp}",
             std::process::id()
         ));
-        fs::create_dir_all(dir.join("models")).unwrap();
+        fs::create_dir_all(dir.join("resources")).unwrap();
         dir
     }
 
@@ -321,7 +321,7 @@ mod tests {
     fn org_scoped_resources_get_organization_id_injected() {
         let dir = temp_app_dir("org-scope");
         fs::write(
-            dir.join("models/post.toml"),
+            dir.join("resources/post.toml"),
             r#"
 [resource]
 name = "post"
@@ -333,7 +333,7 @@ required = true
         )
         .unwrap();
         fs::write(
-            dir.join("models/plan.toml"),
+            dir.join("resources/plan.toml"),
             r#"
 [resource]
 name = "plan"
@@ -360,10 +360,10 @@ type = "string"
     }
 
     #[test]
-    fn same_named_model_replaces_builtin_resource() {
+    fn same_named_resource_replaces_builtin_resource() {
         let dir = temp_app_dir("override-user");
         fs::write(
-            dir.join("models/users.toml"),
+            dir.join("resources/users.toml"),
             r#"
 [resource]
 name = "user"
@@ -413,7 +413,7 @@ hidden = true
     fn dependency_order_places_parents_before_children() {
         let dir = temp_app_dir("deps");
         fs::write(
-            dir.join("models/post.toml"),
+            dir.join("resources/post.toml"),
             r#"
 [resource]
 name = "post"
@@ -428,7 +428,7 @@ type = "string"
         )
         .unwrap();
         fs::write(
-            dir.join("models/comment.toml"),
+            dir.join("resources/comment.toml"),
             r#"
 [resource]
 name = "comment"

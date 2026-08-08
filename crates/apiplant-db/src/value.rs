@@ -1,17 +1,24 @@
 //! Conversions between JSON (the wire format) and typed SQL values.
 
-use apiplant_core::FieldType;
+use apiplant_core::{FieldType, TextCase};
 use sea_orm::sea_query::Value as SqlValue;
 
 /// Convert a JSON value into a typed SQL value for the given column type.
 /// Returns a human-readable error on a type mismatch (surfaced as a 400).
-pub fn json_to_sql(ty: FieldType, v: &serde_json::Value) -> Result<SqlValue, String> {
+///
+/// `case` forces a text value's case before it is stored, so the column holds
+/// one spelling of a code rather than however many the callers typed.
+pub fn json_to_sql(
+    ty: FieldType,
+    case: Option<TextCase>,
+    v: &serde_json::Value,
+) -> Result<SqlValue, String> {
     if v.is_null() {
         return Ok(null_for(ty));
     }
     Ok(match ty {
         FieldType::String | FieldType::Text | FieldType::File => {
-            SqlValue::from(v.as_str().ok_or("expected a string")?.to_string())
+            SqlValue::from(cased(case, v.as_str().ok_or("expected a string")?))
         }
         FieldType::Integer => SqlValue::from(
             i32::try_from(v.as_i64().ok_or("expected an integer")?)
@@ -32,6 +39,14 @@ pub fn json_to_sql(ty: FieldType, v: &serde_json::Value) -> Result<SqlValue, Str
     })
 }
 
+/// A text value in the column's case, or unchanged when it forces none.
+fn cased(case: Option<TextCase>, value: &str) -> String {
+    match case {
+        Some(case) => case.apply(value),
+        None => value.to_string(),
+    }
+}
+
 /// The correctly-typed SQL `NULL` for a column type (Postgres cares about the
 /// type of a bound null).
 pub fn null_for(ty: FieldType) -> SqlValue {
@@ -49,9 +64,13 @@ pub fn null_for(ty: FieldType) -> SqlValue {
 
 /// Convert a raw query-string value (always a string) into a typed SQL value
 /// for a column, used for `?field=value` filtering.
-pub fn string_to_sql(ty: FieldType, s: &str) -> Result<SqlValue, String> {
+///
+/// The filter is cased the same way the column is, so `?currency=eur` finds
+/// the rows stored as `EUR`. A filter that had to be spelled the way the
+/// storage happens to be is a filter that silently returns nothing.
+pub fn string_to_sql(ty: FieldType, case: Option<TextCase>, s: &str) -> Result<SqlValue, String> {
     Ok(match ty {
-        FieldType::String | FieldType::Text | FieldType::File => SqlValue::from(s.to_string()),
+        FieldType::String | FieldType::Text | FieldType::File => SqlValue::from(cased(case, s)),
         FieldType::Integer => SqlValue::from(s.parse::<i32>().map_err(|_| "expected an integer")?),
         FieldType::BigInt => SqlValue::from(s.parse::<i64>().map_err(|_| "expected an integer")?),
         FieldType::Float => SqlValue::from(s.parse::<f64>().map_err(|_| "expected a number")?),

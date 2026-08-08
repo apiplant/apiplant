@@ -129,13 +129,13 @@ empty or not-yet-existing directory.
 my-app/
 ├── main.toml       # optional server/db/auth/docs config; safe defaults if absent
 ├── https/          # cert + key here ⇒ the server runs HTTPS
-├── models/         # one <name>.toml per resource ⇒ a table + CRUD endpoints
+├── resources/      # one <name>.toml per resource ⇒ a table + CRUD endpoints
 ├── seed/           # optional <resource>.toml|csv ⇒ initial rows
 ├── agents/         # optional <name>.toml per configured AI agent
 └── functions/      # function sources (.rs), their config, and built libraries
 ```
 
-* A **resource** (`models/post.toml`) becomes a Postgres table and a set of
+* A **resource** (`resources/post.toml`) becomes a Postgres table and a set of
   RESTful endpoints, each gated by a per-action **permission**.
 * `organization`, `membership`, `user`, `api_key` and `oauth_connection`
   resources exist by default and can be extended by dropping a file with the

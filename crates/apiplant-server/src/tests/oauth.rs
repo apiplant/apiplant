@@ -529,7 +529,7 @@ async fn link_by_verified_email_can_be_switched_off() {
 /// simply has no address, and says so rather than pretending.
 ///
 /// The saying-so is `email_placeholder`, and it is in the built-in `user`
-/// model: this app has no `models/users.toml` at all, because an app that has
+/// resource: this app has no `resources/users.toml` at all, because an app that has
 /// never heard of the flag is exactly the one that would otherwise mail an
 /// address apiplant made up.
 #[ntex::test]
@@ -785,7 +785,7 @@ async fn the_redirecting_endpoints_work_with_no_front_end_at_all() {
     );
 }
 
-/// A name and a picture land on the account, in the columns the built-in model
+/// A name and a picture land on the account, in the columns the built-in resource
 /// declares — and in whichever columns an app says instead.
 #[ntex::test]
 async fn a_sign_in_fills_in_a_name_and_a_picture() {
@@ -836,11 +836,11 @@ async fn where_the_profile_lands_is_the_apps_to_say() {
     )
     .await;
     // The column has to exist for the value to land in it; `keep_declared`
-    // drops what the model does not declare, which is what lets an app opt out
+    // drops what the resource does not declare, which is what lets an app opt out
     // by simply not having the column.
     let root = _root.clone();
     std::fs::write(
-        root.join("models/users.toml"),
+        root.join("resources/users.toml"),
         r#"
 [resource]
 name = "user"
@@ -1100,7 +1100,7 @@ fn urlencode(value: &str) -> String {
 /// `oauth_connection` is an ordinary resource, so a `delete = "owner"` on it
 /// would put a second door beside the guarded endpoint — one that deletes the
 /// row without asking what else is left, and locks somebody out of their own
-/// account for good. That is why the built-in model makes `delete` private:
+/// account for good. That is why the built-in resource makes `delete` private:
 /// there is exactly one way to unlink, and it is the way that checks.
 #[ntex::test]
 async fn a_connection_cannot_be_deleted_around_the_check() {

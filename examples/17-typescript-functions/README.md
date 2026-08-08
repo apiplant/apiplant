@@ -9,7 +9,7 @@ is worth knowing what actually happens.
 ```
 17-typescript-functions/
 ├── main.toml
-├── models/
+├── resources/
 │   └── note.toml       # something for the function to count, plus one hook
 └── functions/
     ├── hello.ts        # endpoints, one hook and one AI example
@@ -145,7 +145,7 @@ npx tsc --noEmit --strict examples/17-typescript-functions/functions/hello.ts
 
 ## Hooks and AI tool definitions
 
-`models/note.toml` points `before_create` at `noteBeforeCreate`, so the same
+`resources/note.toml` points `before_create` at `noteBeforeCreate`, so the same
 TypeScript file is both HTTP endpoints and a lifecycle hook. The hook reads
 `hook()` rather than a request body and returns `{ data: ... }`, which becomes
 the row CRUD writes.

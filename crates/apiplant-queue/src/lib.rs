@@ -129,7 +129,7 @@ impl Delivery {
 pub struct Queue {
     conn: DatabaseConnection,
     /// The physical table, resolved from the app's `queue_message` resource so
-    /// that an app which overrides it with its own model still works.
+    /// that an app which overrides it with its own resource still works.
     table: String,
     config: QueuesConfig,
 }

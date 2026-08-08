@@ -1,7 +1,7 @@
 //! Auto-join: put a new account into the organisation that owns its email
 //! domain.
 //!
-//! `models/organization.toml` adds a `domain` column, and `models/users.toml`
+//! `resources/organization.toml` adds a `domain` column, and `resources/users.toml`
 //! points the `user` resource's `after_create` event at the function below:
 //!
 //! ```toml

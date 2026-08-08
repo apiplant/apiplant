@@ -1,4 +1,4 @@
-# Dropping a model named `user` REPLACES the built-in one — the framework keeps
+# Dropping a resource named `user` REPLACES the built-in one — the framework keeps
 # using it for login, ownership, API keys and org membership.
 #
 # Here we log in with a username instead of an email, and add profile fields.
