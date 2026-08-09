@@ -1,0 +1,28 @@
+# The whole backend, in one container.
+#
+# `grafana/otel-lgtm` is Grafana's all-in-one demo image: an OpenTelemetry
+# Collector on :4318 with Loki, Grafana, Tempo and Mimir/Prometheus behind it,
+# already wired to each other as datasources. It is the shortest path from "my
+# app exports OTLP" to "I am looking at my traces", and it is a demo image —
+# storage is in the container, so everything goes when the container does.
+#
+#   docker compose -f examples/25-observability/compose.yaml up -d
+#
+# Grafana is then on http://localhost:3000 (admin / admin).
+
+services:
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: apiplant-lgtm
+    ports:
+      - "3000:3000"   # Grafana
+      - "4318:4318"   # OTLP/HTTP — what main.toml points at
+      - "4317:4317"   # OTLP/gRPC — unused here; apiplant exports over HTTP
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30

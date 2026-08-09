@@ -1,0 +1,35 @@
+# One row per thing the field types can hold, so the dashboard and `GET /notes`
+# have something to show in every column.
+#
+# TOML is typed, so a boolean is a boolean and a datetime needs no quotes — and
+# `metadata`, being a `json` column, takes a whole table.
+
+[[row]]
+id = "note-welcome"
+title = "Welcome to apiplant"
+body = "Every field below exists because a column does. Edit this row in the dashboard and watch the API answer differently."
+pinned = true
+priority = 1
+rating = 4.5
+slug = "welcome"
+due_at = 2024-03-01T09:00:00Z
+external_id = "11111111-2222-3333-4444-555555555555"
+metadata = { tags = ["intro", "docs"], source = "seed" }
+secret = "never returned in a response"
+
+[[row]]
+id = "note-shopping"
+title = "Shopping list"
+body = "Milk, bread, a reason to write a shopping list in a database."
+priority = 3
+slug = "shopping"
+metadata = { tags = ["errands"] }
+
+[[row]]
+id = "note-archived"
+title = "Old idea"
+body = "Kept to show that a row need not fill every column: the ones it leaves out take their defaults."
+pinned = false
+priority = 5
+rating = 2.0
+slug = "old-idea"

@@ -1,0 +1,8 @@
+[[row]]
+id = "ref-1002"
+organization_id = "acme"
+payment_id = "pay-1002"
+amount_cents = 7900
+reason = "One speaker arrived with a cracked grille."
+approved_by_id = "admin"
+refunded_at = 2024-02-15T11:20:00Z

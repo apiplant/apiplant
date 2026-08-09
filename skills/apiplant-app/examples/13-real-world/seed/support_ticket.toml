@@ -1,0 +1,31 @@
+[[row]]
+id = "tkt-3001"
+organization_id = "acme"
+subject = "Cracked grille on delivery"
+customer_id = "cust-lumen"
+order_id = "ord-1002"
+reporter_id = "editor"
+assignee_id = "admin"
+priority = "urgent"
+status = "resolved"
+resolved_at = 2024-02-15T11:25:00Z
+
+[[row]]
+id = "tkt-3002"
+organization_id = "acme"
+subject = "Purchase order number needed before we ship"
+customer_id = "cust-halberd"
+order_id = "ord-1003"
+reporter_id = "editor"
+assignee_id = "editor"
+priority = "normal"
+status = "pending"
+
+[[row]]
+id = "tkt-3003"
+organization_id = "acme"
+subject = "Does the Orbit work with a wired connection?"
+customer_id = "cust-private"
+reporter_id = "member"
+priority = "low"
+status = "open"

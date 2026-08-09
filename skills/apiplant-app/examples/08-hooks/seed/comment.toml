@@ -1,0 +1,13 @@
+[[row]]
+id = "comment-congrats"
+organization_id = "acme"
+post_id = "post-launch"
+owner_id = "member"
+body = "Congratulations. How long did the migration take?"
+
+[[row]]
+id = "comment-reply"
+organization_id = "acme"
+post_id = "post-launch"
+owner_id = "admin"
+body = "About as long as it took to write the resources."

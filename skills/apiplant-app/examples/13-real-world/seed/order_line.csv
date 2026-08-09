@@ -1,0 +1,7 @@
+id,organization_id,order_id,variant_id,quantity,unit_price_cents,discount_cents
+line-1001-a,acme,ord-1001,var-orbit-black,20,24900,0
+line-1001-b,acme,ord-1001,var-cable,20,1200,2400
+line-1002-a,acme,ord-1002,var-pebble,4,7900,0
+line-1002-b,acme,ord-1002,var-cable,5,1200,0
+line-1003-a,acme,ord-1003,var-orbit-sand,1,24900,9100
+line-1004-a,acme,ord-1004,var-orbit-black,1,24900,0

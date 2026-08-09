@@ -1,0 +1,12 @@
+# `list`/`read` are `owner`, so each of these is visible to exactly one person.
+# Sign in as one and then the other: the same endpoint answers differently.
+
+[[row]]
+id = "diary-admin"
+owner_id = "admin"
+entry = "Reviewed the permissions example. It still says what it means."
+
+[[row]]
+id = "diary-member"
+owner_id = "member"
+entry = "Wrote an announcement. Being an editor is a quiet sort of power."

@@ -1,0 +1,43 @@
+# A global child of a global parent — `GET /api/municipality/{id}/ingestion_job`.
+#
+# The interesting part is the policy. This resource has no tenant column, but
+# `role:admin` still has to be answered *somewhere*: "admin of which
+# organisation?" So even though nothing here is org-scoped, every read of this
+# collection — nested or not — needs `X-Organization` to say which membership
+# to check the role against. Without it:
+#
+#   403 select an organisation with the X-Organization header
+#
+# The nested endpoint authorizes the **child**'s policy, not the parent's. The
+# parent is only the filter; `municipality` being `public` buys the child
+# nothing.
+
+[resource]
+name = "ingestion_job"
+scope = "global"
+
+[permissions]
+list   = "role:admin"
+read   = "role:admin"
+create = "role:admin"
+update = "role:admin"
+delete = "role:admin"
+
+[fields.municipality_id]
+type       = "reference"
+references = "municipality"
+required   = true
+on_delete  = "cascade"
+
+[fields.source]
+type     = "string"
+required = true
+
+[fields.status]
+type    = "string"
+default = "pending"
+options = ["pending", "running", "done", "failed"]
+
+[fields.records]
+type    = "integer"
+default = 0

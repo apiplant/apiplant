@@ -1,0 +1,20 @@
+[[row]]
+id = "shp-1001"
+organization_id = "acme"
+order_id = "ord-1001"
+warehouse_id = "wh-milan"
+carrier_id = "dhl"
+tracking_code = "DHL-SEED-1001"
+status = "delivered"
+shipped_at = 2024-02-07T07:30:00Z
+delivered_at = 2024-02-09T11:05:00Z
+
+[[row]]
+id = "shp-1002"
+organization_id = "acme"
+order_id = "ord-1002"
+warehouse_id = "wh-rotterdam"
+carrier_id = "ups"
+tracking_code = "UPS-SEED-1002"
+status = "in_transit"
+shipped_at = 2024-02-12T16:10:00Z

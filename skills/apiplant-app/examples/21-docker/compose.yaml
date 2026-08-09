@@ -1,0 +1,109 @@
+# Postgres and the app, which is the whole deployment: apiplant migrates the
+# database itself on boot, so there is no migration job and no release step.
+#
+#   docker compose up --build
+#   open http://localhost:8080/api/docs
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: apiplant_docker
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # The app waits for nothing, so the dependency below has to be real:
+    # without this healthcheck the first boot races the database's own
+    # initialisation and exits.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  api:
+    build:
+      context: .
+      args:
+        APP_RELEASE: local
+        APP_ENV: compose
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/apiplant_docker
+      # A real deployment reads this from a secret store. Anyone holding it can
+      # mint a session for any user.
+      JWT_SECRET: compose-secret-change-me
+      # Where `[storage] backend = "local"` writes. It has to be the mount
+      # point below: a container's own filesystem is discarded on every deploy,
+      # so an upload written anywhere else is gone by the next `up --build`.
+      STORAGE_DIR: /data/uploads
+    volumes:
+      # The uploads volume. This one line is the difference between files that
+      # survive a redeploy and files that do not — and it is the only thing
+      # `backend = "local"` needs.
+      #
+      # Moving to S3 or R2 instead: set the `[storage]` block in `main.toml` to
+      # `backend = "s3"` (the commented block there), drop this volume, and no
+      # stored link changes. A `file` field holds `/files/…`, which this server
+      # answers from whichever backend is configured, so nothing in the database
+      # ever named the volume.
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # The development loop, on the same database: this app directory mounted into
+  # a container that rebuilds and restarts whenever you save.
+  #
+  #   docker compose --profile dev up dev     # http://localhost:8081/api/docs
+  #
+  # It is a profile, so `docker compose up` still brings up the deployed shape
+  # above and nothing else. Both can run at once — hence the second port.
+  dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      # The stage that has cargo *and* the apiplant binary. The runtime image
+      # ships no toolchain on purpose, so a watch over `.rs` functions has to
+      # run somewhere that can compile them; an app whose functions are all
+      # TypeScript can use `image: ghcr.io/apiplant/apiplant` here instead.
+      target: functions
+    # That stage is a plain `rust:` image, so it does not inherit the runtime
+    # image's entrypoint and has to name the binary itself.
+    entrypoint: ["apiplant"]
+    command: ["run", "/app", "--watch"]
+    ports:
+      - "8081:8080"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/apiplant_docker
+      JWT_SECRET: compose-secret-change-me
+      STORAGE_DIR: /data/uploads
+    volumes:
+      # The whole app directory, live. Edit `resources/note.toml` or
+      # `functions/version.ts` on the host and the server inside restarts with
+      # the change — apiplant polls mtimes rather than waiting for inotify,
+      # which a bind mount does not deliver across the boundary.
+      - .:/app
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # One-shot: load the fixture, then exit. `docker compose run --rm seed`, or
+  # `--profile seed up` to include it. Seeding is idempotent, so re-running it
+  # never overwrites a row you changed.
+  seed:
+    profiles: ["seed"]
+    build:
+      context: .
+    command: ["seed", "/app"]
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/apiplant_docker
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads:

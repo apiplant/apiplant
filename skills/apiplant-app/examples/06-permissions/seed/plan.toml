@@ -1,0 +1,17 @@
+# `list`/`read` are public and everything else is `private`: nobody may create
+# one over the API, which is precisely the sort of table a seed file is for.
+
+[[row]]
+id = "plan-free"
+name = "Free"
+price_cents = 0
+
+[[row]]
+id = "plan-pro"
+name = "Pro"
+price_cents = 2900
+
+[[row]]
+id = "plan-enterprise"
+name = "Enterprise"
+price_cents = 49900

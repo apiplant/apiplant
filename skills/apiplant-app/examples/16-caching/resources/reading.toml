@@ -1,0 +1,43 @@
+# Ordinary data. Nothing here is cached by the framework — a framework-level
+# cache would have to guess when a row became stale, and every wrong guess
+# serves data the API never warned might be old.
+#
+# What *is* cached is cached by hooks, which know the answer to that question:
+# the `report` function memoises an aggregate over this table, and the read
+# hooks below serve a single row out of Redis until a write says otherwise.
+
+[resource]
+name = "reading"
+scope = "global"           # not per-organisation; example 04 covers that
+
+# Public writes so the README's curls need no token — unusual for a real app,
+# and what keeps this example to one idea at a time.
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "public"          # …including the writes that invalidate the caches
+delete = "public"
+
+# The framework caches nothing on its own — but a *function* that caches can be
+# told when its answer went stale. These three events cover every write to the
+# table; `before_update` catches the sensor a row is moving away from.
+#
+# `before_read` goes further: it *answers* the request from Redis when the row
+# is there, so `GET /api/reading/{id}` never reaches Postgres. `after_read` runs
+# only on a miss, and fills the cache with what the query returned.
+[hooks]
+before_read   = "reading_before_read"
+after_read    = "reading_after_read"
+after_create  = "reading_changed"
+before_update = "reading_before_update"
+after_update  = "reading_changed"
+after_delete  = "reading_changed"
+
+[fields.sensor]
+type     = "string"
+required = true
+
+[fields.value]
+type     = "float"
+required = true

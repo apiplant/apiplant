@@ -1,0 +1,58 @@
+# Fetching something bought outright.
+#
+# The counterpart to `document`: that one is gated on a *subscription* and this
+# one on a *purchase*, and the difference is the whole reason both exist. A
+# subscription is a thing that can lapse, so its check asks about right now. A
+# purchase is a thing that happened, so its check asks about the past — and a
+# row here is the record of somebody exercising it.
+#
+# As with `document`, there is nothing billing-specific in this file. It is an
+# ordinary org-scoped resource; the paywall is the `before_create` hook.
+
+[resource]
+name = "download"
+scope = "organization"
+timestamps = true
+
+[admin]
+label = "Download"
+plural = "Downloads"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"          # …if the organisation has bought it: see the hook
+update = "private"         # a download is a record of an event, not a draft
+delete = "role:admin"
+
+[hooks]
+before_create = "require_purchase"
+
+# Which product is being fetched — a real reference into the catalogue, so the
+# row cannot name something that was never sold, `?expand=product` returns the
+# product with the download, and deleting a product takes its download records
+# with it.
+#
+# A *product* and not a price, deliberately: raising a price mints a new Stripe
+# price and archives the old one, so somebody who bought at last year's price
+# holds a price id that is no longer on the shelf. What they bought is the
+# product, and that is what the hook checks.
+[fields.product_id]
+type       = "reference"
+references = "billing_product"
+required   = true
+on_delete  = "cascade"
+
+# Who it went to — the account, not a copy of their address. An email in a
+# column here would be a second place someone's address lives, stale from the
+# moment they change it; a reference is one place, and `?expand=delivered_to`
+# returns the person with the record.
+#
+# `set_null` rather than `cascade`, unlike the product above: a closed account
+# should not erase the fact that something was delivered, which is the kind of
+# thing support and an auditor both need to be able to look up afterwards. The
+# row survives with an empty recipient, which is the truth of what happened.
+[fields.delivered_to]
+type       = "reference"
+references = "user"
+on_delete  = "set_null"

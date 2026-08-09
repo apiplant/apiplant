@@ -1,0 +1,11 @@
+# Reference data: flat, numerous, and exported from somewhere else — which is
+# what CSV is here for. The header names the resource's fields; `id` holds the
+# alias other files point at.
+id,code,name,eu
+it,IT,Italy,true
+de,DE,Germany,true
+nl,NL,Netherlands,true
+fr,FR,France,true
+gb,GB,United Kingdom,false
+us,US,United States,false
+jp,JP,Japan,false

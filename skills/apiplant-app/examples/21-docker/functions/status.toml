@@ -1,0 +1,5 @@
+# Same two values as version.toml, reaching a compiled function instead of a
+# TypeScript one — a function's language changes nothing about how it is
+# configured.
+release = "${APP_RELEASE:-dev}"
+env     = "${APP_ENV:-local}"

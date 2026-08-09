@@ -1,0 +1,35 @@
+# Which order lines went into which parcel: the join that makes partial
+# shipments possible. Both parents cascade, so cancelling an order unwinds
+# order → order_line → shipment_line and order → shipment → shipment_line in
+# one delete.
+
+[resource]
+name = "shipment_line"
+
+[admin]
+visible = false
+group = "Operations"
+order = 4
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"
+delete = "role:manager"
+
+[fields.shipment_id]
+type       = "reference"
+references = "shipment"
+required   = true
+on_delete  = "cascade"
+
+[fields.order_line_id]
+type       = "reference"
+references = "order_line"
+required   = true
+on_delete  = "cascade"
+
+[fields.quantity]
+type     = "integer"
+required = true

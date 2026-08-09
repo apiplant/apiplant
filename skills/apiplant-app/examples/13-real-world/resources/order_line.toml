@@ -1,0 +1,42 @@
+# A line is the join between an order and a variant, carrying the price at the
+# time of sale (never read the price back off the variant — it changes).
+
+[resource]
+name = "order_line"
+
+[admin]
+visible = false
+label = "Order line"
+group = "Sales"
+order = 3
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "member"
+
+[fields.order_id]
+type       = "reference"
+references = "order"
+required   = true
+on_delete  = "cascade"     # delete the order, delete its lines
+
+[fields.variant_id]
+type       = "reference"
+references = "variant"
+required   = true
+on_delete  = "restrict"    # a sold SKU can't be deleted
+
+[fields.quantity]
+type     = "integer"
+required = true
+
+[fields.unit_price_cents]
+type     = "integer"
+required = true
+
+[fields.discount_cents]
+type    = "integer"
+default = 0

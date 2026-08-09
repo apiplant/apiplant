@@ -1,0 +1,7 @@
+# One row per SKU: flat, and the sort of table that arrives as a spreadsheet.
+id,organization_id,product_id,sku,name,price_cents,weight_grams,barcode
+var-orbit-black,acme,prod-orbit,ORB-BLK,Orbit Over-Ear — Black,24900,310,5060000000017
+var-orbit-sand,acme,prod-orbit,ORB-SND,Orbit Over-Ear — Sand,24900,310,5060000000024
+var-pebble,acme,prod-pebble,PEB-STD,Pebble Portable Speaker,7900,480,5060000000031
+var-cable,acme,prod-cable,CBL-150,"Braided Cable, 1.5m",1200,60,5060000000048
+var-legacy,acme,prod-legacy,ORB-MK1,Orbit Mk I,19900,340,5060000000055

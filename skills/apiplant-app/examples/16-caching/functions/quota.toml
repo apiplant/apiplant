@@ -1,0 +1,5 @@
+# Config for the `quota` function, read at boot — tighten the limit and restart,
+# no rebuild needed.
+
+limit = 5          # requests allowed per caller...
+window_secs = 60   # ...per this many seconds

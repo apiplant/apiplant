@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acme Supply Co.</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Acme Supply Co.</h1>
+  <p class="lede">
+    A shop that sells three different <em>kinds</em> of thing. Nothing here is
+    built or bundled: one HTML file, one stylesheet, one script, talking to the
+    same API as everything else.
+  </p>
+  <p id="whoami" class="whoami" hidden></p>
+</header>
+
+<!-- Filled in from GET /api/billing_product and /api/billing_price, both of
+     which are `public` — a pricing page is read by people with no account. -->
+<main id="catalogue" aria-busy="true">
+  <p class="muted">Loading the price list…</p>
+</main>
+
+<!-- Shown when a checkout comes back. Which one is decided by ?checkout= -->
+<div id="outcome" class="notice" hidden></div>
+
+<!--
+  The buy dialog.
+
+  It asks for an email and a password because buying needs an account: a
+  purchase belongs to an organisation, and an organisation has an administrator.
+  So the same form both registers a new customer and signs an existing one back
+  in, and neither has to visit a separate page first to do it.
+-->
+<dialog id="buy">
+  <form method="dialog" id="buy-form">
+    <h2 id="buy-title">Checkout</h2>
+    <p id="buy-summary" class="muted"></p>
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required autocomplete="email"
+           placeholder="you@example.com">
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required minlength="8"
+           autocomplete="current-password" placeholder="at least 8 characters">
+    <p class="hint">
+      New here? This creates your account. Already bought something? The same
+      details sign you back in.
+    </p>
+
+    <div id="org-field">
+      <label for="org">Company</label>
+      <input id="org" name="org" type="text" autocomplete="organization"
+             placeholder="Acme, Inc.">
+      <p class="hint">
+        What the receipt is made out to. Billing belongs to a company, not to a
+        person — which is also why buying takes an administrator.
+      </p>
+    </div>
+
+    <p id="buy-error" class="error" hidden></p>
+
+    <menu>
+      <button value="cancel" type="button" id="buy-cancel" class="ghost">Cancel</button>
+      <button value="go" type="submit" id="buy-go">Continue to payment</button>
+    </menu>
+  </form>
+</dialog>
+
+<footer>
+  <p>
+    Card <code>4242 4242 4242 4242</code>, any future expiry, any CVC. It is a
+    test account; no money moves.
+  </p>
+  <p>
+    The <a href="/admin/">dashboard</a> shows the same catalogue as editable
+    tables, and every order this page produces.
+  </p>
+</footer>
+
+<script src="/shop.js"></script>
+</body>
+</html>

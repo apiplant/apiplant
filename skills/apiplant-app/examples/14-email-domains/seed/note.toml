@@ -1,0 +1,11 @@
+[[row]]
+id = "note-acme"
+organization_id = "acme"
+owner_id = "admin"
+body = "Anyone registering with an @acme.test address lands in this organisation."
+
+[[row]]
+id = "note-globex"
+organization_id = "globex"
+owner_id = "admin"
+body = "And an @globex.test address lands in that one."

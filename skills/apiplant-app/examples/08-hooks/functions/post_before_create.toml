@@ -1,0 +1,4 @@
+# Config for the `post_before_create` hook. Each function in a library reads its
+# own file, so create and update can enforce different rules.
+max_title_len = 80
+banned_words = ["spam", "lorem ipsum"]

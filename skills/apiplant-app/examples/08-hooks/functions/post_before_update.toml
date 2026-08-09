@@ -1,0 +1,4 @@
+# Config for the `post_before_update` hook — editing is more permissive than
+# creating, to show that per-function config really is independent.
+max_title_len = 200
+banned_words = ["spam"]

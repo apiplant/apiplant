@@ -1,0 +1,15 @@
+{
+  "//": "For your editor. apiplant builds this directory with the `build` script in package.json, not with tsc.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "//include": "../apiplant.d.ts is written by `apiplant build`; it declares the `apiplant` module.",
+  "include": ["src", "../apiplant.d.ts"]
+}

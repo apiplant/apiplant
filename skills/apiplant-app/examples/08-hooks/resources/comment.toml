@@ -1,0 +1,27 @@
+# A comment: organisation-scoped (like everything by default) and belonging to a
+# post and to its author. Isolation to the active organisation is automatic; the
+# permissions decide who within the org.
+
+[resource]
+name = "comment"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "owner"
+delete = "owner"
+
+[fields.body]
+type = "text"
+required = true
+
+[fields.post_id]
+type       = "reference"
+references = "post"
+required   = true
+on_delete  = "cascade"
+
+[fields.owner_id]
+type       = "reference"
+references = "user"

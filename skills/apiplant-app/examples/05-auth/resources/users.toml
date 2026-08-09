@@ -1,0 +1,36 @@
+# Dropping a resource named `user` REPLACES the built-in one — the framework keeps
+# using it for login, ownership, API keys and org membership.
+#
+# Here we log in with a username instead of an email, and add profile fields.
+
+[resource]
+name = "user"
+scope = "global"
+
+[auth]
+identity_field = "username"        # what /auth/login expects
+password_field = "password_hash"   # where the argon2 hash is stored
+# oauth_providers = ["google"]     # declares linked-identity scaffolding; the
+                                   # provider handshake is not implemented yet
+
+[permissions]
+list   = "authenticated"
+read   = "authenticated"
+create = "public"                  # registration
+update = "owner"                   # you may edit only yourself
+delete = "private"
+
+[fields.username]
+type     = "string"
+required = true
+unique   = true
+
+[fields.password_hash]
+type   = "string"
+hidden = true                      # never leaves the server
+
+[fields.display_name]
+type = "string"
+
+[fields.bio]
+type = "text"

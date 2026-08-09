@@ -1,0 +1,46 @@
+# The thing you actually sell and stock. Four other resources reference a
+# variant — order lines, purchase-order lines and inventory levels — and all of
+# them `restrict`, so a variant with history stays put. Deleting the *product*,
+# on the other hand, cascades to its variants (which then can't be deleted while
+# they have order lines — Postgres enforces the whole chain in one transaction).
+
+[resource]
+name = "variant"
+
+[admin]
+label = "Variant"
+group = "Catalogue"
+order = 2
+columns = ["sku", "product_id", "price_cents"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "role:manager"
+delete = "role:admin"
+
+[fields.product_id]
+type       = "reference"
+references = "product"
+required   = true
+on_delete  = "cascade"
+
+[fields.sku]
+type     = "string"
+required = true
+unique   = true            # a duplicate SKU answers 409
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.price_cents]
+type     = "integer"
+required = true
+
+[fields.weight_grams]
+type = "integer"
+
+[fields.barcode]
+type = "string"

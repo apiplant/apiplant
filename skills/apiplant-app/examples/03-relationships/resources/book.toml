@@ -1,0 +1,28 @@
+# A book belongs to an author. The `reference` field becomes a real uuid column
+# with a foreign key, and gives you:
+#   ?expand=author            inline the author on a book
+#   GET /api/author/{id}/book  the reverse (has_many) collection
+
+[resource]
+name = "book"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "public"
+delete = "public"
+
+[fields.title]
+type     = "string"
+required = true
+
+[fields.author_id]
+type       = "reference"
+references = "author"
+required   = true
+on_delete  = "cascade"     # deleting an author deletes their books
+
+[fields.published_year]
+type = "integer"

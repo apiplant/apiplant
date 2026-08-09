@@ -1,0 +1,5 @@
+id,organization_id,shipment_id,order_line_id,quantity
+shl-1001-a,acme,shp-1001,line-1001-a,20
+shl-1001-b,acme,shp-1001,line-1001-b,20
+shl-1002-a,acme,shp-1002,line-1002-a,4
+shl-1002-b,acme,shp-1002,line-1002-b,5

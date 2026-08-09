@@ -1,0 +1,4 @@
+# Read at boot, expanded from the environment, handed to the function as JSON.
+# The image is the same in every environment; these two values are not.
+release = "${APP_RELEASE:-dev}"
+env     = "${APP_ENV:-local}"

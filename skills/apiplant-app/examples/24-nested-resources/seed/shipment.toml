@@ -1,0 +1,25 @@
+# Two references to `depot`, so `/api/depot/{id}/shipment` needs `?via=` to say
+# whether you mean the ones leaving or the ones arriving.
+
+[[row]]
+id = "acme-ship-1"
+organization_id = "acme"
+reference = "ACME-0001"
+origin_depot_id = "acme-bologna"
+destination_depot_id = "acme-modena"
+weight_kg = 320
+
+[[row]]
+id = "acme-ship-2"
+organization_id = "acme"
+reference = "ACME-0002"
+origin_depot_id = "acme-modena"
+destination_depot_id = "acme-bologna"
+weight_kg = 90
+
+[[row]]
+id = "globex-ship-1"
+organization_id = "globex"
+reference = "GLBX-0001"
+origin_depot_id = "globex-bologna"
+weight_kg = 1200

@@ -1,0 +1,29 @@
+# An ordinary resource, here only to be traffic. Every one of its five endpoints
+# gets a span and a duration metric without knowing this example exists.
+
+[resource]
+name  = "note"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "public"
+delete = "public"
+
+[fields.title]
+type       = "string"
+required   = true
+max_length = 200
+
+[fields.body]
+type = "text"
+
+[fields.priority]
+type    = "integer"
+default = 3
+
+[fields.slug]
+type   = "string"
+unique = true

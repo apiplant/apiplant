@@ -1,0 +1,13 @@
+# Readable by any member of Acme, writable only by an editor.
+
+[[row]]
+id = "announcement-launch"
+organization_id = "acme"
+headline = "We are live"
+body = "The API is serving. Tell everyone, then watch the logs."
+
+[[row]]
+id = "announcement-maintenance"
+organization_id = "acme"
+headline = "Maintenance on Sunday"
+body = "Two minutes of downtime, at an hour nobody will notice."

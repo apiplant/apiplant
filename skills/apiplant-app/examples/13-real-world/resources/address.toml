@@ -1,0 +1,48 @@
+# One customer, many addresses — and `order` points at this resource twice
+# (billing and shipping), which is why the nested endpoint below needs `?via=`:
+#   GET /api/address/{id}/order?via=shipping_address_id
+
+[resource]
+name = "address"
+
+[admin]
+plural = "Addresses"
+group = "Sales"
+order = 6
+columns = ["label", "city", "country_id"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "member"
+
+[fields.customer_id]
+type       = "reference"
+references = "customer"
+required   = true
+on_delete  = "cascade"     # delete a customer, delete their addresses
+
+[fields.label]
+type = "string"            # "HQ", "Warehouse 2", …
+
+[fields.line1]
+type     = "string"
+required = true
+
+[fields.line2]
+type = "string"
+
+[fields.city]
+type     = "string"
+required = true
+
+[fields.postal_code]
+type = "string"
+
+[fields.country_id]
+type       = "reference"
+references = "country"
+required   = true
+on_delete  = "restrict"

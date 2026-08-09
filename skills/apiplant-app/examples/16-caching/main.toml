@@ -1,0 +1,43 @@
+# apiplant demo app configuration. Every key here is optional; delete the file
+# entirely and the framework still boots with safe defaults.
+
+[app]
+name = "16 · Caching"
+
+[server]
+port = 8099
+base_path = "/api"          # the API is mounted under /api
+
+[database]
+# Any string in any of an app's TOML files may reference the environment:
+# `$VAR`, `${VAR}`, or `${VAR:-default}` as here — so this line works
+# unchanged locally and against a managed database in production.
+url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:5432/apiplant_caching}"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "16 · Caching"
+
+# ---------------------------------------------------------------------------
+# The optional Redis. Nothing in the framework caches through it — resources
+# and permissions behave identically whether this section is here or not. It
+# exists so a *function* has somewhere to put data it knows how to invalidate.
+#
+# Delete the `url` and the app still runs; the endpoints below then report a
+# cache error instead of a hit, which is the point of the last section in the
+# README.
+# ---------------------------------------------------------------------------
+[cache]
+url = "redis://127.0.0.1:6379"
+prefix = "example-16:"      # so several apps can share one Redis
+default_ttl_secs = 300      # applies to a write that doesn't name its own
+timeout_secs = 5            # a wedged Redis costs one request this, and no more
+
+# In production the URL usually carries a password, so keep it out of the file:
+#   url = "${REDIS_URL}"

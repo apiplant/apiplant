@@ -1,0 +1,24 @@
+# Also global — jobs against the shared table, not owned by any organisation.
+# Reading them still needs `X-Organization`, because `role:admin` has to be
+# checked against a membership somewhere.
+
+[[row]]
+id = "bologna-registry-2024"
+municipality_id = "bologna"
+source = "registry-2024.csv"
+status = "done"
+records = 12480
+
+[[row]]
+id = "bologna-registry-2025"
+municipality_id = "bologna"
+source = "registry-2025.csv"
+status = "running"
+records = 3120
+
+[[row]]
+id = "modena-registry-2025"
+municipality_id = "modena"
+source = "registry-2025.csv"
+status = "failed"
+records = 0

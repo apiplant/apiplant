@@ -1,0 +1,40 @@
+# A function *directory* is a crate you own. Because it has its own Cargo.toml,
+# it can depend on anything on crates.io — here the `uuid` crate — which a
+# single-file `.rs` function cannot. `apiplant build` runs this manifest as
+# written and copies the cdylib it produces to `../libtoken.so`.
+[package]
+name = "token"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The two crates every apiplant function needs. In your own app, depend on a
+# published `apiplant-function` version instead of this in-repo path.
+apiplant-function = { path = "../../../../crates/apiplant-function" }
+abi_stable = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "0.8"
+
+# The extra dependency this example exists to show: a third-party crate, pulled
+# in exactly the way you would in any Rust project.
+uuid = { version = "1", features = ["v4"] }
+
+# apiplant build injects these profiles for single-file functions; a directory
+# is your crate, so set them yourself to keep the shipped library small. See
+# docs/functions.md → "Library size".
+[profile.dev]
+strip = "debuginfo"
+
+[profile.release]
+strip = "symbols"
+lto = "fat"
+codegen-units = 1
+
+# Detach from any surrounding cargo workspace (apiplant's, or your app's), so
+# this crate builds standalone.
+[workspace]

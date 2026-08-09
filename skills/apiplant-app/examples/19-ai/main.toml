@@ -1,0 +1,43 @@
+[app]
+name = "19 · AI"
+
+[server]
+port = 8102
+base_path = "/api"
+
+[database]
+url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:5432/apiplant_ai}"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "19 · AI"
+
+[ai]
+provider = "custom"
+endpoint = "${AI_ENDPOINT:-http://localhost:8080}"
+model = "${AI_MODEL:-local}"
+system = "You are a terse assistant inside a demo API. Answer in at most three sentences."
+# Generous on purpose: a local reasoning model can spend a few thousand tokens
+# thinking before it writes a word, and a budget it exhausts while thinking
+# produces an empty answer.
+max_tokens = 8192
+access = "public"
+timeout_secs = 300
+# Ask the model to think. Whatever it thinks arrives as `reasoning` events,
+# is stored on the message and sits behind the Show reasoning toggle — never
+# in the answer.
+thinking = true
+# Where the server puts the thinking. `auto` reads whichever shape it finds;
+# most llama.cpp builds fill `reasoning_content` and need nothing here. Set
+# "implicit" for one whose template pre-opens `<think>`, so a streamed reply
+# closes a block it never opened. See docs/ai.md.
+reasoning_format = "${AI_REASONING_FORMAT:-auto}"
+
+[admin.ai_assistance]
+enabled = true

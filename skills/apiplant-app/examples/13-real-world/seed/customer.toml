@@ -1,0 +1,36 @@
+[[row]]
+id = "cust-northwind"
+organization_id = "acme"
+name = "Northwind Audio"
+email = "buying@northwind.example"
+tier = "enterprise"
+country_id = "nl"
+account_manager_id = "admin"
+credit_limit_cents = 5000000
+
+[[row]]
+id = "cust-lumen"
+organization_id = "acme"
+name = "Lumen Studios"
+email = "ops@lumen.example"
+tier = "plus"
+country_id = "it"
+account_manager_id = "editor"
+credit_limit_cents = 750000
+
+[[row]]
+id = "cust-halberd"
+organization_id = "acme"
+name = "Halberd Retail"
+email = "purchasing@halberd.example"
+tier = "standard"
+country_id = "gb"
+account_manager_id = "editor"
+
+[[row]]
+id = "cust-private"
+organization_id = "acme"
+name = "R. Kowalski"
+email = "r.kowalski@example.com"
+tier = "standard"
+country_id = "de"

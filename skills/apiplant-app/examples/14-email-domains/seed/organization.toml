@@ -1,0 +1,17 @@
+# The organisation every example starts in.
+#
+# `id = "acme"` is an alias, not a UUID: seeding hashes it into a stable id, so
+# every file that writes `organization_id = "acme"` means this row, and running
+# the seed twice inserts it once.
+
+[[row]]
+id = "acme"
+name = "Acme, Inc."
+slug = "acme"
+domain = "acme.test"
+
+[[row]]
+id = "globex"
+name = "Globex Corporation"
+slug = "globex"
+domain = "globex.test"

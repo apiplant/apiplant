@@ -51,7 +51,9 @@ export function Code(props: { code: string; lang: string; class?: string; filena
  * command long enough to overflow its container — the text then scrolls inside
  * the box rather than pushing the box past the edge of the card holding it.
  */
-export function CopyLine(props: { command: string; block?: boolean }) {
+/* `prompt` is the shell's `$` by default; slash commands are typed at
+   Claude Code's prompt instead, so callers can pass `> `. */
+export function CopyLine(props: { command: string; block?: boolean; prompt?: string }) {
   const [copied, setCopied] = createSignal(false);
 
   const copy = async () => {
@@ -75,7 +77,7 @@ export function CopyLine(props: { command: string; block?: boolean }) {
           props.block ? "" : "sm:flex-none"
         }`}
       >
-        <span class="select-none text-faint">$ </span>
+        <span class="select-none text-faint">{props.prompt ?? "$ "}</span>
         {props.command}
       </code>
       <button
@@ -102,7 +104,7 @@ export function CopyLine(props: { command: string; block?: boolean }) {
   );
 }
 
-export function CopyBlock(props: { command: string }) {
+export function CopyBlock(props: { command: string; prompt?: string }) {
   const [copied, setCopied] = createSignal(false);
 
   const copy = async () => {
@@ -123,7 +125,7 @@ export function CopyBlock(props: { command: string }) {
         <code>
           {lines().map((line, index) => (
             <>
-              <span class="select-none text-faint">$ </span>
+              <span class="select-none text-faint">{props.prompt ?? "$ "}</span>
               {line}
               {index < lines().length - 1 ? "\n" : ""}
             </>

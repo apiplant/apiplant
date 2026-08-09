@@ -1,0 +1,40 @@
+# A gallery entry: some text and an image that lives in R2.
+#
+# Nothing here mentions a bucket. `type = "file"` is a string column with a
+# widget attached — the dashboard edits it by dropping a file on it, which
+# uploads to `[storage]` and writes the returned `/files/…` link back into the
+# row. The API sees a string either way, so a client that already has a URL can
+# just PUT it.
+
+[resource]
+name  = "photo"
+scope = "organization"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "role:admin"
+
+[fields.title]
+type       = "string"
+required   = true
+max_length = 200
+
+[fields.image]
+type     = "file"
+required = true
+
+[fields.caption]
+type = "text"
+
+# A second file on the same row, and an optional one. There is no limit on how
+# many `file` fields a resource has — each is its own column holding its own
+# link, and they need not point at the same backend, because neither of them
+# points at a backend at all.
+[fields.release_form]
+type = "file"
+
+[fields.taken_on]
+type = "timestamp"

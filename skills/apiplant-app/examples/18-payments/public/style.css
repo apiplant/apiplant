@@ -1,0 +1,185 @@
+/* A shop, in about a hundred lines. No framework, no build step, no reset —
+   just enough to make the example look like a real page rather than a form
+   dump, because "what the customer sees" is half of what a payments example is
+   trying to show. */
+
+:root {
+  --ink: #16181d;
+  --muted: #626875;
+  --line: #e3e6ec;
+  --bg: #fbfbfd;
+  --card: #ffffff;
+  --accent: #4f46e5;
+  --accent-ink: #ffffff;
+  --good: #0f7b4f;
+  --warn: #92400e;
+  --radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8eaf0;
+    --muted: #99a0ae;
+    --line: #2a2e38;
+    --bg: #14161b;
+    --card: #1b1e25;
+    --accent: #8b85f5;
+    --accent-ink: #14161b;
+    --good: #5ed6a4;
+    --warn: #f0b866;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  padding: 3rem 1.25rem 4rem;
+  max-width: 60rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1 { margin: 0 0 .35rem; font-size: 2rem; letter-spacing: -0.02em; }
+h2 { margin: 0 0 .35rem; font-size: 1.15rem; letter-spacing: -0.01em; }
+
+.lede { margin: 0; max-width: 46rem; color: var(--muted); }
+.muted { color: var(--muted); }
+.hint { margin: .35rem 0 0; font-size: .82rem; color: var(--muted); }
+
+header { margin-bottom: 2.5rem; }
+
+.whoami {
+  margin: 1rem 0 0;
+  font-size: .875rem;
+  color: var(--muted);
+}
+.whoami a, footer a { color: var(--accent); }
+
+/* --- the catalogue --------------------------------------------------- */
+
+#catalogue {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  padding: 1.35rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.card .desc { margin: 0 0 1rem; color: var(--muted); font-size: .9rem; flex: 1; }
+.card .price { margin: 0 0 1rem; display: flex; align-items: baseline; gap: .4rem; }
+.card .price strong { font-size: 1.5rem; letter-spacing: -0.02em; }
+.card .price .muted { font-size: .85rem; }
+.card .trial { margin: -.6rem 0 1rem; font-size: .85rem; color: var(--good); }
+
+/* What kind of thing this is — the one distinction the whole example turns on. */
+.tag {
+  align-self: flex-start;
+  margin-bottom: .75rem;
+  padding: .15rem .5rem;
+  border-radius: 999px;
+  font-size: .7rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.tag.ships    { color: var(--warn); }
+.tag.download { color: var(--good); }
+.tag.sub      { color: var(--accent); }
+
+/* --- controls -------------------------------------------------------- */
+
+button {
+  padding: .6rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { filter: brightness(1.08); }
+button:disabled { opacity: .6; cursor: progress; }
+
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--line);
+  font-weight: 500;
+}
+
+label { display: block; margin: .9rem 0 .3rem; font-size: .85rem; font-weight: 600; }
+
+input {
+  width: 100%;
+  padding: .55rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* --- the buy dialog -------------------------------------------------- */
+
+dialog {
+  width: min(26rem, calc(100vw - 2rem));
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+}
+dialog::backdrop { background: rgb(0 0 0 / .45); }
+
+dialog menu {
+  display: flex;
+  gap: .6rem;
+  justify-content: flex-end;
+  margin: 1.4rem 0 0;
+  padding: 0;
+}
+
+/* --- messages -------------------------------------------------------- */
+
+.error { margin: .9rem 0 0; color: #b42318; font-size: .875rem; }
+@media (prefers-color-scheme: dark) { .error { color: #ff9a90; } }
+
+.notice {
+  margin: 2rem 0 0;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--card);
+  font-size: .92rem;
+}
+.notice.good { border-left-color: var(--good); }
+.notice.warn { border-left-color: var(--warn); }
+
+footer {
+  margin-top: 3.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .85rem;
+}
+footer p { margin: .35rem 0; }
+code {
+  padding: .1rem .35rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: .85em;
+}

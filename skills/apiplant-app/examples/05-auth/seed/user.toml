@@ -1,0 +1,25 @@
+# This example's `user` logs in by `username`, not by email — so that is what
+# the fixture writes. `password` still means the same thing: hashed into the
+# field `[auth] password_field` names.
+#
+# Sign in as `admin`, password `password`.
+
+[[row]]
+id = "admin"
+username = "admin"
+password = "password"
+display_name = "Ada Admin"
+bio = "Runs the place. Reviews every pull request twice."
+
+[[row]]
+id = "editor"
+username = "editor"
+password = "password"
+display_name = "Eli Editor"
+bio = "Writes the words."
+
+[[row]]
+id = "member"
+username = "member"
+password = "password"
+display_name = "Mo Member"

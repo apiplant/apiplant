@@ -140,6 +140,38 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [API reference](docs/api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](docs/openapi.md) | the generated spec and interactive docs |
 
+## Building with Claude
+
+An app is TOML and a few compiled functions, which is the kind of thing a coding
+agent is good at — provided it knows the field types, the permission policies
+and the shape of a hook rather than guessing them. [`skills/`](skills/) holds a
+[Claude skill](https://code.claude.com/docs/en/skills) that carries all of it:
+the build workflow, every guide above as reference material, and all 26 example
+apps.
+
+This repository doubles as a plugin marketplace, so installing it is two
+commands inside Claude Code — no clone, and `/plugin update` afterwards:
+
+```
+/plugin marketplace add apiplant/apiplant
+/plugin install apiplant-app@apiplant
+```
+
+Or copy the directory, to vendor it into a project whose checkout should carry
+its own:
+
+```bash
+mkdir -p .claude/skills && cp -r skills/apiplant-app .claude/skills/
+```
+
+Then just describe the app — *"build me an apiplant app for tracking client
+invoices, with per-organisation isolation and a hook that stamps the due date"*
+— and Claude loads the skill on its own. There is nothing to enable and no
+command to remember; it triggers on the work, not on a keyword. It is generated
+from `docs/` and `examples/` by
+[`scripts/generate-skill.py`](scripts/generate-skill.py), so it never drifts
+from the documentation in this repository.
+
 ---
 
 ## The app directory

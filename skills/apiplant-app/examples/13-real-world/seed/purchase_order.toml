@@ -1,0 +1,26 @@
+[[row]]
+id = "po-2001"
+organization_id = "acme"
+reference = "PO-2001"
+supplier_id = "sup-tonewood"
+warehouse_id = "wh-milan"
+status = "received"
+expected_at = 2024-01-20T00:00:00Z
+received_at = 2024-01-19T10:00:00Z
+
+[[row]]
+id = "po-2002"
+organization_id = "acme"
+reference = "PO-2002"
+supplier_id = "sup-cablecraft"
+warehouse_id = "wh-rotterdam"
+status = "sent"
+expected_at = 2024-03-04T00:00:00Z
+
+[[row]]
+id = "po-2003"
+organization_id = "acme"
+reference = "PO-2003"
+supplier_id = "sup-tonewood"
+warehouse_id = "wh-milan"
+status = "draft"

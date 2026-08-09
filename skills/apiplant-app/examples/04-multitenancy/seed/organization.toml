@@ -1,0 +1,29 @@
+# The organisation every example starts in.
+#
+# `id = "acme"` is an alias, not a UUID: seeding hashes it into a stable id, so
+# every file that writes `organization_id = "acme"` means this row, and running
+# the seed twice inserts it once.
+#
+# `org_class` says what *kind* of organisation each one is. A permission can be
+# narrowed to a class — `role:admin@org_class=customer` — and the class itself
+# is server-owned: no API request writes it unless `[organization]
+# org_class_editors` in main.toml names the caller, which is why it is set here,
+# in the seed, alongside the row it belongs to.
+
+[[row]]
+id = "operations"
+name = "Operations"
+slug = "operations"
+org_class = "admin"        # the back-office organisation, above the tenants
+
+[[row]]
+id = "acme"
+name = "Acme, Inc."
+slug = "acme"
+org_class = "customer"
+
+[[row]]
+id = "globex"
+name = "Globex Corporation"
+slug = "globex"
+org_class = "customer"

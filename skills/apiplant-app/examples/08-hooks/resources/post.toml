@@ -1,0 +1,55 @@
+# A blog post. Organisation-scoped by default (multitenant): the framework adds
+# an `organization_id`, isolates every query to the caller's active organisation,
+# and stamps it on create. The permissions below decide who *within* the org:
+#   list/read/create — any member
+#   update           — only the post's owner
+#   delete           — only an `admin` of that organisation
+#
+# On top of that, [hooks] at the bottom run custom logic around each operation.
+#
+# Publishes:
+#   GET/POST /api/post, GET/PATCH/DELETE /api/post/{id}
+#   GET /api/organization/{id}/post   (a has_many, from the auto organization_id)
+
+[resource]
+name = "post"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "owner"
+delete = "role:admin"
+
+[fields.title]
+type = "string"
+required = true
+max_length = 200
+
+[fields.body]
+type = "text"
+
+[fields.published]
+type = "boolean"
+default = false
+
+[fields.owner_id]
+type = "reference"
+references = "user"
+
+# Lifecycle hooks: one function per operation, all five exported by a single
+# library (examples/function-post-hooks). Build it and drop it in before running
+# the demo — a hook whose function isn't loaded fails its requests closed with a
+# 500, on purpose:
+#
+#   cargo build -p function-post-hooks
+#   cp target/debug/libfunction_post_hooks.so examples/demo-app/functions/
+#
+# Each function's own config lives beside the library, in functions/<name>.toml.
+
+[hooks]
+before_create = "post_before_create"   # trim & validate the title, or reject
+before_update = "post_before_update"   # same rules; partial bodies pass through
+after_create  = "post_after_create"    # log who created the post
+after_list    = "post_after_list"      # hide other members' drafts from listings
+before_delete = "post_before_delete"   # protect published posts (unless ?force=1)

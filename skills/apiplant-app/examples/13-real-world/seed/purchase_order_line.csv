@@ -1,0 +1,5 @@
+id,organization_id,purchase_order_id,variant_id,quantity,unit_cost_cents,received_quantity
+pol-2001-a,acme,po-2001,var-orbit-black,200,11200,200
+pol-2001-b,acme,po-2001,var-orbit-sand,100,11200,100
+pol-2002-a,acme,po-2002,var-cable,2000,340,0
+pol-2003-a,acme,po-2003,var-pebble,500,3100,0

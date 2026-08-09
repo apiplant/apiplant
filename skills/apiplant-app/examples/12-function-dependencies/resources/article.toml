@@ -1,0 +1,19 @@
+# Something for the `slug` function to check against. Nothing here is specific
+# to functions — see example 02 for the resource itself.
+
+[resource]
+name = "article"
+scope = "global"
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+
+[fields.title]
+type     = "string"
+required = true
+
+[fields.slug]
+type   = "string"
+unique = true

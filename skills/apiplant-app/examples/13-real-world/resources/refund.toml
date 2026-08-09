@@ -1,0 +1,37 @@
+# Three levels down from the order: order → payment → refund. Also append-only.
+
+[resource]
+name = "refund"
+
+[admin]
+group = "Sales"
+order = 5
+columns = ["payment_id", "amount_cents", "reason"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "private"
+delete = "private"
+
+[fields.payment_id]
+type       = "reference"
+references = "payment"
+required   = true
+on_delete  = "restrict"
+
+[fields.amount_cents]
+type     = "integer"
+required = true
+
+[fields.reason]
+type = "text"
+
+[fields.approved_by_id]
+type       = "reference"
+references = "user"
+on_delete  = "set_null"
+
+[fields.refunded_at]
+type = "timestamp"

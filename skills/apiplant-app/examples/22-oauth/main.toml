@@ -1,0 +1,135 @@
+# 22 · OAuth — signing in with GitHub, Google, LinkedIn and X.
+#
+# The whole integration is the four `[oauth.…]` blocks at the bottom, and each
+# of them is two credentials. There is no function in this example, no callback
+# handler and no state table to declare: naming a provider mounts the endpoints
+# and adds the machinery, the way naming a payment provider adds the billing
+# tables.
+
+[app]
+name = "22 · OAuth"
+
+[server]
+port = 8104
+base_path = "/api"
+
+# The origin the *browser* uses. Every provider's redirect URI is derived from
+# it — `<public_url><base_path>/auth/oauth/<provider>/callback` — and a provider
+# compares that string byte for byte with what is registered in its dashboard.
+# Behind a tunnel (ngrok, cloudflared) set this to the tunnel's https URL, not
+# to what the process is bound to. `apiplant run` prints the URI to register for
+# each provider on the way up; copy it from there.
+public_url = "${PUBLIC_URL:-http://localhost:8104}"
+
+[database]
+url = "${DATABASE_URL:-postgres://postgres@127.0.0.1:5432/apiplant_oauth}"
+auto_migrate = true
+
+[auth]
+jwt_secret = "${JWT_SECRET:-demo-secret-change-me-in-production}"
+# Password sign-in stays open here so the two paths can be compared, and so
+# `admin@example.com` from `seed/` still works. An OAuth-only app sets this
+# false: its sign-in page then has four buttons and no form, and a provider
+# button stops being a way to create an account — it becomes a way to sign in to
+# one that already exists.
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "22 · OAuth"
+
+# The sign-in page: `public/index.html`, served at `/`. It is a page of links —
+# `<a href="/api/auth/oauth/github/start">` — because the start endpoint answers
+# with a redirect. There is no callback page: the provider redirects straight
+# back into the API, which is what makes a front end optional here.
+[public]
+dir = "public"
+
+# ---------------------------------------------------------------------------
+# Signing in with somebody else's account.
+#
+# Optional settings, shown with their defaults. Delete the lot and the four
+# blocks below still work.
+# ---------------------------------------------------------------------------
+[oauth]
+# May a *verified* address from a provider sign somebody in to an account that
+# already has that address? This is what makes "I registered with a password,
+# then came back through Google" work. It is safe only because the provider
+# says it verified the address — an unverified one is never matched, whatever
+# this says. See docs/authentication.md before turning it off.
+link_by_verified_email = true
+
+# Where the browser lands after a sign-in through the redirecting endpoint, and
+# how it is given the token. `fragment` keeps the token out of server logs and
+# `Referer` headers; `query` is easier for a server-rendered page to read;
+# `json` skips the redirect entirely, which is what makes the flow inspectable
+# from curl.
+success_redirect = "/"
+token_delivery = "fragment"
+
+# How long somebody has to get through a consent screen.
+state_ttl_secs = 600
+
+# Where a provider's name and picture are written on every sign-in. These are
+# the columns the built-in `user` resource declares, so they are also the defaults;
+# an app that calls them something else names it here, and one that would rather
+# keep its own copy of a name sets the field to "".
+name_field = "display_name"
+avatar_field = "avatar_url"
+
+# ---------------------------------------------------------------------------
+# The providers. Two credentials each — apiplant knows the rest.
+#
+# Register this redirect URI with all four:
+#
+#   http://localhost:8104/api/auth/oauth/<provider>/callback
+#
+# Every value names an environment variable, so this file is committable and a
+# deployment supplies what it has. A provider with no `client_id` is simply off:
+# the app boots, and its button is missing rather than broken.
+# ---------------------------------------------------------------------------
+
+# https://github.com/settings/developers → New OAuth App
+[oauth.github]
+client_id     = "${GITHUB_CLIENT_ID:-}"
+client_secret = "${GITHUB_CLIENT_SECRET:-}"
+
+# https://console.cloud.google.com/apis/credentials → OAuth client ID → Web application
+[oauth.google]
+client_id     = "${GOOGLE_CLIENT_ID:-}"
+client_secret = "${GOOGLE_CLIENT_SECRET:-}"
+
+# https://www.linkedin.com/developers/apps → Products → "Sign In with LinkedIn
+# using OpenID Connect" (request it first, or the scopes are not available).
+[oauth.linkedin]
+client_id     = "${LINKEDIN_CLIENT_ID:-}"
+client_secret = "${LINKEDIN_CLIENT_SECRET:-}"
+
+# https://developer.x.com/en/portal/dashboard → User authentication settings.
+# Choose **Web App** — a public client cannot hold a secret, and X refuses its
+# token requests.
+[oauth.x]
+client_id     = "${X_CLIENT_ID:-}"
+client_secret = "${X_CLIENT_SECRET:-}"
+
+# A fifth provider needs no release of apiplant — only its three URLs and the
+# scopes it wants. Anything speaking OpenID Connect reads with no code at all.
+#
+# Uncomment this block (and set the two variables) to add GitLab. `icon` is the
+# only line that is about looks: apiplant draws the four above itself, and for
+# anything else a button gets the provider's initial on a plain tile until you
+# point it at an image. `public/oauth/gitlab.svg` is already here, taken from
+# Super Tiny Icons (https://github.com/edent/SuperTinyIcons) — several hundred
+# brand marks, a few hundred bytes each, MIT licensed, and the same source
+# apiplant's own four are drawn from.
+#
+# [oauth.gitlab]
+# label         = "GitLab"   # without this the button says "Gitlab"
+# client_id     = "${GITLAB_CLIENT_ID:-}"
+# client_secret = "${GITLAB_CLIENT_SECRET:-}"
+# authorize_url = "https://gitlab.com/oauth/authorize"
+# token_url     = "https://gitlab.com/oauth/token"
+# userinfo_url  = "https://gitlab.com/oauth/userinfo"
+# scopes        = "openid email profile"
+# icon          = "/oauth/gitlab.svg"

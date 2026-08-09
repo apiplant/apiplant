@@ -33,6 +33,17 @@ for f in README.md docs/README.md; do
   fi
 done
 
+# The marketplace advertises the skill at the version of the server it documents.
+if [ -f .claude-plugin/marketplace.json ]; then
+  before=$(cat .claude-plugin/marketplace.json)
+  sed -i -E "s/(\"version\": *\")[0-9]+\.[0-9]+\.[0-9]+(\")/\1$version\2/" \
+    .claude-plugin/marketplace.json
+  if [ "$before" != "$(cat .claude-plugin/marketplace.json)" ]; then
+    echo "pre-commit: updated version in .claude-plugin/marketplace.json -> $version"
+    git add .claude-plugin/marketplace.json
+  fi
+fi
+
 # --------------------------------------------------------------------- rebuilds
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 
@@ -58,4 +69,14 @@ fi
 if changed '^(typescript/|crates/apiplant-js/assets/)'; then
   echo "pre-commit: syncing and checking typescript"
   (cd typescript && pnpm install --frozen-lockfile --prefer-offline >/dev/null && pnpm sync && pnpm check)
+fi
+
+# skills/ is assembled from docs/ and examples/ and committed, so it can be
+# copied into ~/.claude/skills without a build step. It is output: regenerate
+# it here rather than trusting anyone to remember. The script refuses to run if
+# docs/ and its reference table have drifted apart.
+if changed '^(docs/|examples/|scripts/generate-skill\.py)'; then
+  echo "pre-commit: regenerating the apiplant skill"
+  ./scripts/generate-skill.py >/dev/null
+  git add skills
 fi

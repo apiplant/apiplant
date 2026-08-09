@@ -1,0 +1,17 @@
+# Input for the agent and the summarising function: notes long enough to be
+# worth summarising, so the example does something on the first press.
+
+[[row]]
+id = "note-standup"
+owner_id = "admin"
+body = "Standup: the importer is finished, the dashboard needs another day, and nobody has looked at the flaky test since Tuesday."
+
+[[row]]
+id = "note-customer-call"
+owner_id = "editor"
+body = "Customer call: they want CSV export, they do not care about the API, and they will renew if the export lands before the quarter ends."
+
+[[row]]
+id = "note-idea"
+owner_id = "member"
+body = "Idea: seed every example with the same administrator, so that the first thing anyone does after starting a server is sign in and see rows."

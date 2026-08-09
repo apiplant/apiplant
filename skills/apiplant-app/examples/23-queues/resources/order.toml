@@ -1,0 +1,50 @@
+[resource]
+name = "order"
+scope = "global"
+timestamps = true
+
+[admin]
+label = "Order"
+plural = "Orders"
+
+[permissions]
+list   = "authenticated"
+read   = "authenticated"
+create = "authenticated"
+update = "authenticated"
+delete = "authenticated"
+
+# The shortest path from "a row changed" to "something happens about it".
+#
+# No function in between: the row *is* the message, and a subscriber to
+# `order.cancelled` gets the order exactly as the API would have returned it.
+# What this buys over an `after_delete` hook that publishes is that the work is
+# not the requester's to wait for — the response goes out as soon as the row is
+# committed, and `releaseStock` runs on its own afterwards.
+#
+# Only the three `after_*` writes can be announced. A `before_*` topic would
+# announce something that has not happened yet and may still be rejected.
+[publish]
+after_delete = "order.cancelled"
+
+[fields.reference]
+type = "string"
+required = true
+unique = true
+
+[fields.total_cents]
+type = "integer"
+required = true
+
+[fields.status]
+type = "string"
+required = true
+default = "placed"
+
+[fields.status.admin]
+options = ["placed|Placed", "paid|Paid", "fulfilled|Fulfilled"]
+
+# Written by `fulfilOrder`, which is how you can see from the dashboard that the
+# background handler actually ran.
+[fields.fulfilled_at]
+type = "timestamp"

@@ -1,0 +1,26 @@
+# Tenancy and relationships compose: a task belongs to a project, and both are
+# isolated to the caller's organisation.
+
+[resource]
+name = "task"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "role:admin"      # only an org admin may delete
+
+[fields.title]
+type     = "string"
+required = true
+
+[fields.done]
+type    = "boolean"
+default = false
+
+[fields.project_id]
+type       = "reference"
+references = "project"
+required   = true
+on_delete  = "cascade"

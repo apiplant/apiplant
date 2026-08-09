@@ -1,0 +1,23 @@
+# The smallest useful apiplant app: just configuration.
+#
+# Every key below is optional. Delete this file entirely and the app still boots
+# with safe defaults — an empty directory is a valid app.
+
+[app]
+name = "01 · Hello world"
+
+[server]
+port = 8099
+base_path = "/api"          # the API is mounted under /api
+
+[database]
+url = "postgres://postgres@127.0.0.1:5432/apiplant_hello"
+auto_migrate = true         # reconcile the database with your resources on boot
+
+[auth]
+jwt_secret = "hello-world-secret-change-me"
+
+[docs]
+enabled = true
+path = "/docs"
+title = "01 · Hello world"

@@ -32,6 +32,11 @@ lifecycle hooks, introducing one concept at a time.
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](openapi.md) | the generated spec and interactive docs |
 
+Everything in this table is also packaged as a [Claude
+skill](../skills/README.md). Run `/plugin marketplace add apiplant/apiplant`
+then `/plugin install apiplant-app@apiplant` in Claude Code, and it builds
+apiplant apps from these guides instead of from guesswork.
+
 ## Install
 
 On macOS with [Homebrew](https://brew.sh):

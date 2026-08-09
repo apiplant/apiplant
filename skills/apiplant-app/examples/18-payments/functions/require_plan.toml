@@ -1,0 +1,12 @@
+# Config for the `require_plan` hook, read at boot.
+
+# Which subscription statuses count as paying.
+#
+# `trialing` is here because a trial is a promise the app made, and taking it
+# back on day one because no money has moved yet is not what anybody agreed to.
+#
+# `past_due` is deliberately absent. Stripe is still retrying the card, so the
+# customer may well pay in a day — but continuing to serve in the meantime is a
+# business decision about how much unpaid work you will do, not a status to
+# read off. Add it here if that decision is yes.
+entitled_statuses = ["active", "trialing"]

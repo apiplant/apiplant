@@ -1,0 +1,23 @@
+# Nothing here is directory-specific. Whether a function is a single file or a
+# whole directory is invisible to the rest of the app — it gets mounted,
+# authenticated and documented exactly the same way.
+
+[app]
+name = "12 · Functions with dependencies"
+
+[server]
+port = 8099
+base_path = "/api"
+
+[database]
+url = "postgres://postgres@127.0.0.1:5432/apiplant_function_deps"
+auto_migrate = true
+
+[auth]
+jwt_secret = "demo-secret-change-me-in-production"
+allow_registration = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "12 · Functions with dependencies"

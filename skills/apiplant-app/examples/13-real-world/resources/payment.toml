@@ -1,0 +1,54 @@
+# A ledger, not a table you edit: `update` and `delete` are `private`, so those
+# endpoints answer 404 and no client can rewrite a captured payment. Corrections
+# happen by writing a `refund` row.
+#
+# `gateway_payload` shows `hidden`: writable, stored, and stripped from every
+# response — the raw provider blob never leaves the server.
+
+[resource]
+name = "payment"
+
+[admin]
+group = "Sales"
+order = 4
+columns = ["order_id", "status", "amount_cents"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "role:manager"
+update = "private"
+delete = "private"
+
+[fields.order_id]
+type       = "reference"
+references = "order"
+required   = true
+on_delete  = "restrict"    # money outlives the order record
+
+[fields.amount_cents]
+type     = "integer"
+required = true
+
+[fields.method]
+type     = "string"
+required = true            # card | transfer | invoice
+
+[fields.status]
+type    = "string"
+default = "captured"       # authorized | captured | failed
+
+[fields.gateway_reference]
+type   = "string"
+unique = true              # idempotency: a replayed capture answers 409
+
+[fields.gateway_payload]
+type   = "json"
+hidden = true              # never returned to clients
+
+[fields.captured_at]
+type = "timestamp"
+
+[fields.status.admin]
+widget = "select"
+options = ["pending", "captured", "failed", "refunded"]

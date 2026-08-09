@@ -1,0 +1,8 @@
+id,organization_id,variant_id,warehouse_id,on_hand,reserved,reorder_point
+inv-orbit-black-mil,acme,var-orbit-black,wh-milan,142,12,40
+inv-orbit-sand-mil,acme,var-orbit-sand,wh-milan,38,4,40
+inv-pebble-mil,acme,var-pebble,wh-milan,310,25,80
+inv-cable-mil,acme,var-cable,wh-milan,1240,60,200
+inv-orbit-black-rtm,acme,var-orbit-black,wh-rotterdam,64,8,30
+inv-pebble-rtm,acme,var-pebble,wh-rotterdam,12,2,30
+inv-cable-rtm,acme,var-cable,wh-rotterdam,505,15,200

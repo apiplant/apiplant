@@ -1,0 +1,23 @@
+[resource]
+name = "collection_point"
+
+[permissions]
+list = "member"
+read = "member"
+create = "member"
+update = "member"
+delete = "role:admin"
+
+[fields.label]
+type = "string"
+required = true
+
+[fields.municipality_id]
+type = "reference"
+references = "municipality"
+required = true
+on_delete = "restrict"
+
+[fields.active]
+type = "boolean"
+default = true

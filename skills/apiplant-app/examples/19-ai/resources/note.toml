@@ -1,0 +1,18 @@
+[resource]
+name = "note"
+scope = "global"
+
+[permissions]
+list = "owner"
+read = "owner"
+create = "authenticated"
+update = "owner"
+delete = "owner"
+
+[fields.body]
+type = "string"
+required = true
+
+[fields.owner_id]
+type = "reference"
+references = "user"

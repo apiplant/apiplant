@@ -1,0 +1,50 @@
+# Note `account_manager_id`: a reference to the built-in `user`. It is *not* the
+# owner column (that's `owner_field`, default `owner_id`, which this resource
+# doesn't have), so it stays client-settable — you assign an account manager,
+# you don't become one by creating the row.
+
+[resource]
+name = "customer"
+
+[admin]
+group = "Sales"
+order = 1
+columns = ["name", "email", "tier", "country_id"]
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "role:manager"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.email]
+type       = "string"
+required   = true
+max_length = 320           # not unique: two tenants may share a customer
+
+[fields.tier]
+type    = "string"
+default = "standard"       # standard | plus | enterprise
+
+[fields.country_id]
+type       = "reference"
+references = "country"
+on_delete  = "restrict"
+
+[fields.account_manager_id]
+type       = "reference"
+references = "user"
+on_delete  = "set_null"    # the rep leaves; the customer stays
+
+[fields.credit_limit_cents]
+type    = "integer"
+default = 0
+
+[fields.tier.admin]
+widget = "select"
+options = ["standard", "plus", "enterprise"]

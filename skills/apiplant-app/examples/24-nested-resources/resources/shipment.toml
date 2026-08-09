@@ -1,0 +1,39 @@
+# Org-scoped child of an org-scoped parent — `GET /api/depot/{id}/shipment`.
+#
+# Two filters end up on that query, and neither is written here: the tenant
+# (from your active organisation) and the parent (from the URL). So a depot id
+# belonging to another organisation does not leak its shipments — the tenant
+# filter removes every row before the parent filter is even interesting.
+#
+# It references `depot` twice, so the nested endpoint cannot guess which link
+# you mean and asks for `?via=`:
+#
+#   GET /api/depot/{id}/shipment?via=destination_depot_id
+
+[resource]
+name = "shipment"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+update = "member"
+delete = "role:admin"
+
+[fields.reference]
+type     = "string"
+required = true
+
+[fields.origin_depot_id]
+type       = "reference"
+references = "depot"
+required   = true
+on_delete  = "cascade"
+
+[fields.destination_depot_id]
+type       = "reference"
+references = "depot"
+on_delete  = "set_null"
+
+[fields.weight_kg]
+type = "integer"

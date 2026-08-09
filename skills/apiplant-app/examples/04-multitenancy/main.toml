@@ -1,0 +1,36 @@
+[app]
+name = "04 · Multitenancy"
+
+[server]
+port = 8099
+base_path = "/api"
+
+[database]
+url = "postgres://postgres@127.0.0.1:5432/apiplant_tenancy"
+auto_migrate = true
+
+[auth]
+jwt_secret = "example-secret-change-me"
+
+[docs]
+enabled = true
+path = "/docs"
+title = "04 · Multitenancy"
+
+# Who may write `organization.org_class`.
+#
+# The class decides what a `@org_class=` permission lets people do, so an
+# organisation that could set its own class could grant itself access. The
+# column is therefore server-owned — stripped from every request body — except
+# for the callers named here, in the same grammar `[permissions]` uses.
+#
+# Unset, this is `private`: nobody, and classes come only from seed data. Here
+# it is the Operations organisation, whose own class is `admin`.
+[organization]
+org_class_editors = "member@org_class=admin"
+
+# What a new organisation starts as. Every tenant here is a customer until the
+# back office says otherwise, so a permission written for `org_class=customer`
+# applies to an organisation from the moment somebody creates one — including
+# the personal organisation every account is given at registration.
+default_org_class = "customer"

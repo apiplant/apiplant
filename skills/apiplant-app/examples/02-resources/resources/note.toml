@@ -1,0 +1,56 @@
+# One resource = one table + a full set of REST endpoints.
+#
+# `scope = "global"` opts out of multitenancy (example 04 covers that), and the
+# public permissions let you curl this without logging in. Both are unusual
+# choices for a real app — they keep this example to one idea at a time.
+
+[resource]
+name = "note"
+scope = "global"
+# table      = "notes"   # physical table name (default: apiplant_note)
+# timestamps = true      # created_at / updated_at (default: true)
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "public"
+update = "public"
+delete = "public"
+
+# --- fields: one [fields.<name>] table per column ---------------------------
+
+[fields.title]
+type       = "string"     # varchar
+required   = true         # NOT NULL
+max_length = 200          # varchar(200)
+
+[fields.body]
+type = "text"             # unbounded text
+
+[fields.pinned]
+type    = "boolean"
+default = false           # column DEFAULT
+
+[fields.priority]
+type    = "integer"
+default = 3
+
+[fields.rating]
+type = "float"
+
+[fields.slug]
+type   = "string"
+unique = true             # UNIQUE — a conflict returns 409
+
+[fields.due_at]
+type = "timestamp"        # timestamptz, RFC 3339 in JSON
+
+[fields.metadata]
+type = "json"             # jsonb, any JSON value
+
+[fields.external_id]
+type = "uuid"
+
+[fields.secret]
+type   = "string"
+hidden = true             # writable, but never returned in a response

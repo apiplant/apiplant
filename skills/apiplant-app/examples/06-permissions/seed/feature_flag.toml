@@ -1,0 +1,15 @@
+# Global rows: no `organization_id`, because the resource is `scope = "global"`.
+# Who may change them is decided by the caller's *active* organisation being of
+# class `admin` — see `resources/feature_flag.toml`.
+
+[[row]]
+id = "flag-new-editor"
+key = "new_editor"
+enabled = true
+description = "Roll out the rewritten announcement editor."
+
+[[row]]
+id = "flag-weekly-digest"
+key = "weekly_digest"
+enabled = false
+description = "Email a summary of the week's announcements."

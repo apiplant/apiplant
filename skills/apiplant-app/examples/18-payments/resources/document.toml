@@ -1,0 +1,32 @@
+# The thing you have to be subscribed to make.
+#
+# There is nothing billing-specific in this file. It is an ordinary org-scoped
+# resource with ordinary permissions — and the paywall is a `before_create`
+# hook, because "may this organisation create another one" is a question about
+# the organisation's plan, not about the caller's role.
+#
+# That separation is the point. Permissions answer *who*; the hook answers
+# *whether the account is entitled*, and the two are genuinely different
+# questions: an admin of an unsubscribed organisation is still an admin.
+
+[resource]
+name = "document"
+scope = "organization"
+timestamps = true
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"          # …if the organisation is on a plan: see the hook
+update = "member"
+delete = "role:admin"
+
+[hooks]
+before_create = "require_plan"
+
+[fields.title]
+type     = "string"
+required = true
+
+[fields.body]
+type = "text"

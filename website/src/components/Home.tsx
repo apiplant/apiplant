@@ -2,7 +2,7 @@ import { For, Show, createResource, createSignal } from "solid-js";
 import { A } from "@solidjs/router";
 import { Badge, LinkButton } from "./ui";
 import { Code, CopyBlock, CopyLine } from "./Code";
-import { GITHUB_URL, STUDIO_URL, CRATE_URL } from "../lib/links";
+import { GITHUB_URL, STUDIO_URL, SKILL_URL, CRATE_URL } from "../lib/links";
 import {
   LATEST_RELEASE_URL,
   PLATFORMS,
@@ -614,6 +614,54 @@ function StudioCallout() {
   );
 }
 
+/* An app is TOML, which a coding agent writes well — but only if it knows the
+   field types and the permission policies rather than guessing them. That is
+   what the skill carries, so it belongs next to the studio: the other way to
+   edit a directory without writing it by hand. */
+function SkillCallout() {
+  return (
+    <section class="mx-auto w-full max-w-6xl px-5 py-12 sm:py-16">
+      <div class="overflow-hidden rounded-2xl border border-line bg-surface">
+        <div class="grid gap-6 p-6 sm:gap-8 sm:p-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div class="min-w-0">
+            <p class="text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-accent">
+              Claude skill
+            </p>
+            <h2 class="mt-3 text-xl font-semibold tracking-tight text-ink sm:text-2xl">
+              Describe the app, get the directory
+            </h2>
+            <p class="mt-3 max-w-2xl leading-relaxed text-muted">
+              Every guide on this site, all twenty-six examples and the build workflow, packaged as
+              a Claude Code plugin. Install it and Claude writes resources, permissions, hooks and
+              functions from the documentation instead of from guesswork — it loads on its own when
+              the work is apiplant work, with nothing to enable.
+            </p>
+            <div class="mt-6 grid gap-3">
+              <CopyBlock
+                prompt="> "
+                command={"/plugin marketplace add apiplant/apiplant\n/plugin install apiplant-app@apiplant"}
+              />
+              <LinkButton href={SKILL_URL} class="justify-self-start">
+                The skill on GitHub
+              </LinkButton>
+            </div>
+          </div>
+          <figure class="min-w-0 rounded-xl border border-line bg-surface-2 p-5 lg:max-w-sm">
+            <blockquote class="text-sm leading-relaxed text-ink">
+              “build me an apiplant app for tracking client invoices, one organisation per client,
+              and a hook that stamps the due date 30 days out”
+            </blockquote>
+            <figcaption class="mt-3 text-xs leading-relaxed text-faint">
+              It works on an app you already have, too — point it at the directory and it reads
+              your <code class="font-mono text-[0.9em]">resources/</code> before changing them.
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function DocsIndex() {
   return (
     <section class="mx-auto w-full max-w-6xl px-5 py-12 sm:py-16">
@@ -688,6 +736,7 @@ export function Home() {
       <Install />
       <Steps />
       <StudioCallout />
+      <SkillCallout />
       <DocsIndex />
       <Closing />
     </>

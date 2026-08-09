@@ -1,0 +1,34 @@
+# Shipping carriers are shared across tenants too — every org ships with DHL.
+
+[resource]
+name  = "carrier"
+scope = "global"
+
+[admin]
+group = "Reference data"
+roles = ["admin"]
+order = 1
+columns = ["name", "code"]
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "authenticated"
+update = "authenticated"
+delete = "authenticated"
+
+[fields.code]
+type     = "string"
+required = true
+unique   = true
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.tracking_url_template]
+type = "string"            # e.g. "https://track.example.com/{code}"
+
+[fields.active]
+type    = "boolean"
+default = true

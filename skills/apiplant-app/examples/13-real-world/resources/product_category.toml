@@ -1,0 +1,43 @@
+# A category tree: `parent_id` references *this same resource*. Self-references
+# are ordinary references — you get `?expand=parent` and the reverse collection
+# `GET /api/product_category/{id}/product_category` (the children of a node) for
+# free. `restrict` means a node with children can't be deleted.
+
+[resource]
+name  = "product_category"
+scope = "global"
+
+[admin]
+label = "Category"
+plural = "Categories"
+group = "Catalogue"
+order = 3
+columns = ["name", "parent_id"]
+
+[permissions]
+list   = "public"
+read   = "public"
+create = "authenticated"
+update = "authenticated"
+delete = "authenticated"
+
+[fields.name]
+type     = "string"
+required = true
+
+[fields.slug]
+type     = "string"
+required = true
+unique   = true
+
+[fields.description]
+type = "text"
+
+[fields.description.admin]
+format = "markdown"
+help   = "Shown at the top of the category page."
+
+[fields.parent_id]
+type       = "reference"
+references = "product_category"   # self-reference: a category tree
+on_delete  = "restrict"           # can't delete a node that still has children

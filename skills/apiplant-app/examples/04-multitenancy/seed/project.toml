@@ -1,0 +1,22 @@
+# Org-scoped, so every row carries the tenant it belongs to. Acme and Globex
+# both have projects here on purpose: sign in as `member@example.com` (a member
+# of Acme only) and Globex's work is not merely hidden from the list — it is
+# not reachable by id either.
+
+[[row]]
+id = "apollo"
+organization_id = "acme"
+name = "Apollo"
+status = "active"
+
+[[row]]
+id = "gemini"
+organization_id = "acme"
+name = "Gemini"
+status = "paused"
+
+[[row]]
+id = "spacely"
+organization_id = "globex"
+name = "Spacely Sprockets"
+status = "active"

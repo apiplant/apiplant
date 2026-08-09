@@ -1,0 +1,12 @@
+# The build context is the app directory, so almost everything belongs in it.
+# What does not: this example's own documentation, and anything a local
+# `apiplant build` left behind.
+README.md
+Dockerfile
+compose.yaml
+.apiplant-build/
+functions/*.js
+functions/*.so
+functions/*.dylib
+functions/*.dll
+functions/apiplant.d.ts
