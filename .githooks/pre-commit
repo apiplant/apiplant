@@ -80,3 +80,11 @@ if changed '^(docs/|examples/|scripts/generate-skill\.py)'; then
   ./scripts/generate-skill.py >/dev/null
   git add skills
 fi
+
+# The framework website indexes every docs/*.md page. Keep the committed
+# sitemap fresh whenever docs or the sitemap generator change.
+if changed '^(docs/|website/scripts/generate-sitemap\.mjs|website/package\.json)'; then
+  echo "pre-commit: regenerating the framework website sitemap"
+  (cd website && pnpm run sitemap)
+  git add website/public/sitemap.xml
+fi
