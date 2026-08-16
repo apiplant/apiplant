@@ -347,6 +347,49 @@ input["slug"] = json!(slugify(input["title"].as_str().unwrap_or_default()));
 Ok(reply::replace(input))
 ```
 
+**Stamp timestamps that have to agree with each other**
+
+A column that simply needs a computed starting value wants
+a [`default_type = "expression"` default](resources.md#defaults), not a hook:
+`issued_at` and
+`due_date` can both be defaulted in the resource file, in SQL, with no function
+to build or deploy.
+
+A hook earns its place when the two must be *consistent* — `due_date` thirty days
+after **this row's** `issued_at`, including the `issued_at` the client sent.
+Independent defaults cannot express that; each is evaluated on its own, so a
+supplied `issued_at` leaves `due_date` measured from `now()` instead:
+
+```rust
+use chrono::{Duration, Utc};
+
+fn invoice_before_create(_ctx: &Context<()>, mut input: Value) -> Result<Value, String> {
+    // Take the client's issued_at when it sent one, otherwise stamp now.
+    let issued_at = match input.get("issued_at").and_then(Value::as_str) {
+        Some(s) => chrono::DateTime::parse_from_rfc3339(s)
+            .map_err(|_| "issued_at must be an RFC 3339 timestamp")?
+            .to_utc(),
+        None => Utc::now(),
+    };
+    input["issued_at"] = json!(issued_at.to_rfc3339());
+    input["due_date"] = json!((issued_at + Duration::days(30)).to_rfc3339());
+    Ok(reply::replace(input))
+}
+```
+
+The hook owns the date logic, so the two columns cannot disagree, and neither
+field needs a `default`. `timestamp` fields are ordinary columns rather than
+[server-owned](api-reference.md#server-owned-columns) ones, so a hook may write
+them freely — and equally, a client may send them, which is why the hook decides
+whether to trust `issued_at` or overwrite it. To reject a client-supplied value
+outright, ignore what arrived and always stamp `Utc::now()`.
+
+Values go in as RFC 3339 strings and come back out as Postgres renders them
+(`to_jsonb` on a `timestamptz`, so ISO 8601 in the database session's `TimeZone`
+— UTC unless the server is configured otherwise). A round-trip is stable, but a
+client comparing response strings byte-for-byte against what it sent will see a
+different offset spelling; parse before comparing.
+
 **Hide a field from anonymous callers**
 
 ```rust

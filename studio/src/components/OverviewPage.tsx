@@ -1,8 +1,8 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 import { setView } from "../lib/nav";
 import { configValue, functionExports, pendingChanges, studio, toast, type Project } from "../lib/store";
 import { LANGUAGE_LABEL } from "../lib/types";
-import { Badge, Button, Card, CardHeader, Mono } from "./ui";
+import { Badge, Button, Card, CardHeader, Mono, Tabs } from "./ui";
 
 function Stat(props: { label: string; value: string | number; hint?: string }) {
   return (
@@ -21,6 +21,101 @@ function copy(text: string) {
     ?.writeText(text)
     .then(() => toast("Copied to clipboard", "success"))
     .catch(() => toast("Clipboard unavailable", "error"));
+}
+
+/**
+ * Installing the CLI, per platform.
+ *
+ * The official packages, not `cargo install`: a package manager is how most
+ * people will get it, and it is the path that also brings updates. The tabs
+ * exist because only one of these is ever the reader's — showing four blocks of
+ * shell asks them to work out which line is theirs.
+ */
+const INSTALLS = [
+  {
+    id: "macos",
+    label: "macOS",
+    note: "Homebrew",
+    commands: `brew tap apiplant/tap
+brew install apiplant/tap/apiplant`,
+  },
+  {
+    id: "debian",
+    label: "Debian / Ubuntu",
+    note: "apt — `apt upgrade` picks up later releases",
+    commands: `curl -sSfL https://apt.apiplant.com/apiplant-archive-keyring.gpg | sudo tee /usr/share/keyrings/apiplant.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apt.apiplant.com stable main" | sudo tee /etc/apt/sources.list.d/apiplant.list > /dev/null
+sudo apt update && sudo apt install apiplant`,
+  },
+  {
+    id: "arch",
+    label: "Arch Linux",
+    note: "pacman (x86_64)",
+    commands: `curl -sSfL https://apiplant.github.io/pacman/apiplant.gpg -o /tmp/apiplant.gpg
+keyid=$(gpg --show-keys --with-colons /tmp/apiplant.gpg | awk -F: '/^pub:/ { print $5; exit }')
+sudo pacman-key --add /tmp/apiplant.gpg && sudo pacman-key --lsign-key "$keyid"
+printf '\\n[apiplant]\\nSigLevel = Required DatabaseOptional\\nServer = https://apiplant.github.io/pacman/$arch\\n' | sudo tee -a /etc/pacman.conf > /dev/null
+sudo pacman -Sy apiplant`,
+  },
+  {
+    id: "docker",
+    label: "Docker",
+    note: "Windows, or anywhere else — linux/amd64 and linux/arm64",
+    commands: `docker pull ghcr.io/apiplant/apiplant:latest
+docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant`,
+  },
+] as const;
+
+type InstallId = (typeof INSTALLS)[number]["id"];
+
+/**
+ * The tab to open on: the platform the browser says it is on.
+ *
+ * A guess, so it is only ever the *starting* tab — the others are one click
+ * away, and nothing here depends on being right. Windows gets Docker because
+ * there is no native package for it.
+ */
+function detectPlatform(): InstallId {
+  const data = (navigator as { userAgentData?: { platform?: string } }).userAgentData;
+  const hint = `${data?.platform ?? ""} ${navigator.userAgent}`.toLowerCase();
+  if (hint.includes("mac")) return "macos";
+  if (hint.includes("win")) return "docker";
+  if (hint.includes("arch")) return "arch";
+  // Some other Linux, or something that does not say. Debian and its
+  // derivatives are the likeliest guess, and the tabs are one click apart.
+  return "debian";
+}
+
+function InstallCard() {
+  const [platform, setPlatform] = createSignal<InstallId>(detectPlatform());
+  const current = () => INSTALLS.find((entry) => entry.id === platform()) ?? INSTALLS[0];
+
+  return (
+    <Card class="mt-3">
+      <CardHeader
+        title="Installing the CLI"
+        hint="Official packages. Pick your platform; we start on the one this browser looks like."
+      />
+      <div class="space-y-3 px-4 py-4">
+        <Tabs
+          tabs={INSTALLS.map((entry) => ({ id: entry.id, label: entry.label }))}
+          active={platform()}
+          onChange={setPlatform}
+        />
+        <div class="rounded-lg border border-line bg-editor-bg">
+          <div class="flex items-start gap-3 px-3 py-2">
+            <pre class="min-w-0 flex-1 overflow-x-auto font-mono text-[0.78125rem] leading-relaxed text-ink">
+              {current().commands}
+            </pre>
+            <Button size="sm" variant="ghost" onClick={() => copy(current().commands)}>
+              copy
+            </Button>
+          </div>
+        </div>
+        <p class="text-[0.6875rem] text-faint">{current().note}</p>
+      </div>
+    </Card>
+  );
 }
 
 export function OverviewPage(props: {
@@ -219,6 +314,8 @@ export function OverviewPage(props: {
         </Show>
       </Card>
 
+      <InstallCard />
+
       <Card class="mt-3">
         <CardHeader
           title="Running this app"
@@ -227,10 +324,6 @@ export function OverviewPage(props: {
         <div class="space-y-2 px-4 py-4">
           <For
             each={[
-              {
-                command: "cargo install apiplant",
-                note: "install the CLI (once, from crates.io)",
-              },
               {
                 command:
                   "docker run -d --name apiplant-postgres -e POSTGRES_HOST_AUTH_METHOD=trust -p 5432:5432 postgres:16",

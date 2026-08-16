@@ -232,6 +232,109 @@ fn resolve(reference: &Reference, source: &str) -> String {
     }
 }
 
+/// Load `<root>/.env` into the process environment, if the file is there.
+///
+/// This is the other half of `$VAR` in a TOML file: the file says where a
+/// secret comes from, and in development `.env` is where it comes from. It is
+/// read once, before any app file, so `url = "$DATABASE_URL"` resolves the same
+/// whether the variable was exported by a shell, a container or this file.
+///
+/// **A variable already set wins.** A deployment that exports `DATABASE_URL`
+/// means it, and a `.env` that happened to ship in the image must not quietly
+/// replace it. That also makes `FOO=x apiplant serve` work the way every other
+/// program has taught people to expect.
+///
+/// The format is the usual one: `KEY=value` a line, `#` comments, blank lines
+/// ignored, an optional `export ` prefix. A value may be quoted — `'…'` is
+/// literal, `"…"` understands `\n`, `\t`, `\"` and `\\` — and an unquoted value
+/// is trimmed and ends at a ` #` comment.
+///
+/// A malformed line is skipped with a warning rather than failing the boot: a
+/// stray line in a developer's scratch file is not a reason to refuse to start,
+/// and the warning names the line.
+pub fn load_dotenv(root: &std::path::Path) {
+    let path = root.join(".env");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        // Not having one is the normal case in production.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            tracing::warn!(file = %path.display(), %error, "could not read .env");
+            return;
+        }
+    };
+
+    let mut loaded = 0usize;
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+        let Some((name, value)) = line.split_once('=') else {
+            tracing::warn!(
+                file = %path.display(),
+                line = number + 1,
+                "ignoring a .env line with no `=`"
+            );
+            continue;
+        };
+        let name = name.trim();
+        if !is_name(name) {
+            tracing::warn!(
+                file = %path.display(),
+                line = number + 1,
+                "ignoring a .env line whose name is not a variable name"
+            );
+            continue;
+        }
+        if std::env::var_os(name).is_some() {
+            continue;
+        }
+        // SAFETY-adjacent: this runs during load, before the server spawns the
+        // threads that would make a concurrent `setenv` a problem.
+        std::env::set_var(name, dotenv_value(value));
+        loaded += 1;
+    }
+    if loaded > 0 {
+        tracing::info!(file = %path.display(), variables = loaded, "loaded .env");
+    }
+}
+
+/// The value half of a `.env` line, unquoted.
+fn dotenv_value(raw: &str) -> String {
+    let value = raw.trim();
+    if let Some(inner) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+        // Single quotes are literal, which is what a password full of
+        // backslashes wants.
+        return inner.to_string();
+    }
+    if let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        let mut out = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some(other) => out.push(other),
+                None => out.push('\\'),
+            }
+        }
+        return out;
+    }
+    // Unquoted: a trailing ` #` starts a comment. Requiring the space keeps a
+    // `#` inside a value — a URL fragment, a generated password — intact.
+    match value.split_once(" #") {
+        Some((before, _)) => before.trim_end().to_string(),
+        None => value.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +521,51 @@ mod tests {
 
         assert!(document.get("$APIPLANT_T_KEY").is_some());
         assert!(document.get("surprise").is_none());
+    }
+
+    #[test]
+    fn a_dotenv_file_fills_in_unset_variables_only() {
+        let _vars = Vars::set(&[("APIPLANT_T_ALREADY", "from the shell")]);
+        let dir = std::env::temp_dir().join(format!("apiplant-dotenv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(".env"),
+            "# a comment\n\n\
+             export APIPLANT_T_PLAIN=hello\n\
+             APIPLANT_T_SPACED =  spaced out  # trailing comment\n\
+             APIPLANT_T_SINGLE='raw \\n value'\n\
+             APIPLANT_T_DOUBLE=\"line\\nbreak\"\n\
+             APIPLANT_T_ALREADY=from the file\n\
+             not a variable line\n",
+        )
+        .unwrap();
+
+        load_dotenv(&dir);
+
+        assert_eq!(std::env::var("APIPLANT_T_PLAIN").unwrap(), "hello");
+        assert_eq!(std::env::var("APIPLANT_T_SPACED").unwrap(), "spaced out");
+        assert_eq!(std::env::var("APIPLANT_T_SINGLE").unwrap(), "raw \\n value");
+        assert_eq!(std::env::var("APIPLANT_T_DOUBLE").unwrap(), "line\nbreak");
+        // The environment wins: a deployment that exported it meant it.
+        assert_eq!(
+            std::env::var("APIPLANT_T_ALREADY").unwrap(),
+            "from the shell"
+        );
+
+        for name in [
+            "APIPLANT_T_PLAIN",
+            "APIPLANT_T_SPACED",
+            "APIPLANT_T_SINGLE",
+            "APIPLANT_T_DOUBLE",
+        ] {
+            std::env::remove_var(name);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// No `.env` is the normal case in production, and must be silent.
+    #[test]
+    fn a_missing_dotenv_is_not_an_error() {
+        load_dotenv(std::path::Path::new("/nonexistent/apiplant/app"));
     }
 }

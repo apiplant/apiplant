@@ -10,7 +10,7 @@ import {
 import { A, useLocation, useNavigate, useParams } from "@solidjs/router";
 import { DOCS, DOC_GROUPS, findDoc, loadDoc, neighbours, type DocMeta } from "../lib/docs";
 import { highlightParts, searchDocs, warmSearch, type SearchHit } from "../lib/search";
-import { GITHUB_URL } from "../lib/links";
+import { GITHUB_URL, STUDIO_URL } from "../lib/links";
 
 /**
  * The results of a full-text query, section by section. The index is the one
@@ -380,7 +380,8 @@ export function DocsPage() {
             onClick={closeDrawer}
             aria-hidden="true"
           />
-          <div class="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r border-line bg-surface p-4 shadow-2xl">
+          {/* On the right, under the one menu button that opens it. */}
+          <div class="absolute inset-y-0 right-0 flex w-72 max-w-[85vw] flex-col border-l border-line bg-surface p-4 shadow-2xl">
             <div class="mb-3 flex items-center justify-between">
               <span class="text-sm font-semibold text-ink">Documentation</span>
               <button
@@ -394,8 +395,31 @@ export function DocsPage() {
                 </svg>
               </button>
             </div>
-            <div class="h-[calc(100%-2.75rem)]">
+            <div class="min-h-0 flex-1">
               <DocsNav onNavigate={closeDrawer} />
+            </div>
+
+            {/* The two site links the header's nav would otherwise carry, kept
+                small: in the docs, the docs are the menu. */}
+            <div class="mt-3 flex shrink-0 items-center gap-3 border-t border-line pt-3 text-xs text-muted">
+              <a
+                href={`${GITHUB_URL}/tree/master/examples`}
+                target="_blank"
+                rel="noreferrer noopener"
+                class="hover:text-ink"
+                onClick={closeDrawer}
+              >
+                Examples ↗
+              </a>
+              <a
+                href={STUDIO_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+                class="hover:text-ink"
+                onClick={closeDrawer}
+              >
+                Studio ↗
+              </a>
             </div>
           </div>
         </div>

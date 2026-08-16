@@ -83,7 +83,7 @@ Each `[fields.<name>]` table declares one column.
 | `float` | `double precision` | number |
 | `boolean` | `boolean` | boolean |
 | `uuid` | `uuid` | string |
-| `timestamp` | `timestamptz` | RFC 3339 string |
+| `timestamp` | `timestamptz` | RFC 3339 string in; ISO 8601 out, as Postgres renders the column in the session's `TimeZone` (UTC unless configured otherwise) |
 | `json` | `jsonb` | any JSON |
 | `file` | `varchar(1024)` | string — the URL the file is served from; see [File storage](storage.md) |
 | `reference` | `uuid` + foreign key | string (uuid); see [Relationships](relationships.md) |
@@ -97,9 +97,80 @@ Each `[fields.<name>]` table declares one column.
 | `hidden` | any | Column is **stripped from every API response**, for example password hashes. It remains writable. |
 | `max_length` | `string`, `file` | Emits `varchar(N)`. A `file` defaults to `varchar(1024)`. |
 | `case` | `string`, `text` | `upper` or `lower`. The value is forced into that case. See [Forcing a case](#forcing-a-case). |
-| `default` | scalar (bool/number/string) | Column `DEFAULT`. |
+| `default` | scalar (bool/number/string) | Column `DEFAULT`. See [Defaults](#defaults). |
+| `default_type` | any with a `default` | `literal` (default) or `expression` — whether the `default` is a value or SQL. See [Defaults](#defaults). |
 | `references` | `reference` | Target resource name (required for references). |
 | `on_delete` | `reference` | Referential action: `restrict` (default), `set_null`, `cascade`, `no_action`. |
+
+### Defaults
+
+The default itself is always `default`. What changes is how it is read, and
+that is `default_type`: a **value** or a **computation**.
+
+`default_type = "literal"` is the default and the usual case. The value is
+rendered as a SQL literal, quoted and escaped, so whatever it says is exactly
+what an omitted field stores:
+
+```toml
+[fields.published]
+type    = "boolean"
+default = false
+
+[fields.status]
+type    = "string"
+default = "draft"      # default_type = "literal" is implied
+```
+
+`default_type = "expression"` says the `default` is SQL, passed to the database
+verbatim, so the column can be defaulted to something the database works out per
+row:
+
+```toml
+[fields.issued_at]
+type         = "timestamp"
+default      = "now()"
+default_type = "expression"
+
+[fields.due_date]
+type         = "timestamp"
+default      = "now() + interval '30 days'"
+default_type = "expression"
+
+[fields.reference]
+type         = "string"
+default      = "'INV-' || to_char(now(), 'YYYYMMDD')"
+default_type = "expression"
+
+[fields.token]
+type         = "uuid"
+default      = "gen_random_uuid()"
+default_type = "expression"
+```
+
+The distinction matters most for timestamps: `default = "now()"` alone emits
+`DEFAULT 'now()'` — a string literal a `timestamptz` rejects — while adding
+`default_type = "expression"` emits `DEFAULT now()`, the call. The same string,
+read two ways, which is why the choice is a key of its own rather than something
+inferred from how the text happens to look. An `expression` needs a `default`,
+and that `default` must be a string; anything else fails the load.
+
+Two things follow from an expression being real SQL:
+
+* **It is code you write, not input you accept.** It is pasted into the
+  `CREATE TABLE` / `ALTER TABLE`, on the same footing as the rest of the resource
+  file. Loading rejects an expression containing `;`, a SQL comment, an unclosed
+  quote or unbalanced parentheses — the shapes that would stop being a single
+  expression — and Postgres reports anything else it cannot evaluate when the
+  migration runs. Nothing a request supplies belongs here.
+* **The dashboard and CLI cannot pre-fill it.** A literal `default` shows up as
+  the initial value in a create form; an expression has no value until the row
+  is inserted, so the form leaves the field empty and the database fills it.
+
+Both kinds apply on **insert only**, and only when the request omits the field.
+A value that must be recomputed on update, or derived from another column in the
+same row, belongs in a [`before_create`/`before_update` hook](hooks.md#recipes)
+instead — a hook can also enforce the relationship between two columns, which
+two independent defaults cannot.
 
 ### Forcing a case
 

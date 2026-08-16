@@ -636,11 +636,12 @@ function SkillCallout() {
               functions from the documentation instead of from guesswork — it loads on its own when
               the work is apiplant work, with nothing to enable.
             </p>
+            {/* Two blocks, because these are two prompts typed one after the
+                other: one copy button per line is what makes that possible
+                without editing what came out of the clipboard. */}
             <div class="mt-6 grid gap-3">
-              <CopyBlock
-                prompt="> "
-                command={"/plugin marketplace add apiplant/apiplant\n/plugin install apiplant-app@apiplant"}
-              />
+              <CopyBlock prompt="> " command="/plugin marketplace add apiplant/apiplant" />
+              <CopyBlock prompt="> " command="/plugin install apiplant-app@apiplant" />
               <LinkButton href={SKILL_URL} class="justify-self-start">
                 The skill on GitHub
               </LinkButton>

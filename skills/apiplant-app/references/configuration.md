@@ -704,6 +704,37 @@ An unset variable with no default expands to the empty string and logs a warning
 naming the variable and the file. Leaving `$DATABASE_URL` in place would instead
 pass the literal text to whatever consumes it, failing later and less clearly.
 
+### `.env`
+
+If the app directory contains a `.env`, it is read before any TOML file, so the
+variables those files reference can come from it:
+
+```sh
+# .env — next to main.toml. Do not commit it.
+DATABASE_URL=postgres://localhost/myapp_dev
+JWT_SECRET=dev-only-secret
+export SENDGRID_API_KEY="SG.xxxx"
+STRIPE_SECRET_KEY='sk_test_xxxx'   # single quotes are literal
+```
+
+**A variable that is already set wins.** A deployment that exports
+`DATABASE_URL` means it, and a `.env` that happened to ship in an image must not
+override it; `DATABASE_URL=… apiplant serve` behaves the way it does everywhere
+else. That is what makes this a development convenience rather than a second
+configuration system: production sets real environment variables, and the same
+`main.toml` reads either.
+
+The format is the usual one — `KEY=value` a line, `#` comments, blank lines
+ignored, an optional `export ` prefix. A value may be quoted: `'…'` is literal,
+`"…"` understands `\n`, `\t`, `\"` and `\\`. An unquoted value is trimmed, and a
+` #` (space then hash) after it starts a comment — the space is required so a
+`#` inside a URL or a generated password survives.
+
+A line that is not one of those is skipped with a warning naming its number,
+rather than failing the boot: a stray line in a developer's scratch file is not
+a reason to refuse to start. Add `.env` to `.gitignore`; it holds the
+credentials `main.toml` deliberately does not.
+
 ## HTTPS
 
 TLS is **not** configured in `main.toml`. Instead, if the app directory contains

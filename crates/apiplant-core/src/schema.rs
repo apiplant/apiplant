@@ -63,6 +63,60 @@ fn default_scope() -> Scope {
     Scope::Organization
 }
 
+/// Why a `default_type = "expression"` default is not usable as one, or `None`
+/// if it is.
+///
+/// The expression is pasted into `DEFAULT <expr>` in a `CREATE TABLE` /
+/// `ALTER TABLE`, so this is not a parser and cannot be: Postgres validates the
+/// expression itself and reports a real error for one it cannot evaluate. What
+/// is checked here is the small set of shapes that would stop being *an
+/// expression* — a statement terminator, a comment that swallows the rest of the
+/// clause, an unclosed quote or paren — because those turn a typo in a config
+/// file into a second statement, and the file's author deserves to hear about it
+/// at load rather than from the migration.
+fn unsafe_expression(expression: &str) -> Option<&'static str> {
+    let trimmed = expression.trim();
+    if trimmed.is_empty() {
+        return Some("it is empty");
+    }
+    // One pass, quote-aware: `';'` and `'--'` inside a literal are data, and
+    // rejecting `default = "'a(b'"` would be a lie about what is
+    // wrong with it. A `''` escape needs no special case — it toggles twice.
+    let chars: Vec<char> = trimmed.chars().collect();
+    let mut quoted = false;
+    let mut depth = 0i32;
+    for i in 0..chars.len() {
+        if chars[i] == '\'' {
+            quoted = !quoted;
+            continue;
+        }
+        if quoted {
+            continue;
+        }
+        let pair = chars.get(i + 1).copied();
+        match chars[i] {
+            ';' => return Some("`;` would end the statement; a default is one expression"),
+            '-' if pair == Some('-') => return Some("SQL comments are not allowed in a default"),
+            '/' if pair == Some('*') => return Some("SQL comments are not allowed in a default"),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return Some("its parentheses are unbalanced");
+                }
+            }
+            _ => {}
+        }
+    }
+    if quoted {
+        return Some("it has an unterminated string literal");
+    }
+    if depth != 0 {
+        return Some("its parentheses are unbalanced");
+    }
+    None
+}
+
 impl Field {
     /// The case to force on this field's value, if any.
     ///
@@ -181,6 +235,34 @@ impl Resource {
                     resource: self.meta.name.clone(),
                     message: format!("field `{fname}` is a reference without `references`"),
                 });
+            }
+            if field.default_type == DefaultType::Expression {
+                // The expression is the `default` itself, so it has to be a
+                // string: `default_type = "expression"` with `default = 3`
+                // describes nothing, and a number is already a valid literal.
+                let Some(expression) = field.default.as_ref().and_then(|v| v.as_str()) else {
+                    return Err(crate::Error::Schema {
+                        resource: self.meta.name.clone(),
+                        message: match field.default {
+                            None => format!(
+                                "field `{fname}` sets `default_type = \"expression\"` \
+                                 without a `default` to read as SQL"
+                            ),
+                            Some(_) => format!(
+                                "field `{fname}` sets `default_type = \"expression\"`, \
+                                 so its `default` must be a string of SQL"
+                            ),
+                        },
+                    });
+                };
+                if let Some(problem) = unsafe_expression(expression) {
+                    return Err(crate::Error::Schema {
+                        resource: self.meta.name.clone(),
+                        message: format!(
+                            "field `{fname}` has an invalid `default` expression: {problem}"
+                        ),
+                    });
+                }
             }
             if field.admin.format != ContentFormat::Plain
                 && !matches!(field.ty, FieldType::Text | FieldType::String)
@@ -650,9 +732,22 @@ pub struct Field {
     /// Exclude from API responses (e.g. password hashes).
     #[serde(default)]
     pub hidden: bool,
-    /// Optional default rendered as a SQL literal.
+    /// Optional column default, read according to [`Field::default_type`].
     #[serde(default)]
     pub default: Option<serde_json::Value>,
+    /// How [`Field::default`] is read: as a value, or as SQL.
+    ///
+    /// A default is quoted by default, so `default = "now()"` stores the six
+    /// characters `now()` — which a `timestamptz` rejects. `default_type =
+    /// "expression"` says the same string is SQL, and emits `DEFAULT now()`:
+    /// the call. One key holds the default; this one says how to read it.
+    ///
+    /// An expression reaches the database unquoted, so it is SQL the app author
+    /// writes, on the same footing as the rest of the resource file. It is not
+    /// a place to put anything a request supplies. [`Resource::validate`]
+    /// rejects the shapes that would end the statement and begin another.
+    #[serde(default)]
+    pub default_type: DefaultType,
     pub max_length: Option<u32>,
     /// Force a text field to one case, in storage and in every response.
     ///
@@ -673,6 +768,30 @@ pub struct Field {
     /// Dashboard presentation for this field, from `[fields.<name>.admin]`.
     #[serde(default)]
     pub admin: FieldAdmin,
+}
+
+/// How a field's `default` is turned into SQL.
+///
+/// The default is [`Literal`](DefaultType::Literal), which is what a default
+/// usually is: a value, quoted and escaped on its way into the DDL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultType {
+    /// A value. `default = "draft"` stores the five characters `draft`.
+    #[default]
+    Literal,
+    /// SQL, passed to the database verbatim. `default = "now()"` calls the
+    /// function, so the database works the value out per row.
+    Expression,
+}
+
+impl DefaultType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DefaultType::Literal => "literal",
+            DefaultType::Expression => "expression",
+        }
+    }
 }
 
 /// The case a text field is kept in.
@@ -1841,6 +1960,64 @@ type = "reference"
         )
         .unwrap();
         assert!(missing_target.validate().is_err());
+    }
+
+    #[test]
+    fn a_default_expression_accepts_sql_and_rejects_a_second_statement() {
+        let good: Resource = toml::from_str(
+            r#"
+[resource]
+name = "invoice"
+
+[fields.status]
+type = "string"
+default = "draft"
+
+[fields.issued_at]
+type = "timestamp"
+default = "now()"
+default_type = "expression"
+
+[fields.due_date]
+type = "timestamp"
+default = "now() + interval '30 days'"
+default_type = "expression"
+"#,
+        )
+        .unwrap();
+        assert!(good.validate().is_ok());
+        // Omitted means literal: the same string on `status` is five characters.
+        assert_eq!(good.fields["status"].default_type, DefaultType::Literal);
+
+        for expression in [
+            "now(); DROP TABLE apiplant_invoice",
+            "now() -- comment",
+            "now(",
+            "'unterminated",
+            "  ",
+        ] {
+            let resource: Resource = toml::from_str(&format!(
+                "[resource]\nname = \"invoice\"\n\n[fields.issued_at]\ntype = \"timestamp\"\ndefault = '''{expression}'''\ndefault_type = \"expression\"\n"
+            ))
+            .unwrap();
+            assert!(
+                resource.validate().is_err(),
+                "expected `{expression}` to be rejected"
+            );
+        }
+
+        // An expression is the `default` itself, so there has to be one, and it
+        // has to be a string.
+        for field in [
+            "type = \"timestamp\"\ndefault_type = \"expression\"",
+            "type = \"integer\"\ndefault = 3\ndefault_type = \"expression\"",
+        ] {
+            let resource: Resource = toml::from_str(&format!(
+                "[resource]\nname = \"invoice\"\n\n[fields.issued_at]\n{field}\n"
+            ))
+            .unwrap();
+            assert!(resource.validate().is_err(), "expected `{field}` rejected");
+        }
     }
 
     #[test]

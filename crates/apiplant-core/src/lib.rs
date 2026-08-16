@@ -20,7 +20,7 @@ pub use config::{
     ObservabilityConfig, OrganizationConfig, OtlpConfig, OtlpProtocol, PaymentsConfig,
     QueuesConfig, RateLimitConfig, SmtpConfig, StorageConfig, TracesConfig,
 };
-pub use env::{expand_document, parse_toml};
+pub use env::{expand_document, load_dotenv, parse_toml};
 pub use error::{Error, Result};
 pub use schema::{
     relation_name, Access, AuthEvent, CrudAction, Field, FieldType, HookEvent, Hooks, OnDelete,

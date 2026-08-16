@@ -96,6 +96,16 @@ def example_dirs() -> list[tuple[str, str]]:
     return out
 
 
+def yaml_scalar(s: str) -> str:
+    """`s` as a single-quoted YAML scalar.
+
+    The description contains `: `, which makes an unquoted scalar invalid YAML —
+    the loader reads it as a nested mapping key. Quoting unconditionally keeps
+    the frontmatter valid however the text is later reworded.
+    """
+    return "'" + s.replace("'", "''") + "'"
+
+
 def skill_md(examples: list[tuple[str, str]]) -> str:
     guides = "\n".join(
         f"| [{f}](references/{f}) | {what} |" for f, what in GUIDES
@@ -105,7 +115,7 @@ def skill_md(examples: list[tuple[str, str]]) -> str:
     )
     return f"""---
 name: {SKILL_NAME}
-description: {DESCRIPTION}
+description: {yaml_scalar(DESCRIPTION)}
 ---
 
 # Building apiplant apps

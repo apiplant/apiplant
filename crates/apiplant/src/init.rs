@@ -379,6 +379,9 @@ https/
 
 # The baked admin panel, if you run `apiplant admin`.
 admin/
+
+# Local environment: read at boot, and the one file here that holds secrets.
+.env
 "#;
 
 fn readme(name: &str) -> String {

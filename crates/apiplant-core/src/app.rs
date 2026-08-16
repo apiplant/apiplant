@@ -34,6 +34,9 @@ impl App {
     /// smallest valid app is an empty directory.
     pub fn load(root: impl AsRef<Path>) -> crate::Result<App> {
         let root = root.as_ref().to_path_buf();
+        // Before anything reads a TOML file, so `$DATABASE_URL` in one of them
+        // can come from the app's own `.env`.
+        crate::env::load_dotenv(&root);
         let config = Config::load(&root)?;
 
         let mut resources = BTreeMap::new();
@@ -129,6 +132,7 @@ impl App {
                         unique: false,
                         hidden: false,
                         default: None,
+                        default_type: Default::default(),
                         max_length: None,
                         case: None,
                         on_delete: Some(OnDelete::Cascade),

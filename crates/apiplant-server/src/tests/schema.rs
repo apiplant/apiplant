@@ -89,6 +89,82 @@ default = "draft"
 }
 
 #[ntex::test]
+async fn a_default_expression_is_evaluated_by_the_database_on_insert() {
+    let db = TempDatabase::create("default_expression").await;
+    let root = temp_dir("default_expression");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    r#"
+[database]
+url = "{}"
+"#,
+                    db.url
+                ),
+            ),
+            (
+                "resources/invoice.toml",
+                r#"
+[resource]
+name = "invoice"
+scope = "global"
+
+[fields.title]
+type = "string"
+required = true
+
+# A literal: the characters, not the call.
+[fields.label]
+type = "string"
+default = "now()"
+
+[fields.issued_at]
+type = "timestamp"
+default = "now()"
+default_type = "expression"
+
+[fields.due_date]
+type = "timestamp"
+default = "now() + interval '30 days'"
+default_type = "expression"
+"#,
+            ),
+        ],
+    );
+
+    let app = App::load(&root).unwrap();
+    let db_conn = Db::connect(&db.url, 4).await.unwrap();
+    apiplant_db::migrate(db_conn.connection(), &app)
+        .await
+        .unwrap();
+
+    let invoice = app.resources.get("invoice").unwrap();
+    db_conn
+        .create(
+            invoice,
+            &serde_json::Map::from_iter([("title".to_string(), Value::String("first".into()))]),
+        )
+        .await
+        .unwrap();
+
+    let rows = db_conn.list(invoice, &[], &[], 10, 0).await.unwrap();
+    let row = &rows.as_array().unwrap()[0];
+    assert_eq!(row["label"], "now()");
+
+    let issued = row["issued_at"].as_str().unwrap();
+    let due = row["due_date"].as_str().unwrap();
+    let issued = chrono::DateTime::parse_from_rfc3339(issued).unwrap();
+    let due = chrono::DateTime::parse_from_rfc3339(due).unwrap();
+    assert_eq!((due - issued).num_days(), 30);
+
+    fs::remove_dir_all(root).unwrap();
+    db.cleanup().await;
+}
+
+#[ntex::test]
 async fn complex_overrides_and_mixed_permission_resources_work_together() {
     let db = TempDatabase::create("complex").await;
     let root = temp_dir("complex");

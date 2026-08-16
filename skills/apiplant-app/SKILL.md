@@ -1,6 +1,6 @@
 ---
 name: apiplant-app
-description: Build a REST API application with apiplant — a directory of TOML resource definitions, permissions, seed data and compiled functions served by the apiplant binary. Use when creating or modifying an apiplant app: writing resources/*.toml, main.toml, seed data, agents, lifecycle hooks or functions, wiring auth, multitenancy, permissions, relationships, queues, storage, email, payments or AI, and when running apiplant init/seed/run/build.
+description: 'Build a REST API application with apiplant — a directory of TOML resource definitions, permissions, seed data and compiled functions served by the apiplant binary. Use when creating or modifying an apiplant app: writing resources/*.toml, main.toml, seed data, agents, lifecycle hooks or functions, wiring auth, multitenancy, permissions, relationships, queues, storage, email, payments or AI, and when running apiplant init/seed/run/build.'
 ---
 
 # Building apiplant apps

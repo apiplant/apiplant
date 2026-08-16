@@ -27,8 +27,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use apiplant_abi::{FunctionAccess, HttpMethod};
 use apiplant_core::schema::{
-    is_auth_resource, relation_name, titleize, Access, ContentFormat, Field, FieldType, OnDelete,
-    Policy, Resource, Widget,
+    is_auth_resource, relation_name, titleize, Access, ContentFormat, DefaultType, Field,
+    FieldType, OnDelete, Policy, Resource, Widget,
 };
 use apiplant_core::{Agent, App, ORG_CLASS_FIELD};
 use serde::Serialize;
@@ -509,11 +509,7 @@ fn build_manifest(
             .then(left.label.cmp(&right.label))
     });
 
-    let mut agents = app
-        .agents
-        .values()
-        .map(agent_manifest)
-        .collect::<Vec<_>>();
+    let mut agents = app.agents.values().map(agent_manifest).collect::<Vec<_>>();
     agents.sort_by(|left, right| {
         left.label
             .cmp(&right.label)
@@ -872,7 +868,13 @@ fn field_manifest(name: &str, field: &Field, resource: &Resource) -> FieldManife
         references,
         relation,
         on_delete: field.on_delete.map(on_delete_name),
-        default_value: field.default.clone(),
+        // Literals only: an expression has no value until the row is inserted,
+        // and pre-filling the form with the characters `now()` would submit
+        // them.
+        default_value: match field.default_type {
+            DefaultType::Literal => field.default.clone(),
+            DefaultType::Expression => None,
+        },
         writable: !field.hidden && !field.admin.readonly && !stamped,
         name: name.to_string(),
     }

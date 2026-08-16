@@ -6,7 +6,7 @@
 //! additive strategy that is safe to run on every start). Destructive changes
 //! (dropping/retyping columns) are intentionally left to the operator.
 
-use apiplant_core::schema::Field;
+use apiplant_core::schema::{DefaultType, Field};
 use apiplant_core::{App, FieldType, Resource};
 use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use std::collections::HashSet;
@@ -102,11 +102,21 @@ fn column_type(field: &Field) -> String {
     }
 }
 
-/// A `DEFAULT <literal>` clause for a field's declared default, or empty.
+/// A `DEFAULT` clause for a field's declared default, or empty.
+///
+/// `default_type` decides how the value is read: a literal is quoted, an
+/// expression is SQL and goes through untouched. Validation has already made
+/// sure an expression is a string, and a usable one.
 fn default_clause(field: &Field) -> String {
     let Some(v) = &field.default else {
         return String::new();
     };
+    if field.default_type == DefaultType::Expression {
+        return match v.as_str() {
+            Some(expression) => format!(" DEFAULT {}", expression.trim()),
+            None => String::new(),
+        };
+    }
     match v {
         serde_json::Value::Bool(b) => format!(" DEFAULT {b}"),
         serde_json::Value::Number(n) => format!(" DEFAULT {n}"),
@@ -206,6 +216,7 @@ mod tests {
             unique: false,
             hidden: false,
             default: None,
+            default_type: DefaultType::Literal,
             max_length: None,
             case: None,
             on_delete: Some(OnDelete::Restrict),
@@ -237,5 +248,22 @@ mod tests {
         let mut structured = field(FieldType::Json);
         structured.default = Some(serde_json::json!({ "nested": true }));
         assert_eq!(default_clause(&structured), "");
+    }
+
+    #[test]
+    fn an_expression_default_is_emitted_unquoted() {
+        // The distinction `default_type` exists for: the same string stores the
+        // characters, or calls the function.
+        let mut literal = field(FieldType::Timestamp);
+        literal.default = Some(serde_json::json!("now()"));
+        assert_eq!(default_clause(&literal), " DEFAULT 'now()'");
+
+        let mut expression = field(FieldType::Timestamp);
+        expression.default = Some(serde_json::json!("  now() + interval '30 days'  "));
+        expression.default_type = DefaultType::Expression;
+        assert_eq!(
+            default_clause(&expression),
+            " DEFAULT now() + interval '30 days'"
+        );
     }
 }
