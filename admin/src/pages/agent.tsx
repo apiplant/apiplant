@@ -1,4 +1,4 @@
-import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onSettled } from "solid-js";
 import { loadConversationFilter, saveConversationFilter } from "../filters";
 import { MarkupView } from "../markup";
 import { Avatar, Badge, Button, ConfirmDialog, EmptyState, SearchInput, Spinner } from "../ui";
@@ -308,8 +308,10 @@ export function AgentPage(props: { agent: AgentManifest; threadId: string | null
   let messageListRef: HTMLDivElement | undefined;
 
   const onCompactLayoutChange = (event: MediaQueryListEvent) => setCompactLayout(event.matches);
-  compactQuery.addEventListener("change", onCompactLayoutChange);
-  onCleanup(() => compactQuery.removeEventListener("change", onCompactLayoutChange));
+  onSettled(() => {
+    compactQuery.addEventListener("change", onCompactLayoutChange);
+    return () => compactQuery.removeEventListener("change", onCompactLayoutChange);
+  });
 
   const threadResource = createMemo(() =>
     props.agent.thread_resource ? resourceByName(props.agent.thread_resource) : null,
@@ -442,7 +444,7 @@ export function AgentPage(props: { agent: AgentManifest; threadId: string | null
     }
   };
 
-  onMount(() => {
+  onSettled(() => {
     const resizeObserver = new ResizeObserver(() => {
       measureComposer();
       if (!awayFromBottom()) snapToBottom();
@@ -458,37 +460,40 @@ export function AgentPage(props: { agent: AgentManifest; threadId: string | null
     };
     window.addEventListener("resize", syncViewport);
     window.visualViewport?.addEventListener("resize", syncViewport);
-    onCleanup(() => {
+    return () => {
       resizeObserver.disconnect();
       window.removeEventListener("resize", syncViewport);
       window.visualViewport?.removeEventListener("resize", syncViewport);
-    });
+    };
   });
 
-  createEffect(() => {
-    void props.agent.name;
-    void session.userId;
-    void threadResource()?.name;
-    setThreadFiltersLoaded(false);
-    const saved = loadConversationFilter(props.agent.name, {
-      query: "",
-      ownerOnly: canChooseThreadOwnerFilter(),
-    });
-    batch(() => {
+  createEffect(
+    () =>
+      [props.agent.name, session.userId, threadResource()?.name, canChooseThreadOwnerFilter()] as const,
+    ([agentName, , , canChooseOwner]) => {
+      setThreadFiltersLoaded(false);
+      const saved = loadConversationFilter(agentName, { query: "", ownerOnly: canChooseOwner });
       setThreadSearch(saved.query);
       setAppliedThreadSearch(saved.query);
-      setOwnerThreadsOnly(canChooseThreadOwnerFilter() ? saved.ownerOnly : false);
-    });
-    setThreadFiltersLoaded(true);
-  });
+      setOwnerThreadsOnly(canChooseOwner ? saved.ownerOnly : false);
+      setThreadFiltersLoaded(true);
+    },
+  );
 
-  createEffect(() => {
-    if (!threadFiltersLoaded()) return;
-    saveConversationFilter(props.agent.name, {
-      query: appliedThreadSearch(),
-      ownerOnly: canChooseThreadOwnerFilter() ? ownerThreadsOnly() : false,
-    });
-  });
+  createEffect(
+    () =>
+      [
+        threadFiltersLoaded(),
+        props.agent.name,
+        appliedThreadSearch(),
+        canChooseThreadOwnerFilter(),
+        ownerThreadsOnly(),
+      ] as const,
+    ([loaded, agentName, query, canChooseOwner, ownerOnly]) => {
+      if (!loaded) return;
+      saveConversationFilter(agentName, { query, ownerOnly: canChooseOwner ? ownerOnly : false });
+    },
+  );
 
   const refreshThreads = async () => {
     const resource = threadResource();
@@ -561,56 +566,70 @@ export function AgentPage(props: { agent: AgentManifest; threadId: string | null
     }
   };
 
-  createEffect(() => {
-    void props.agent.name;
-    void session.organizationId;
-    void session.userId;
-    void appliedThreadSearch();
-    void canChooseThreadOwnerFilter();
-    void ownerThreadsOnly();
-    if (props.threadId) setEphemeralThreadId(null);
-    if (!props.threadId) setMessages([]);
-    void refreshThreads();
-  });
+  createEffect(
+    () =>
+      [
+        props.agent.name,
+        session.organizationId,
+        session.userId,
+        appliedThreadSearch(),
+        canChooseThreadOwnerFilter(),
+        ownerThreadsOnly(),
+        props.threadId,
+      ] as const,
+    ([, , , , , , threadId]) => {
+      if (threadId) setEphemeralThreadId(null);
+      else setMessages([]);
+      void refreshThreads();
+    },
+  );
 
-  createEffect(() => {
-    void props.agent.name;
-    void session.organizationId;
-    const threadId = activeThreadId();
-    if (!threadId) {
-      setMessages([]);
-      return;
-    }
-    void refreshMessages(threadId);
-  });
+  createEffect(
+    () => [props.agent.name, session.organizationId, activeThreadId()] as const,
+    ([, , threadId]) => {
+      if (!threadId) {
+        setMessages([]);
+        return;
+      }
+      void refreshMessages(threadId);
+    },
+  );
 
-  createEffect(() => {
-    void props.agent.name;
-    if (!props.threadId) {
-      setEphemeralThreadId(null);
-      setScratchMessages([]);
-    }
-  });
+  createEffect(
+    () => [props.agent.name, props.threadId] as const,
+    ([, threadId]) => {
+      if (!threadId) {
+        setEphemeralThreadId(null);
+        setScratchMessages([]);
+      }
+    },
+  );
 
-  createEffect(() => {
-    if (props.threadId) setComposerOpen(false);
-  });
+  createEffect(
+    () => props.threadId,
+    (threadId) => {
+      if (threadId) setComposerOpen(false);
+    },
+  );
 
-  createEffect(() => {
-    compactComposer();
-    draft();
-    queueMicrotask(syncComposerLayout);
-  });
+  createEffect(
+    () => [compactComposer(), draft()] as const,
+    () => {
+      queueMicrotask(syncComposerLayout);
+    },
+  );
 
-  createEffect(() => {
-    lastMessageKey();
+  createEffect(lastMessageKey, () => {
     snapToBottom();
   });
 
-  createEffect(() => {
-    if (loadingMessages() || !activeThreadId() || !visibleMessages().length) return;
-    snapToBottom();
-  });
+  createEffect(
+    () => [loadingMessages(), activeThreadId(), visibleMessages().length] as const,
+    ([loading, threadId, count]) => {
+      if (loading || !threadId || !count) return;
+      snapToBottom();
+    },
+  );
 
   const startNew = () => {
     setDraft("");

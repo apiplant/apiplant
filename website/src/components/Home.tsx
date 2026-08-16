@@ -1,5 +1,4 @@
-import { For, Show, createResource, createSignal } from "solid-js";
-import { A } from "@solidjs/router";
+import { For, Show, createMemo, createSignal, latest } from "solid-js";
 import { Badge, LinkButton } from "./ui";
 import { Code, CopyBlock, CopyLine } from "./Code";
 import { GITHUB_URL, STUDIO_URL, SKILL_URL, CRATE_URL } from "../lib/links";
@@ -295,7 +294,7 @@ function Anatomy() {
             HTTPS; add a function and it is mounted at boot. There is no generated code to keep in
             sync.
           </p>
-          <A
+          <a
             href="/docs"
             class="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:text-accent-dim"
           >
@@ -303,7 +302,7 @@ function Anatomy() {
             <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
             </svg>
-          </A>
+          </a>
         </div>
 
         <Code
@@ -336,7 +335,7 @@ function Features() {
       <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <For each={FEATURES}>
           {(feature) => (
-            <A
+            <a
               href={feature.href}
               class="group rounded-2xl border border-line bg-surface p-5 transition-colors hover:border-line-strong hover:bg-surface-2"
             >
@@ -345,7 +344,7 @@ function Features() {
               </span>
               <h3 class="mt-4 text-sm font-semibold tracking-tight text-ink">{feature.title}</h3>
               <p class="mt-2 text-sm leading-relaxed text-muted">{feature.body}</p>
-            </A>
+            </a>
           )}
         </For>
       </div>
@@ -358,7 +357,8 @@ function Features() {
    releases page is the fallback rather than a broken link to an archive that
    was never built. */
 function DownloadButton(props: { class?: string }) {
-  const [platform] = createResource(detectPlatform);
+  const detected = createMemo(async () => detectPlatform());
+  const platform = () => latest(detected);
 
   return (
     <Show
@@ -684,7 +684,7 @@ function DocsIndex() {
                 <For each={group.docs}>
                   {(doc) => (
                     <li>
-                      <A
+                      <a
                         href={`/docs${doc.slug ? `/${doc.slug}` : ""}`}
                         class="-mx-2 block rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2"
                       >
@@ -692,7 +692,7 @@ function DocsIndex() {
                         <span class="mt-0.5 block text-xs leading-relaxed text-faint">
                           {doc.summary}
                         </span>
-                      </A>
+                      </a>
                     </li>
                   )}
                 </For>

@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from "solid-js";
-import { A, useLocation } from "@solidjs/router";
+import { useLocation } from "@solidjs/router";
 import { LinkButton, ThemeToggle, Wordmark } from "./ui";
 import { COMPANY_URL, GITHUB_URL, STUDIO_URL } from "../lib/links";
 
@@ -18,9 +18,9 @@ export function Header(props: { onToggleSidebar?: () => void }) {
   return (
     <header class="sticky top-0 z-40 border-b border-line bg-canvas/80 backdrop-blur-md">
       <div class="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-4 sm:gap-3 sm:px-5">
-        <A href="/" class="min-w-0" aria-label="apiplant home">
+        <a href="/" class="min-w-0" aria-label="apiplant home">
           <Wordmark />
-        </A>
+        </a>
 
         <nav class="ml-4 hidden items-center gap-1 md:flex">
           <For each={NAV}>
@@ -70,9 +70,12 @@ export function Header(props: { onToggleSidebar?: () => void }) {
               replaces it up to `md`, where the nav does. */}
           <button
             type="button"
-            onClick={() => (props.onToggleSidebar ? props.onToggleSidebar() : setOpen(!open()))}
+            onClick={() => {
+              if (props.onToggleSidebar) props.onToggleSidebar();
+              else setOpen(!open());
+            }}
             aria-label={props.onToggleSidebar ? "Open documentation navigation" : "Menu"}
-            aria-expanded={props.onToggleSidebar ? undefined : open()}
+            aria-expanded={props.onToggleSidebar ? undefined : open() ? "true" : "false"}
             class={`inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-ink ${
               props.onToggleSidebar ? "lg:hidden" : "md:hidden"
             }`}

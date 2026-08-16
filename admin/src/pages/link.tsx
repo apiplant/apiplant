@@ -11,11 +11,9 @@
  * once existed.
  */
 
-import { For, Show, createResource, createSignal, onMount } from "solid-js";
-import { createMutable } from "solid-js/store";
+import { Errored, For, Loading, Show, createMemo, createSignal, onSettled } from "solid-js";
 import { Button, Card, HeadMark, Spinner, ThemeToggle } from "../ui";
-import { FieldEditor, buildPayload, createDraft } from "../fields";
-import type { Draft } from "../fields";
+import { FieldEditor, buildPayload, createDraft, createDraftStore } from "../fields";
 import { PasswordFields, createPasswordPair } from "../password";
 import {
   api,
@@ -25,7 +23,7 @@ import {
   notify,
   persistSession,
   refreshSession,
-  session,
+  updateSession,
 } from "../store";
 import { signupResource } from "./auth";
 
@@ -78,9 +76,7 @@ function Problem(props: { message: string }) {
 
 /** Adopt a session the server just handed us and land on the dashboard. */
 async function signInWith(token: string, message: string) {
-  session.token = token;
-  session.apiKey = "";
-  session.userId = decodeSubject(token);
+  updateSession({ token, apiKey: "", userId: decodeSubject(token) });
   persistSession();
   await refreshSession();
   navigate({ kind: "dashboard" });
@@ -118,17 +114,15 @@ export function AcceptInvitePage(props: { token: string }) {
   const [error, setError] = createSignal<string | null>(null);
   const passwords = createPasswordPair();
 
-  const [invitation] = createResource(
-    () => props.token,
-    async (token) => {
-      if (!token) throw new Error(DEAD_LINK);
-      return asRecord(await api(`/auth/invitations/${encodeURIComponent(token)}`));
-    },
-  );
+  const invitation = createMemo(async () => {
+    const token = props.token;
+    if (!token) throw new Error(DEAD_LINK);
+    return asRecord(await api(`/auth/invitations/${encodeURIComponent(token)}`));
+  });
 
   const extras = () => signupResource(manifest()?.auth.signup_fields ?? []);
-  const draft = createMutable<Draft>({});
-  onMount(() => Object.assign(draft, createDraft(extras(), null)));
+  const draft = createDraftStore();
+  onSettled(() => draft.reset(createDraft(extras(), null)));
 
   const needsAccount = () => invitation()?.has_account === false;
 
@@ -143,7 +137,7 @@ export function AcceptInvitePage(props: { token: string }) {
         setError(passwords.error() ?? "Choose a password, and type it twice.");
         return;
       }
-      const { payload, errors } = buildPayload(extras(), draft);
+      const { payload, errors } = buildPayload(extras(), draft.values);
       if (errors.length) {
         setError(errors[0].message);
         return;
@@ -164,7 +158,7 @@ export function AcceptInvitePage(props: { token: string }) {
       // Select the organisation just joined, rather than whichever sorts
       // first.
       if (typeof response?.organization_id === "string") {
-        session.organizationId = response.organization_id;
+        updateSession({ organizationId: response.organization_id });
       }
       passwords.reset();
       await signInWith(token, `You're in ${String(invitation()?.organization ?? "")}.`);
@@ -184,15 +178,15 @@ export function AcceptInvitePage(props: { token: string }) {
           : undefined
       }
     >
-      <Show
-        when={!invitation.loading}
-        fallback={
-          <p class="flex items-center gap-2 px-5 py-6 text-xs text-faint">
-            <Spinner class="h-4 w-4" /> Checking your invitation…
-          </p>
-        }
-      >
-        <Show when={invitation() && !invitation.error} fallback={<Problem message={DEAD_LINK} />}>
+      <Errored fallback={<Problem message={DEAD_LINK} />}>
+        <Loading
+          fallback={
+            <p class="flex items-center gap-2 px-5 py-6 text-xs text-faint">
+              <Spinner class="h-4 w-4" /> Checking your invitation…
+            </p>
+          }
+        >
+        <Show when={invitation()} fallback={<Problem message={DEAD_LINK} />}>
           <form class="space-y-4 px-5 py-5" onSubmit={accept}>
             <Show when={invitation()!.role}>
               <p class="text-[0.8125rem] text-muted">
@@ -229,7 +223,8 @@ export function AcceptInvitePage(props: { token: string }) {
             </Button>
           </form>
         </Show>
-      </Show>
+        </Loading>
+      </Errored>
     </LinkLayout>
   );
 }
@@ -245,7 +240,7 @@ export function AcceptInvitePage(props: { token: string }) {
 export function VerifyEmailPage(props: { token: string }) {
   const [error, setError] = createSignal<string | null>(null);
 
-  onMount(() => {
+  onSettled(() => {
     void (async () => {
       if (!props.token) {
         setError(DEAD_LINK);

@@ -3,11 +3,12 @@ import {
   Show,
   createEffect,
   createMemo,
-  createResource,
   createSignal,
+  Errored,
+  latest,
   onCleanup,
 } from "solid-js";
-import { A, useLocation, useNavigate, useParams } from "@solidjs/router";
+import { useLocation, useNavigate, useParams } from "@solidjs/router";
 import { DOCS, DOC_GROUPS, findDoc, loadDoc, neighbours, type DocMeta } from "../lib/docs";
 import { highlightParts, searchDocs, warmSearch, type SearchHit } from "../lib/search";
 import { GITHUB_URL, STUDIO_URL } from "../lib/links";
@@ -28,7 +29,7 @@ function SearchResults(props: { hits: SearchHit[]; query: string; onNavigate?: (
         <For each={props.hits}>
           {(hit) => (
             <li>
-              <A
+              <a
                 href={hit.href}
                 onClick={() => props.onNavigate?.()}
                 class="block rounded-lg px-2 py-2 transition-colors hover:bg-surface-2"
@@ -50,7 +51,7 @@ function SearchResults(props: { hits: SearchHit[]; query: string; onNavigate?: (
                     )}
                   </For>
                 </span>
-              </A>
+              </a>
             </li>
           )}
         </For>
@@ -76,10 +77,13 @@ function DocsNav(props: { onNavigate?: () => void }) {
     timer = setTimeout(() => setSettled(value.trim()), 120);
   };
 
-  const [hits] = createResource(
-    () => (settled().length > 1 ? settled() : null),
-    (term) => searchDocs(term),
-  );
+  const hitsResource = createMemo(async () => {
+    const term = settled().length > 1 ? settled() : null;
+    return term ? searchDocs(term) : undefined;
+  });
+  // `latest` keeps the previous results on screen while the next query runs,
+  // rather than the whole nav dropping to the boundary's fallback.
+  const hits = () => latest(hitsResource);
 
   const searching = () => query().trim().length > 1;
   const current = () => params.slug ?? "";
@@ -130,7 +134,7 @@ function DocsNav(props: { onNavigate?: () => void }) {
                   <For each={group.docs}>
                     {(doc) => (
                       <li>
-                        <A
+                        <a
                           href={`/docs${doc.slug ? `/${doc.slug}` : ""}`}
                           onClick={() => props.onNavigate?.()}
                           class={`block rounded-lg px-2 py-1.5 text-[0.8125rem] transition-colors ${
@@ -140,7 +144,7 @@ function DocsNav(props: { onNavigate?: () => void }) {
                           }`}
                         >
                           {doc.title}
-                        </A>
+                        </a>
                       </li>
                     )}
                   </For>
@@ -162,30 +166,32 @@ function DocsNav(props: { onNavigate?: () => void }) {
 function Contents(props: { headings: { id: string; text: string; level: number }[] }) {
   const [active, setActive] = createSignal<string | null>(null);
 
-  createEffect(() => {
-    const ids = props.headings.map((heading) => heading.id);
-    if (ids.length === 0) return;
+  createEffect(
+    () => props.headings.map((heading) => heading.id),
+    (ids) => {
+      if (ids.length === 0) return;
 
-    const visible = new Set<string>();
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) visible.add(entry.target.id);
-          else visible.delete(entry.target.id);
-        }
-        const first = ids.find((id) => visible.has(id));
-        if (first) setActive(first);
-      },
-      { rootMargin: "-88px 0px -70% 0px", threshold: 0 },
-    );
+      const visible = new Set<string>();
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) visible.add(entry.target.id);
+            else visible.delete(entry.target.id);
+          }
+          const first = ids.find((id) => visible.has(id));
+          if (first) setActive(first);
+        },
+        { rootMargin: "-88px 0px -70% 0px", threshold: 0 },
+      );
 
-    for (const id of ids) {
-      const element = document.getElementById(id);
-      if (element) observer.observe(element);
-    }
+      for (const id of ids) {
+        const element = document.getElementById(id);
+        if (element) observer.observe(element);
+      }
 
-    onCleanup(() => observer.disconnect());
-  });
+      return () => observer.disconnect();
+    },
+  );
 
   return (
     <Show when={props.headings.length > 1}>
@@ -222,7 +228,7 @@ function Pager(props: { slug: string }) {
   const around = createMemo(() => neighbours(props.slug));
 
   const link = (doc: DocMeta, side: "prev" | "next") => (
-    <A
+    <a
       href={`/docs${doc.slug ? `/${doc.slug}` : ""}`}
       class={`group flex flex-col gap-1 rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong hover:bg-surface-2 ${
         side === "next" ? "text-right sm:col-start-2" : ""
@@ -232,7 +238,7 @@ function Pager(props: { slug: string }) {
         {side === "prev" ? "Previous" : "Next"}
       </span>
       <span class="text-sm font-medium text-ink">{doc.title}</span>
-    </A>
+    </a>
   );
 
   return (
@@ -248,7 +254,8 @@ function Pager(props: { slug: string }) {
 function Article(props: { slug: string }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [doc] = createResource(() => props.slug, loadDoc);
+  const docResource = createMemo(async () => loadDoc(props.slug));
+  const doc = () => latest(docResource);
 
   const sourceFile = () => `docs/${props.slug || "README"}.md`;
 
@@ -265,40 +272,62 @@ function Article(props: { slug: string }) {
   };
 
   // A fresh document starts at the top; an in-page anchor is honoured instead.
-  createEffect(() => {
-    if (!doc.loading && doc()) {
-      const hash = location.hash.slice(1);
-      const target = hash ? document.getElementById(decodeURIComponent(hash)) : null;
-      if (target) target.scrollIntoView();
-      else window.scrollTo({ top: 0 });
-    }
-  });
+  //
+  // On a cold load the guide's markup is inserted in the same pass that runs
+  // this, so the anchor does not exist yet the first time we look — which is
+  // why a link opened directly at `/docs/configuration#docs` used to land at
+  // the top of the page. Look again over the next few frames before deciding
+  // the fragment names nothing.
+  createEffect(
+    () => [doc(), location.hash] as const,
+    ([loaded, hash]) => {
+      if (!loaded) return;
+      const fragment = decodeURIComponent(hash.slice(1));
+      if (!fragment) {
+        window.scrollTo({ top: 0 });
+        return;
+      }
+      let frame = 0;
+      const settle = (attempt: number) => {
+        const target = document.getElementById(fragment);
+        if (target) return target.scrollIntoView();
+        if (attempt < 5) frame = requestAnimationFrame(() => settle(attempt + 1));
+        else window.scrollTo({ top: 0 });
+      };
+      settle(0);
+      return () => cancelAnimationFrame(frame);
+    },
+  );
 
-  createEffect(() => {
-    const meta = findDoc(props.slug);
-    document.title = meta ? `${meta.title} — apiplant docs` : "apiplant docs";
-  });
+  createEffect(
+    () => findDoc(props.slug),
+    (meta) => {
+      document.title = meta ? `${meta.title} — apiplant docs` : "apiplant docs";
+    },
+  );
 
   return (
     <div class="mx-auto grid w-full max-w-6xl gap-10 px-5 py-10 xl:grid-cols-[minmax(0,1fr)_14rem]">
       <article class="min-w-0">
+        {/* A guide that fails to load has no page to show, so the boundary
+            carries the "no such file" message the read would otherwise throw. */}
+        <Errored
+          fallback={
+            <div class="rounded-xl border border-line bg-surface p-8">
+              <h1 class="text-xl font-semibold text-ink">That guide doesn't exist</h1>
+              <p class="mt-2 text-sm text-muted">
+                There is no <code class="font-mono">{sourceFile()}</code> in the repository.
+              </p>
+              <a href="/docs" class="mt-4 inline-block text-sm text-accent hover:text-accent-dim">
+                Back to the documentation
+              </a>
+            </div>
+          }
+        >
         <Show
           when={doc()}
           fallback={
-            <Show
-              when={!doc.error}
-              fallback={
-                <div class="rounded-xl border border-line bg-surface p-8">
-                  <h1 class="text-xl font-semibold text-ink">That guide doesn't exist</h1>
-                  <p class="mt-2 text-sm text-muted">
-                    There is no <code class="font-mono">{sourceFile()}</code> in the repository.
-                  </p>
-                  <A href="/docs" class="mt-4 inline-block text-sm text-accent hover:text-accent-dim">
-                    Back to the documentation
-                  </A>
-                </div>
-              }
-            >
+            <>
               {/* A page-shaped placeholder while the chunk and its highlighter load. */}
               <div class="animate-pulse">
                 <div class="h-9 w-2/3 rounded-lg bg-surface-2" />
@@ -309,15 +338,15 @@ function Article(props: { slug: string }) {
                 </div>
                 <div class="mt-8 h-40 w-full rounded-xl bg-surface-2" />
               </div>
-            </Show>
+            </>
           }
         >
           {(loaded) => (
             <>
               <div class="mb-6 flex flex-wrap items-center gap-2 text-xs text-faint">
-                <A href="/docs" class="hover:text-ink">
+                <a href="/docs" class="hover:text-ink">
                   Documentation
-                </A>
+                </a>
                 <span aria-hidden="true">/</span>
                 <span class="text-muted">{loaded().title}</span>
               </div>
@@ -346,6 +375,7 @@ function Article(props: { slug: string }) {
             </>
           )}
         </Show>
+        </Errored>
       </article>
 
       <Show when={doc()}>{(loaded) => <Contents headings={loaded().headings} />}</Show>

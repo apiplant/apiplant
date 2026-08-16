@@ -35,7 +35,7 @@ title = "15 · Email"
 # ---------------------------------------------------------------------------
   [email]
   provider = "brevo"
-  from     = "info@levelkana.com"
+  from     = "info@${EMAIL_DOMAIN}"
   api_key  = "${BREVO_API_KEY}"
 # [email]
 # provider  = "smtp"

@@ -339,15 +339,22 @@ export function MarkupEditor(props: {
 
   // The draft is a plain object, so a reset elsewhere, such as a cancelled edit
   // or a record change, must be picked up here.
-  createEffect(() => setText(props.value));
+  createEffect(
+    () => props.value,
+    (value) => {
+      setText(value);
+    },
+  );
 
   const preview = createMemo(() => renderPreview(text(), props.format));
   const coloured = createMemo(() => highlight(text(), props.format));
 
   const syncScroll = () => {
-    if (!layer || !input) return;
-    layer.scrollTop = input.scrollTop;
-    layer.scrollLeft = input.scrollLeft;
+    const target = layer;
+    const source = input;
+    if (!target || !source) return;
+    target.scrollTop = source.scrollTop;
+    target.scrollLeft = source.scrollLeft;
   };
 
   const showEditor = () => wide() || tab() === "write";

@@ -48,3 +48,5 @@ e2e/playwright-report/
 # `npm publish`; the copies are output, like a dist/.
 typescript/apiplant.js
 typescript/apiplant.d.ts
+
+.env

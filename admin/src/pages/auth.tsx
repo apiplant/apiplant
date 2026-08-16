@@ -7,10 +7,8 @@
  */
 
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
-import { createMutable } from "solid-js/store";
 import { Button, Card, Dialog, Field, HeadMark, ThemeToggle } from "../ui";
-import { FieldEditor, buildPayload, createDraft } from "../fields";
-import type { Draft } from "../fields";
+import { FieldEditor, buildPayload, createDraft, createDraftStore } from "../fields";
 import { PasswordFields, createPasswordPair } from "../password";
 import {
   api,
@@ -20,9 +18,9 @@ import {
   oauthAvailable,
   persistSession,
   refreshSession,
-  session,
   startOAuth,
   syncRouteFromHash,
+  updateSession,
 } from "../store";
 import { ProviderMark } from "../brand-icons";
 import type { FieldManifest, OAuthProviderManifest, ResourceManifest } from "../types";
@@ -139,7 +137,7 @@ export function AuthPage() {
   );
 
   const extras = createMemo(() => signupResource(current().auth.signup_fields));
-  const extraDraft = createMutable<Draft>(createDraft(extras(), null));
+  const extraDraft = createDraftStore(createDraft(extras(), null));
 
   const switchMode = (next: "signin" | "signup") => {
     setMode(next);
@@ -178,7 +176,7 @@ export function AuthPage() {
     };
 
     if (registering && current().auth.signup_fields.length) {
-      const { payload, errors } = buildPayload(extras(), extraDraft);
+      const { payload, errors } = buildPayload(extras(), extraDraft.values);
       if (errors.length) {
         setError(errors[0].message);
         return;
@@ -206,9 +204,7 @@ export function AuthPage() {
       }
       if (!token) throw new Error("The server did not return a session.");
 
-      session.token = token;
-      session.apiKey = "";
-      session.userId = decodeSubject(token);
+      updateSession({ token, apiKey: "", userId: decodeSubject(token) });
       persistSession();
       setPassword("");
       passwords.reset();
@@ -414,12 +410,15 @@ function ForgotPasswordDialog(props: { open: boolean; identity: string; onClose:
 
   // Whatever they had already typed into the sign-in box is almost certainly
   // the address they want, so start there.
-  createEffect(() => {
-    if (props.open) {
-      setAddress(props.identity);
-      setError(null);
-    }
-  });
+  createEffect(
+    () => [props.open, props.identity] as const,
+    ([open, identity]) => {
+      if (open) {
+        setAddress(identity);
+        setError(null);
+      }
+    },
+  );
 
   const send = async () => {
     const value = address().trim();

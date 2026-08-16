@@ -9,8 +9,7 @@
  * with `[admin] visible = true`.
  */
 
-import { For, Show, createEffect, createMemo, createResource, createSignal, untrack } from "solid-js";
-import { createMutable } from "solid-js/store";
+import { For, Show, createEffect, createMemo, createSignal, isPending, latest, refresh } from "solid-js";
 import {
   Avatar,
   Badge,
@@ -23,8 +22,7 @@ import {
   Field,
   PageTitle,
 } from "../ui";
-import { FieldEditor, FilePicker, buildPayload, createDraft, recordLabel } from "../fields";
-import type { Draft } from "../fields";
+import { FieldEditor, FilePicker, buildPayload, createDraft, createDraftStore, recordLabel } from "../fields";
 import {
   api,
   asRecord,
@@ -73,23 +71,21 @@ function profileResource(): ResourceManifest {
 
 export function AccountPage() {
   const resource = createMemo(profileResource);
-  const draft = createMutable<Draft>({});
+  const draft = createDraftStore();
   const [saving, setSaving] = createSignal(false);
 
-  // Untracked for the same reason as the record form: clearing the draft reads
-  // its keys, and a tracked read of what this effect writes would never
-  // settle.
-  createEffect(() => {
-    const fresh = createDraft(resource(), session.profile);
-    untrack(() => {
-      for (const key of Object.keys(draft)) delete draft[key];
-      Object.assign(draft, fresh);
-    });
-  });
+  // The apply phase is untracked, so writing the draft cannot feed back into
+  // the compute that decided to write it.
+  createEffect(
+    () => [resource(), session.profile] as const,
+    ([manifest, profile]) => {
+      draft.reset(createDraft(manifest, profile));
+    },
+  );
 
   const save = async () => {
     if (!session.userId) return;
-    const { payload, errors } = buildPayload(resource(), draft);
+    const { payload, errors } = buildPayload(resource(), draft.values);
     if (errors.length) {
       notify("error", errors[0].message);
       return;
@@ -163,13 +159,15 @@ export function AccountPage() {
  */
 function LinkedAccountsCard() {
   const providers = () => manifest()?.auth.oauth_providers ?? [];
-  const [connections, { refetch }] = createResource(async () =>
+  const connectionsResource = createMemo(async () =>
     asRecords(await api("/oauth_connection?limit=50")),
   );
+  const connections = () => latest(connectionsResource) ?? [];
+  const refetch = () => refresh(connectionsResource);
   const [busy, setBusy] = createSignal("");
 
   const linked = (provider: string) =>
-    (connections() ?? []).find((row) => String(row.provider ?? "") === provider) ?? null;
+    connections().find((row) => String(row.provider ?? "") === provider) ?? null;
 
   const connect = async (provider: { provider: string; start_url: string }) => {
     setBusy(provider.provider);
@@ -188,7 +186,7 @@ function LinkedAccountsCard() {
     try {
       await api(`/auth/oauth/${encodeURIComponent(provider)}`, { method: "DELETE" });
       notify("success", `${provider} is no longer linked to your account.`);
-      void refetch();
+      refetch();
     } catch (error) {
       reportError(error);
     } finally {
@@ -262,9 +260,8 @@ export function TeamPage() {
   const [removing, setRemoving] = createSignal<ApiRecord | null>(null);
   const [busy, setBusy] = createSignal(false);
 
-  const [members, { refetch }] = createResource(
-    () => session.organizationId,
-    async (organizationId) => {
+  const membersResource = createMemo(async () => {
+      const organizationId = session.organizationId;
       if (!organizationId) return [];
       const rows = asRecords(await api("/membership?limit=200&expand=user", { org: true }));
       // Roles live in two places, the membership's primary role and its
@@ -281,20 +278,22 @@ export function TeamPage() {
           ),
         }),
       );
-    },
-  );
+  });
+  const members = () => latest(membersResource) ?? [];
+  const membersLoading = () => isPending(membersResource);
+  const refetch = () => refresh(membersResource);
 
   // Invitations sent and not yet accepted. Only fetched where the feature
   // exists, since without a mail provider there are none.
-  const [invitations, { refetch: refetchInvitations }] = createResource(
-    () => (manifest()?.auth.invitations_enabled ? session.organizationId : ""),
-    async (organizationId) => {
-      if (!organizationId) return [];
-      return asRecords(
-        await api("/invitation?limit=200", { org: true }).catch(() => []),
-      ).filter((invitation) => !invitation.accepted_at);
-    },
-  );
+  const invitationsResource = createMemo(async () => {
+    const organizationId = manifest()?.auth.invitations_enabled ? session.organizationId : "";
+    if (!organizationId) return [];
+    return asRecords(await api("/invitation?limit=200", { org: true }).catch(() => [])).filter(
+      (invitation) => !invitation.accepted_at,
+    );
+  });
+  const invitations = () => latest(invitationsResource) ?? [];
+  const refetchInvitations = () => refresh(invitationsResource);
 
   const roles = () => manifest()?.auth.known_roles ?? ["member", "admin"];
   const membership = createMemo(() => resourceByName("membership"));
@@ -337,7 +336,7 @@ export function TeamPage() {
 
   /** Re-read our own permissions when we changed our own roles. */
   const afterChange = async (member: ApiRecord) => {
-    void refetch();
+    refetch();
     if (isMe(member)) await refreshRole();
   };
 
@@ -404,7 +403,7 @@ export function TeamPage() {
         org: true,
       });
       notify("success", `The invitation to ${String(invitation.email ?? "")} was revoked.`);
-      void refetchInvitations();
+      refetchInvitations();
     } catch (error) {
       reportError(error);
     }
@@ -420,7 +419,7 @@ export function TeamPage() {
         org: true,
       });
       notify("success", `${memberName(member)} no longer has access.`);
-      void refetch();
+      refetch();
     } catch (error) {
       reportError(error);
     } finally {
@@ -452,13 +451,13 @@ export function TeamPage() {
         }
       >
         <Card class="overflow-hidden">
-          <CardHeader title="People" hint={`${(members() ?? []).length} with access`} />
+          <CardHeader title="People" hint={`${members().length} with access`} />
           <Show
-            when={!members.loading}
+            when={!membersLoading()}
             fallback={<p class="px-5 py-6 text-xs text-faint">Loading…</p>}
           >
             <Show
-              when={(members() ?? []).length}
+              when={members().length}
               fallback={
                 <div class="px-5 py-4">
                   <EmptyState
@@ -574,11 +573,11 @@ export function TeamPage() {
         rather than greyed-out rows among people who actually have access.
         Revoking one is deleting it: the link stops working immediately.
       */}
-      <Show when={session.organizationId && (invitations() ?? []).length}>
+      <Show when={session.organizationId && invitations().length}>
         <Card class="mt-5 overflow-hidden">
           <CardHeader
             title="Invited"
-            hint={`${(invitations() ?? []).length} waiting to accept`}
+            hint={`${invitations().length} waiting to accept`}
           />
           <ul class="divide-y divide-line">
             <For each={invitations()}>
@@ -621,8 +620,8 @@ export function TeamPage() {
         onClose={() => setInviting(false)}
         onAdded={() => {
           setInviting(false);
-          void refetch();
-          void refetchInvitations();
+          refetch();
+          refetchInvitations();
         }}
       />
 
@@ -754,13 +753,15 @@ export function OrganizationPage() {
   const [saving, setSaving] = createSignal(false);
   const [creating, setCreating] = createSignal(false);
 
-  createEffect(() => {
-    const current = currentOrganization();
-    setName(typeof current?.name === "string" ? current.name : "");
-    setSlug(typeof current?.slug === "string" ? current.slug : "");
-    setLogo(typeof current?.avatar_url === "string" ? current.avatar_url : "");
-    setOrgClass(typeof current?.org_class === "string" ? current.org_class : "");
-  });
+  createEffect(
+    () => currentOrganization(),
+    (current) => {
+      setName(typeof current?.name === "string" ? current.name : "");
+      setSlug(typeof current?.slug === "string" ? current.slug : "");
+      setLogo(typeof current?.avatar_url === "string" ? current.avatar_url : "");
+      setOrgClass(typeof current?.org_class === "string" ? current.org_class : "");
+    },
+  );
 
   // The class is not an ordinary column: it decides which `@org_class=`
   // permissions apply inside this organisation, so the server strips it from
@@ -786,13 +787,14 @@ export function OrganizationPage() {
   // `org: true` is what makes them one: `org_class_editors` is answered against
   // the organisation *selected*, so without the header the same account is
   // nobody in particular and the list comes back narrow.
-  const [allOrganizations, { refetch: refetchOrganizations }] = createResource(
-    () => mayEditClass(),
-    async (may) => (may ? asRecords(await api("/organization?limit=500", { org: true })) : []),
+  const allOrganizationsResource = createMemo(async () =>
+    mayEditClass() ? asRecords(await api("/organization?limit=500", { org: true })) : [],
   );
+  const allOrganizations = () => latest(allOrganizationsResource) ?? [];
+  const refetchOrganizations = () => refresh(allOrganizationsResource);
 
   const visibleOrganizations = createMemo(() => {
-    const rows = scope() === "all" && mayEditClass() ? allOrganizations() ?? [] : session.organizations;
+    const rows = scope() === "all" && mayEditClass() ? allOrganizations() : session.organizations;
     const needle = search().trim().toLowerCase();
     if (!needle) return rows;
     return rows.filter((organization) =>
@@ -976,11 +978,10 @@ export function OrganizationPage() {
                   {(value) => (
                     <button
                       type="button"
-                      class="rounded px-2.5 py-1 text-xs capitalize transition-colors"
-                      classList={{
-                        "bg-surface-2 text-ink": scope() === value,
-                        "text-faint hover:text-ink": scope() !== value,
-                      }}
+                      class={[
+                        "rounded px-2.5 py-1 text-xs capitalize transition-colors",
+                        scope() === value ? "bg-surface-2 text-ink" : "text-faint hover:text-ink",
+                      ]}
                       onClick={() => setScope(value)}
                     >
                       {value}
@@ -1157,10 +1158,13 @@ export function ApiKeysPage() {
   const [busy, setBusy] = createSignal(false);
   const [revoking, setRevoking] = createSignal<ApiRecord | null>(null);
 
-  const [keys, { refetch }] = createResource(
-    () => session.userId,
-    async () => asRecords(await api("/api_key?limit=100")),
-  );
+  const keysResource = createMemo(async () => {
+    if (!session.userId) return [];
+    return asRecords(await api("/api_key?limit=100"));
+  });
+  const keys = () => latest(keysResource) ?? [];
+  const keysLoading = () => isPending(keysResource);
+  const refetch = () => refresh(keysResource);
 
   const create = async () => {
     setBusy(true);
@@ -1172,7 +1176,7 @@ export function ApiKeysPage() {
       setIssued(secret);
       setCreating(false);
       setKeyName("");
-      void refetch();
+      refetch();
     } catch (error) {
       reportError(error);
     } finally {
@@ -1187,7 +1191,7 @@ export function ApiKeysPage() {
     try {
       await api(`/api_key/${encodeURIComponent(String(key.id ?? ""))}`, { method: "DELETE" });
       notify("success", "Key revoked.");
-      void refetch();
+      refetch();
     } catch (error) {
       reportError(error);
     } finally {
@@ -1209,9 +1213,9 @@ export function ApiKeysPage() {
 
       <Card class="overflow-hidden">
         <CardHeader title="Your keys" />
-        <Show when={!keys.loading} fallback={<p class="px-5 py-6 text-xs text-faint">Loading…</p>}>
+        <Show when={!keysLoading()} fallback={<p class="px-5 py-6 text-xs text-faint">Loading…</p>}>
           <Show
-            when={(keys() ?? []).length}
+            when={keys().length}
             fallback={
               <div class="px-5 py-4">
                 <EmptyState

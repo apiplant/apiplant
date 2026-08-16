@@ -1,5 +1,5 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Portal } from "solid-js/web";
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { Portal } from "@solidjs/web";
 import { api, asRecord, manifest, reportError } from "./store";
 import { Button } from "./ui";
 
@@ -119,8 +119,8 @@ export function AdminAiAssist() {
     });
   };
 
-  createEffect(() => {
-    if (!config()) {
+  createEffect(config, (settings) => {
+    if (!settings) {
       setAnchors([]);
       setTarget(null);
       return;
@@ -136,16 +136,16 @@ export function AdminAiAssist() {
     });
     window.addEventListener("resize", refresh);
     window.addEventListener("scroll", refresh, true);
-    onCleanup(() => {
+    return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("resize", refresh);
       window.removeEventListener("scroll", refresh, true);
-    });
+    };
   });
 
-  createEffect(() => {
-    if (!target()) return;
+  createEffect(target, (current) => {
+    if (!current) return;
     queueMicrotask(() => promptInput?.focus());
     const onDocument = (event: MouseEvent) => {
       const current = target();
@@ -160,10 +160,10 @@ export function AdminAiAssist() {
       if (event.key === "Escape") setTarget(null);
     };
     window.addEventListener("keydown", onKey);
-    onCleanup(() => {
+    return () => {
       window.removeEventListener("mousedown", onDocument);
       window.removeEventListener("keydown", onKey);
-    });
+    };
   });
 
   const open = (element: TextControl) => {

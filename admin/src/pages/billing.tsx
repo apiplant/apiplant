@@ -12,7 +12,7 @@
  * a member sees their plan and an admin sees the payment details.
  */
 
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal, latest } from "solid-js";
 import { Badge, Button, Card, CardHeader, EmptyState, PageTitle } from "../ui";
 import {
   api,
@@ -87,24 +87,28 @@ export function BillingPage() {
 
   // Public: the price list is readable without an account, so it loads whether
   // or not an organisation is selected.
-  const [prices] = createResource(async () =>
+  const pricesResource = createMemo(async () =>
     asRecords(await api("/billing_price?active=true&expand=product&limit=100")),
   );
 
-  const [subscription] = createResource(
-    () => org()?.id ?? null,
-    async () => {
-      const rows = asRecords(await api("/billing_subscription?limit=5"));
-      // The active paying subscription, if any; an organisation that has
-      // changed plans has older rows alongside the current one.
-      return rows.find((row) => ENTITLED.includes(String(row.status ?? ""))) ?? rows[0] ?? null;
-    },
-  );
+  const subscriptionResource = createMemo(async () => {
+    if (!org()?.id) return null;
+    const rows = asRecords(await api("/billing_subscription?limit=5"));
+    // The active paying subscription, if any; an organisation that has changed
+    // plans has older rows alongside the current one.
+    return rows.find((row) => ENTITLED.includes(String(row.status ?? ""))) ?? rows[0] ?? null;
+  });
 
-  const [payments] = createResource(
-    () => (isAdmin() ? org()?.id ?? null : null),
-    async () => asRecords(await api("/billing_payment?limit=10&sort=-created_at")),
-  );
+  const paymentsResource = createMemo(async () => {
+    if (!isAdmin() || !org()?.id) return [];
+    return asRecords(await api("/billing_payment?limit=10&sort=-created_at"));
+  });
+
+  // Read through `latest`: each card shows its empty state until its own data
+  // lands, rather than the page holding back on the slowest request.
+  const prices = () => latest(pricesResource) ?? [];
+  const subscription = () => latest(subscriptionResource) ?? null;
+  const payments = () => latest(paymentsResource) ?? [];
 
   const subscribe = async (price: ApiRecord) => {
     const id = String(price.id ?? "");
@@ -238,7 +242,7 @@ export function BillingPage() {
             }
           />
           <Show
-            when={(prices() ?? []).length}
+            when={prices().length}
             fallback={
               <div class="px-5 py-4">
                 <EmptyState
@@ -249,7 +253,7 @@ export function BillingPage() {
             }
           >
             <ul class="divide-y divide-line">
-              <For each={prices() ?? []}>
+              <For each={prices()}>
                 {(price) => {
                   const product = asRecord(price.product);
                   const current = () =>
@@ -296,11 +300,11 @@ export function BillingPage() {
           <Card class="xl:col-span-2">
             <CardHeader title="Payments" hint="What has been charged, and whether it went through" />
             <Show
-              when={(payments() ?? []).length}
+              when={payments().length}
               fallback={<p class="px-5 py-4 text-xs text-faint">Nothing has been charged yet.</p>}
             >
               <ul class="divide-y divide-line">
-                <For each={payments() ?? []}>
+                <For each={payments()}>
                   {(payment) => (
                     <li class="flex items-center justify-between gap-4 px-5 py-3 text-sm">
                       <div class="min-w-0">

@@ -1,5 +1,5 @@
 import { type ParentProps } from "solid-js";
-import { Route, Router, useLocation } from "@solidjs/router";
+import { createRouter, useLocation } from "@solidjs/router";
 import { Header } from "./components/Header";
 import { Footer } from "./components/Footer";
 import { Home } from "./components/Home";
@@ -39,14 +39,18 @@ function NotFound() {
   );
 }
 
+const Router = createRouter({
+  routes: [
+    { path: "/", component: Home },
+    // `/docs` renders docs/README.md; `/docs/:slug` renders that guide.
+    { path: "/docs", component: DocsPage },
+    { path: "/docs/:slug", component: DocsPage },
+    { path: "*404", component: NotFound },
+  ],
+});
+
+export const { paths } = Router;
+
 export function App() {
-  return (
-    <Router root={Shell}>
-      <Route path="/" component={Home} />
-      {/* `/docs` renders docs/README.md; `/docs/:slug` renders that guide. */}
-      <Route path="/docs" component={DocsPage} />
-      <Route path="/docs/:slug" component={DocsPage} />
-      <Route path="*" component={NotFound} />
-    </Router>
-  );
+  return <Router>{(props) => <Shell>{props.children}</Shell>}</Router>;
 }

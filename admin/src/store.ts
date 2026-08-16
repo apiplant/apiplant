@@ -7,8 +7,7 @@
  * server decides what to allow, and is the only place that can enforce it.
  */
 
-import { createSignal } from "solid-js";
-import { createMutable } from "solid-js/store";
+import { createSignal, createStore } from "solid-js";
 import type {
   Action,
   ActionPermissionManifest,
@@ -40,7 +39,7 @@ export interface Session {
   loading: boolean;
 }
 
-export const session = createMutable<Session>({
+const [sessionState, setSessionState] = createStore<Session>({
   token: "",
   apiKey: "",
   userId: null,
@@ -51,7 +50,50 @@ export const session = createMutable<Session>({
   loading: false,
 });
 
-export const [manifest, setManifest] = createSignal<AdminManifest | null>(null);
+/** The session as screens read it. Write it with {@link updateSession}. */
+export const session = sessionState;
+
+/**
+ * The same values, as a plain object.
+ *
+ * Solid 2 stages store writes and commits them on the next microtask, so a read
+ * of `session` immediately after a write still sees the previous value. Signing
+ * in writes the token and sends the very next request with it, so everything
+ * imperative here — request headers, `persistSession`, the role lookup — reads
+ * this mirror instead. `session` stays the reactive view the screens render
+ * from; the two are written together and never disagree past a microtask.
+ */
+const now: Session = { ...sessionState };
+
+/**
+ * Apply a partial write to the session.
+ *
+ * Both the reactive store and the plain mirror, so an imperative read that
+ * follows the write in the same tick sees it.
+ */
+export function updateSession(patch: Partial<Session>) {
+  Object.assign(now, patch);
+  setSessionState((state) => {
+    Object.assign(state, patch);
+  });
+}
+
+const [manifestSignal, setManifestSignal] = createSignal<AdminManifest | null>(null);
+
+/** The manifest as screens read it. */
+export const manifest = manifestSignal;
+
+/**
+ * The same value, plain. A signal write is not visible to a read in the same
+ * tick, and the boot sequence sets the manifest and then immediately makes a
+ * request with it, so the request path reads this rather than the signal.
+ */
+let manifestNow: AdminManifest | null = null;
+
+export function setManifest(next: AdminManifest | null) {
+  manifestNow = next;
+  setManifestSignal(next);
+}
 export const [route, setRouteSignal] = createSignal<Route>({ kind: "dashboard" });
 export const [toasts, setToasts] = createSignal<Toast[]>([]);
 
@@ -177,10 +219,13 @@ export function restoreSession() {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return;
     const stored = JSON.parse(raw);
-    session.token = typeof stored.token === "string" ? stored.token : "";
-    session.apiKey = typeof stored.apiKey === "string" ? stored.apiKey : "";
-    session.organizationId = typeof stored.organizationId === "string" ? stored.organizationId : "";
-    session.userId = session.token ? decodeJwtSubject(session.token) : null;
+    const token = typeof stored.token === "string" ? stored.token : "";
+    updateSession({
+      token,
+      apiKey: typeof stored.apiKey === "string" ? stored.apiKey : "",
+      organizationId: typeof stored.organizationId === "string" ? stored.organizationId : "",
+      userId: token ? decodeJwtSubject(token) : null,
+    });
   } catch {
     localStorage.removeItem(SESSION_KEY);
   }
@@ -190,25 +235,33 @@ export function persistSession() {
   localStorage.setItem(
     SESSION_KEY,
     JSON.stringify({
-      token: session.token,
-      apiKey: session.apiKey,
-      organizationId: session.organizationId,
+      token: now.token,
+      apiKey: now.apiKey,
+      organizationId: now.organizationId,
     }),
   );
 }
 
+/** Reactive: what the screens gate on. */
 export function isSignedIn() {
   return Boolean(session.token || session.apiKey);
 }
 
+/** The same question asked imperatively, off the mirror rather than the store. */
+export function signedInNow() {
+  return Boolean(now.token || now.apiKey);
+}
+
 export function signOut() {
-  session.token = "";
-  session.apiKey = "";
-  session.userId = null;
-  session.profile = null;
-  session.organizations = [];
-  session.organizationId = "";
-  session.roles = [];
+  updateSession({
+    token: "",
+    apiKey: "",
+    userId: null,
+    profile: null,
+    organizations: [],
+    organizationId: "",
+    roles: [],
+  });
   persistSession();
   navigate({ kind: "dashboard" });
 }
@@ -311,9 +364,7 @@ export function adoptOAuthToken(): boolean {
   const token = fromFragment ?? fromQuery;
   if (!token) return false;
 
-  session.token = token;
-  session.apiKey = "";
-  session.userId = decodeJwtSubject(token);
+  updateSession({ token, apiKey: "", userId: decodeJwtSubject(token) });
   persistSession();
 
   // Back where they were, with nothing left in the address bar — the token has
@@ -337,10 +388,10 @@ export interface RequestOptions {
 
 function requestHeaders(options: RequestOptions, accept: string): Record<string, string> {
   const headers: Record<string, string> = { Accept: accept };
-  if (session.apiKey) headers["X-Api-Key"] = session.apiKey;
-  if (session.token) headers.Authorization = `Bearer ${session.token}`;
+  if (now.apiKey) headers["X-Api-Key"] = now.apiKey;
+  if (now.token) headers.Authorization = `Bearer ${now.token}`;
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
-  if (options.org && session.organizationId) headers["X-Organization"] = session.organizationId;
+  if (options.org && now.organizationId) headers["X-Organization"] = now.organizationId;
   return headers;
 }
 
@@ -365,7 +416,7 @@ function responseError(response: Response, payload: unknown): ApiError {
 }
 
 export async function api(path: string, options: RequestOptions = {}): Promise<unknown> {
-  const current = manifest();
+  const current = manifestNow;
   if (!current) throw new Error("The dashboard is still loading.");
 
   const response = await fetch(`${current.api_base_url}${path}`, {
@@ -389,7 +440,7 @@ export async function api(path: string, options: RequestOptions = {}): Promise<u
  * field — so the value in the row never names a bucket or an origin.
  */
 export async function uploadFile(file: File): Promise<string> {
-  const current = manifest();
+  const current = manifestNow;
   if (!current) throw new Error("The dashboard is still loading.");
 
   const headers: Record<string, string> = {
@@ -399,9 +450,9 @@ export async function uploadFile(file: File): Promise<string> {
     // rather than guessed at here.
     "Content-Type": file.type || "application/octet-stream",
   };
-  if (session.apiKey) headers["X-Api-Key"] = session.apiKey;
-  if (session.token) headers.Authorization = `Bearer ${session.token}`;
-  if (session.organizationId) headers["X-Organization"] = session.organizationId;
+  if (now.apiKey) headers["X-Api-Key"] = now.apiKey;
+  if (now.token) headers.Authorization = `Bearer ${now.token}`;
+  if (now.organizationId) headers["X-Organization"] = now.organizationId;
 
   const response = await fetch(
     `${current.api_base_url}/uploads?filename=${encodeURIComponent(file.name)}`,
@@ -548,7 +599,7 @@ export async function apiStream(
   onDelta?: (text: string) => void,
   onReasoning?: (text: string) => void,
 ): Promise<unknown> {
-  const current = manifest();
+  const current = manifestNow;
   if (!current) throw new Error("The dashboard is still loading.");
 
   const response = await fetch(`${current.api_base_url}${path}`, {
@@ -612,13 +663,13 @@ export function asRecords(value: unknown): ApiRecord[] {
  * in place, since an unreachable server is not evidence of a bad token.
  */
 export async function verifySession(): Promise<boolean> {
-  if (!isSignedIn()) return false;
+  if (!signedInNow()) return false;
   try {
     const identity = asRecord(await api("/auth/me"));
     // An API-key session has no JWT to read a subject from, so this is the only
     // source of its user id.
     const userId = identity && typeof identity.user_id === "string" ? identity.user_id : null;
-    if (userId) session.userId = userId;
+    if (userId) updateSession({ userId });
     return true;
   } catch (error) {
     if ((error as ApiError).status === 401) {
@@ -630,29 +681,28 @@ export async function verifySession(): Promise<boolean> {
 }
 
 export async function refreshSession() {
-  if (!isSignedIn()) return;
-  session.loading = true;
+  if (!signedInNow()) return;
+  updateSession({ loading: true });
   try {
     const [organizations, profile] = await Promise.all([
       api("/organization").then(asRecords).catch(() => []),
-      session.userId
-        ? api(`/user/${encodeURIComponent(session.userId)}`)
+      now.userId
+        ? api(`/user/${encodeURIComponent(now.userId)}`)
             .then(asRecord)
             .catch(() => null)
         : Promise.resolve(null),
     ]);
-    session.organizations = organizations;
-    session.profile = profile;
+    updateSession({ organizations, profile });
 
     // Select the sole organisation automatically; there is nothing to choose.
     const known = organizations.map((organization) => String(organization.id ?? ""));
-    if (!known.includes(session.organizationId)) {
-      session.organizationId = known.length ? known[0] : "";
+    if (!known.includes(now.organizationId)) {
+      updateSession({ organizationId: known.length ? known[0] : "" });
     }
     persistSession();
     await refreshRole();
   } finally {
-    session.loading = false;
+    updateSession({ loading: false });
   }
 }
 
@@ -674,11 +724,11 @@ export function primaryRole(): string | null {
 
 /** Load every role the caller holds in the active organisation. */
 export async function refreshRole() {
-  session.roles = [];
-  if (!session.organizationId || !session.userId) return;
+  updateSession({ roles: [] });
+  if (!now.organizationId || !now.userId) return;
   try {
     const members = asRecords(
-      await api(`/membership?user_id=${encodeURIComponent(session.userId)}&limit=1`, { org: true }),
+      await api(`/membership?user_id=${encodeURIComponent(now.userId)}&limit=1`, { org: true }),
     );
     const mine = members[0];
     if (!mine) return;
@@ -689,17 +739,17 @@ export async function refreshRole() {
         org: true,
       }),
     ).map((row) => String(row.role ?? ""));
-    session.roles = [...new Set([String(mine.role ?? ""), ...extra])].filter(Boolean);
+    updateSession({ roles: [...new Set([String(mine.role ?? ""), ...extra])].filter(Boolean) });
   } catch {
     // A member who cannot list memberships still gets to use the dashboard;
     // they simply see the actions their role allows, which is none of the
     // role-gated ones.
-    session.roles = [];
+    updateSession({ roles: [] });
   }
 }
 
 export async function setActiveOrganization(id: string) {
-  session.organizationId = id;
+  updateSession({ organizationId: id });
   persistSession();
   await refreshRole();
 }

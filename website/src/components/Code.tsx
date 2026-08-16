@@ -1,4 +1,4 @@
-import { Show, createResource, createSignal } from "solid-js";
+import { Show, createMemo, createSignal, latest } from "solid-js";
 import { highlight } from "../lib/docs";
 
 /**
@@ -7,10 +7,10 @@ import { highlight } from "../lib/docs";
  * The metrics are identical either way, so nothing shifts when it loads.
  */
 export function Code(props: { code: string; lang: string; class?: string; filename?: string }) {
-  const [html] = createResource(
-    () => [props.code, props.lang] as const,
-    ([code, lang]) => highlight(code, lang),
-  );
+  // `latest`, not a plain read: the plain text paints first and the highlighted
+  // markup swaps in when the shiki chunk lands, rather than suspending.
+  const highlighted = createMemo(async () => highlight(props.code, props.lang));
+  const html = () => latest(highlighted);
 
   const frame =
     "overflow-x-auto bg-code-bg px-4 py-3.5 font-mono text-[0.8125rem] leading-relaxed [tab-size:4] " +

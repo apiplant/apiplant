@@ -10,13 +10,13 @@ import {
   For,
   Show,
   createEffect,
-  createResource,
+  createMemo,
   createSignal,
-  onCleanup,
-  splitProps,
+  latest,
+  omit,
 } from "solid-js";
-import type { JSX, ParentProps } from "solid-js";
-import { Portal } from "solid-js/web";
+import type { ParentProps } from "solid-js";
+import { Portal, type JSX } from "@solidjs/web";
 import { theme, toggleTheme } from "./theme";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -38,7 +38,7 @@ export function Button(
     } & JSX.ButtonHTMLAttributes<HTMLButtonElement>
   >,
 ) {
-  const [local, rest] = splitProps(props, ["variant", "size", "class", "children", "loading"]);
+  const rest = omit(props, "variant", "size", "class", "children", "loading");
   const sizes = {
     sm: "px-2.5 py-1 text-xs",
     md: "px-3.5 py-2 text-[0.8125rem]",
@@ -48,19 +48,19 @@ export function Button(
     <button
       type="button"
       {...rest}
-      disabled={rest.disabled || local.loading}
+      disabled={rest.disabled || props.loading}
       class={[
         "inline-flex items-center justify-center gap-1.5 rounded-lg whitespace-nowrap transition-colors duration-100",
         "disabled:pointer-events-none disabled:opacity-40",
-        sizes[local.size ?? "md"],
-        BUTTON_VARIANTS[local.variant ?? "secondary"],
-        local.class ?? "",
+        sizes[props.size ?? "md"],
+        BUTTON_VARIANTS[props.variant ?? "secondary"],
+        props.class ?? "",
       ].join(" ")}
     >
-      <Show when={local.loading}>
+      <Show when={props.loading}>
         <Spinner />
       </Show>
-      {local.children}
+      {props.children}
     </button>
   );
 }
@@ -179,7 +179,7 @@ export function Toggle(props: {
       <button
         type="button"
         role="switch"
-        aria-checked={props.checked}
+        aria-checked={props.checked ? "true" : "false"}
         disabled={props.disabled}
         onClick={() => props.onChange(!props.checked)}
         class={`inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
@@ -269,23 +269,26 @@ export function Avatar(props: {
   email?: string | null;
   size?: "sm" | "md";
 }) {
-  const [gravatar] = createResource(
-    () => props.email?.trim() || null,
-    (email) => gravatarUrl(email),
-  );
+  const gravatar = createMemo(async () => {
+    const email = props.email?.trim();
+    return email ? gravatarUrl(email) : null;
+  });
   // Sources in order of preference. Gravatar joins the list once its hash is
   // computed, which is a tick or two after first paint.
-  const sources = () => [props.src, gravatar()].filter((url): url is string => !!url);
+  // `latest` rather than a read: the avatar paints immediately, and Gravatar
+  // joins the list a tick or two later without suspending anything.
+  const sources = () => [props.src, latest(gravatar)].filter((url): url is string => !!url);
 
   const [attempt, setAttempt] = createSignal(0);
   // A changed subject deserves a fresh try; otherwise one dead URL would poison
   // the slot for whoever is shown in it next. Deliberately not tracking
   // `gravatar()`: it arriving late must not restart an already-failed `src`.
-  createEffect(() => {
-    props.src;
-    props.email;
-    setAttempt(0);
-  });
+  createEffect(
+    () => [props.src, props.email],
+    () => {
+      setAttempt(0);
+    },
+  );
   const current = () => sources()[attempt()];
 
   const initials = () =>
@@ -330,14 +333,17 @@ export function Dialog(
     footer?: JSX.Element;
   }>,
 ) {
-  createEffect(() => {
-    if (!props.open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") props.onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
-  });
+  createEffect(
+    () => props.open,
+    (open) => {
+      if (!open) return;
+      const onKey = (event: KeyboardEvent) => {
+        if (event.key === "Escape") props.onClose();
+      };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    },
+  );
 
   return (
     <Show when={props.open}>
@@ -533,20 +539,21 @@ export function Menu(props: ParentProps<{ trigger: (open: () => void) => JSX.Ele
   const [open, setOpen] = createSignal(false);
   let container: HTMLDivElement | undefined;
 
-  createEffect(() => {
-    if (!open()) return;
+  createEffect(open, (isOpen) => {
+    if (!isOpen) return;
     const onDocument = (event: MouseEvent) => {
-      if (container && !container.contains(event.target as Node)) setOpen(false);
+      const element = container;
+      if (element && !element.contains(event.target as Node)) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onDocument);
     window.addEventListener("keydown", onKey);
-    onCleanup(() => {
+    return () => {
       document.removeEventListener("mousedown", onDocument);
       window.removeEventListener("keydown", onKey);
-    });
+    };
   });
 
   return (

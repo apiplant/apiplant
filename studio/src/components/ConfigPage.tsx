@@ -1046,8 +1046,7 @@ function ListField(props: { table: string; field: string; placeholder?: string }
   const [typed, setTyped] = createSignal<string | null>(null);
   // Anything that changes the list elsewhere — the TOML tab, a project reload —
   // ends the local edit, so the box never disagrees with the file.
-  createEffect(() => {
-    saved();
+  createEffect(saved, () => {
     setTyped(null);
   });
 
@@ -1337,8 +1336,7 @@ export function ConfigPage() {
    * lives only here.
    */
   const [tab, setTab] = createSignal<TabId>(selectedSectionId() ?? DEFAULT_SECTION_ID);
-  createEffect(() => {
-    const id = selectedSectionId();
+  createEffect(selectedSectionId, (id) => {
     if (id) setTab(id);
   });
 

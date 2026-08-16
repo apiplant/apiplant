@@ -8,8 +8,7 @@
  * see `settings.tsx`.
  */
 
-import { For, Show, batch, createEffect, createMemo, createResource, createSignal, untrack } from "solid-js";
-import { createMutable } from "solid-js/store";
+import { Errored, For, Show, createEffect, createMemo, createSignal, isPending, latest, refresh } from "solid-js";
 import { loadResourceFilter, saveResourceFilter } from "../filters";
 import {
   Button,
@@ -26,13 +25,14 @@ import {
   FieldEditor,
   buildPayload,
   createDraft,
+  createDraftStore,
   editableFields,
   formatValue,
   ownsRecord,
   readableFields,
   recordLabel,
 } from "../fields";
-import type { Draft, DraftError } from "../fields";
+import type { DraftError } from "../fields";
 import { MarkupView } from "../markup";
 import {
   api,
@@ -74,57 +74,67 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
   const filtersApplied = createMemo(() => Boolean(applied() || ownerOnly()));
 
   // Changing resource must not inherit the previous one's page or search.
-  createEffect(() => {
-    void props.resource.name;
-    void session.userId;
-    setFiltersLoaded(false);
-    const saved = loadResourceFilter(props.resource.name, {
-      query: "",
-      ownerOnly: canChooseOwnerFilter(),
-      sortField: "",
-      sortDescending: false,
-    });
-    // A saved sort on a column this resource no longer shows would order the
-    // table by an invisible value, so it is discarded.
-    const savedSort = sortableColumns(props.resource).includes(saved.sortField ?? "")
-      ? (saved.sortField as string)
-      : "";
-    batch(() => {
+  createEffect(
+    () => [props.resource, session.userId, canChooseOwnerFilter()] as const,
+    ([resource, , canChooseOwner]) => {
+      setFiltersLoaded(false);
+      const saved = loadResourceFilter(resource.name, {
+        query: "",
+        ownerOnly: canChooseOwner,
+        sortField: "",
+        sortDescending: false,
+      });
+      // A saved sort on a column this resource no longer shows would order the
+      // table by an invisible value, so it is discarded.
+      const savedSort = sortableColumns(resource).includes(saved.sortField ?? "")
+        ? (saved.sortField as string)
+        : "";
       setPage(0);
       setSearch(saved.query);
       setApplied(saved.query);
-      setOwnerOnly(canChooseOwnerFilter() ? saved.ownerOnly : false);
+      setOwnerOnly(canChooseOwner ? saved.ownerOnly : false);
       setSortField(savedSort);
       setSortDescending(Boolean(saved.sortDescending));
-    });
-    setFiltersLoaded(true);
-  });
+      setFiltersLoaded(true);
+    },
+  );
 
-  createEffect(() => {
-    if (!filtersLoaded()) return;
-    saveResourceFilter(props.resource.name, {
-      query: applied(),
-      ownerOnly: canChooseOwnerFilter() ? ownerOnly() : false,
-      sortField: sortField(),
-      sortDescending: sortDescending(),
-    });
-  });
+  createEffect(
+    () =>
+      [
+        filtersLoaded(),
+        props.resource.name,
+        applied(),
+        canChooseOwnerFilter(),
+        ownerOnly(),
+        sortField(),
+        sortDescending(),
+      ] as const,
+    ([loaded, name, query, canChooseOwner, owner, field, descending]) => {
+      if (!loaded) return;
+      saveResourceFilter(name, {
+        query,
+        ownerOnly: canChooseOwner ? owner : false,
+        sortField: field,
+        sortDescending: descending,
+      });
+    },
+  );
 
   const needsOrganization = () =>
     props.resource.scope === "organization" && !session.organizationId;
 
-  const [rows, { refetch }] = createResource(
-    () => ({
-      name: props.resource.name,
-      page: page(),
-      search: applied(),
-      ownerOnly: canChooseOwnerFilter() && ownerOnly(),
-      sort: sortField(),
-      sortDescending: sortDescending(),
-      org: session.organizationId,
-      userId: session.userId,
-    }),
-    async (key) => {
+  const rowsResource = createMemo(async () => {
+      const key = {
+        name: props.resource.name,
+        page: page(),
+        search: applied(),
+        ownerOnly: canChooseOwnerFilter() && ownerOnly(),
+        sort: sortField(),
+        sortDescending: sortDescending(),
+        org: session.organizationId,
+        userId: session.userId,
+      };
       const resource = resourceByName(key.name);
       if (!resource) return [];
       if (resource.scope === "organization" && !key.org) return [];
@@ -149,11 +159,16 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
           org: includeOrgContext(resource, "list"),
         }),
       );
-    },
-  );
+  });
 
-  const visibleRows = createMemo(() => (rows() ?? []).slice(0, PAGE_SIZE));
-  const hasNextPage = createMemo(() => (rows() ?? []).length > PAGE_SIZE);
+  // Read through `latest` so the table keeps the rows it already has while the
+  // next page loads; `isPending` drives the skeleton, as `rows.loading` did.
+  const rows = () => latest(rowsResource) ?? [];
+  const rowsLoading = () => isPending(rowsResource);
+  const refetch = () => refresh(rowsResource);
+
+  const visibleRows = createMemo(() => rows().slice(0, PAGE_SIZE));
+  const hasNextPage = createMemo(() => rows().length > PAGE_SIZE);
 
   const columns = createMemo(() =>
     props.resource.columns
@@ -164,18 +179,16 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
   // Clicking a header cycles ascending → descending → default order, so there
   // is always a way back to "newest first" without a reset control.
   const toggleSort = (field: string) => {
-    batch(() => {
-      setPage(0);
-      if (sortField() !== field) {
-        setSortField(field);
-        setSortDescending(false);
-      } else if (!sortDescending()) {
-        setSortDescending(true);
-      } else {
-        setSortField("");
-        setSortDescending(false);
-      }
-    });
+    setPage(0);
+    if (sortField() !== field) {
+      setSortField(field);
+      setSortDescending(false);
+    } else if (!sortDescending()) {
+      setSortDescending(true);
+    } else {
+      setSortField("");
+      setSortDescending(false);
+    }
   };
 
   const runSearch = () => {
@@ -248,27 +261,33 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
                 <option value="mine">Only mine</option>
               </select>
             </Show>
-            <Button size="sm" variant="ghost" onClick={() => void refetch()} title="Reload">
+            <Button size="sm" variant="ghost" onClick={refetch} title="Reload">
               Refresh
             </Button>
           </div>
         </CardHeader>
 
-        <Show
-          when={!rows.error}
-          fallback={
+        <Errored
+          fallback={(error, reset) => (
             <div class="px-5 py-6">
               <EmptyState
                 title="That list could not be loaded"
-                description={rows.error instanceof Error ? rows.error.message : String(rows.error)}
+                description={error() instanceof Error ? (error() as Error).message : String(error())}
               >
-                <Button onClick={() => void refetch()}>Try again</Button>
+                <Button
+                  onClick={() => {
+                    refetch();
+                    reset();
+                  }}
+                >
+                  Try again
+                </Button>
               </EmptyState>
             </div>
-          }
+          )}
         >
           <Show
-            when={rows.loading || visibleRows().length}
+            when={rowsLoading() || visibleRows().length}
             fallback={
               <div class="px-5 py-6">
                 <EmptyState
@@ -319,7 +338,7 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
                 </thead>
                 <tbody class="divide-y divide-line">
                   <Show
-                    when={!rows.loading}
+                    when={!rowsLoading()}
                     fallback={<SkeletonRows columns={columns().length + 1} />}
                   >
                     <For each={visibleRows()}>
@@ -378,7 +397,7 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
               </div>
             </Show>
           </Show>
-        </Show>
+        </Errored>
       </Card>
     </>
   );
@@ -482,39 +501,37 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
   const [deleting, setDeleting] = createSignal(false);
   const [confirmDelete, setConfirmDelete] = createSignal(false);
   const [errors, setErrors] = createSignal<DraftError[]>([]);
-  const draft = createMutable<Draft>({});
+  const draft = createDraftStore();
 
-  const [record, { refetch }] = createResource(
-    () => ({ name: props.resource.name, id: props.id, org: session.organizationId }),
-    async (key) => {
-      if (!key.id) return null;
-      const resource = resourceByName(key.name);
-      if (!resource) return null;
-      const expand = expandParam(resource);
-      const query = expand ? `?expand=${encodeURIComponent(expand)}` : "";
-      return asRecord(
-        await api(`/${resource.name}/${encodeURIComponent(key.id)}${query}`, {
-          org: includeOrgContext(resource, "read"),
-        }),
-      );
-    },
-  );
+  const recordResource = createMemo(async () => {
+    const key = { name: props.resource.name, id: props.id, org: session.organizationId };
+    if (!key.id) return null;
+    const resource = resourceByName(key.name);
+    if (!resource) return null;
+    const expand = expandParam(resource);
+    const query = expand ? `?expand=${encodeURIComponent(expand)}` : "";
+    return asRecord(
+      await api(`/${resource.name}/${encodeURIComponent(key.id)}${query}`, {
+        org: includeOrgContext(resource, "read"),
+      }),
+    );
+  });
+
+  const record = () => latest(recordResource) ?? null;
+  const recordLoading = () => isPending(recordResource);
+  const refetch = () => refresh(recordResource);
 
   // Reset the form whenever the record or the resource changes underneath it.
-  //
-  // The rewrite must be untracked: reading the draft's own keys in order to
-  // clear them would make this effect depend on the store it writes, causing it
-  // to re-run indefinitely.
-  createEffect(() => {
-    const loaded = (isNew() ? null : record()) ?? null;
-    if (!isNew() && record.loading) return;
-    const fresh = createDraft(props.resource, loaded);
-    untrack(() => {
-      for (const key of Object.keys(draft)) delete draft[key];
-      Object.assign(draft, fresh);
-    });
-    setErrors([]);
-  });
+  // The apply phase is untracked, so writing the draft cannot feed back into
+  // the compute that decided to write it.
+  createEffect(
+    () => [props.resource, isNew() ? null : record(), recordLoading()] as const,
+    ([resource, loaded, loading]) => {
+      if (!isNew() && loading) return;
+      draft.reset(createDraft(resource, loaded ?? null));
+      setErrors([]);
+    },
+  );
 
   const errorFor = (name: string) => errors().find((entry) => entry.field === name)?.message ?? null;
 
@@ -535,7 +552,7 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
   });
 
   const save = async () => {
-    const { payload, errors: problems } = buildPayload(props.resource, draft);
+    const { payload, errors: problems } = buildPayload(props.resource, draft.values);
     setErrors(problems);
     if (problems.length) {
       notify("error", problems.length === 1 ? problems[0].message : "Please fix the highlighted fields.");
@@ -615,7 +632,7 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
       </PageTitle>
 
       <Show
-        when={isNew() || !record.loading}
+        when={isNew() || !recordLoading()}
         fallback={
           <div class="flex items-center gap-2 px-1 py-10 text-sm text-faint">
             <Spinner /> Loading…
@@ -791,14 +808,13 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
       resource()?.relations.find((relation) => relation.field === props.child.field)?.target ?? null,
   );
 
-  const [rows] = createResource(
-    () => ({
-      parent: props.parentId,
-      parentName: parentName(),
-      child: props.child.resource,
-      org: session.organizationId,
-    }),
-    async (key) => {
+  const rowsResource = createMemo(async () => {
+      const key = {
+        parent: props.parentId,
+        parentName: parentName(),
+        child: props.child.resource,
+        org: session.organizationId,
+      };
       const child = resourceByName(key.child);
       if (!child || !key.parentName) return [];
       // `via` selects which reference to follow, which matters when the child
@@ -815,8 +831,10 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
           { org: includeOrgContext(child, "list") },
         ),
       );
-    },
-  );
+  });
+
+  const rows = () => latest(rowsResource) ?? [];
+  const rowsLoading = () => isPending(rowsResource);
 
   const columns = createMemo(() => {
     const child = resource();
@@ -840,11 +858,11 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
             </Show>
           </CardHeader>
           <Show
-            when={!rows.loading}
+            when={!rowsLoading()}
             fallback={<p class="px-5 py-4 text-xs text-faint">Loading…</p>}
           >
             <Show
-              when={(rows() ?? []).length}
+              when={rows().length}
               fallback={
                 <p class="px-5 py-4 text-xs text-faint">
                   No {props.child.label.toLowerCase()} yet.

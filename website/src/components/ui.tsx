@@ -1,7 +1,7 @@
 /** Shared presentational pieces, matching the studio's vocabulary. */
 
-import { Show, splitProps, type JSX, type ParentProps } from "solid-js";
-import { A } from "@solidjs/router";
+import { Show, omit, type ParentProps } from "solid-js";
+import type { JSX } from "@solidjs/web";
 import { theme, toggleTheme } from "../lib/theme";
 
 type Variant = "primary" | "secondary" | "ghost";
@@ -33,10 +33,10 @@ export function Button(
     { variant?: Variant; size?: keyof typeof SIZES; class?: string } & JSX.ButtonHTMLAttributes<HTMLButtonElement>
   >,
 ) {
-  const [local, rest] = splitProps(props, ["variant", "size", "class", "children"]);
+  const rest = omit(props, "variant", "size", "class", "children");
   return (
-    <button {...rest} class={buttonClass(local.variant, local.size, local.class)}>
-      {local.children}
+    <button {...rest} class={buttonClass(props.variant, props.size, props.class)}>
+      {props.children}
     </button>
   );
 }
@@ -47,8 +47,8 @@ export function LinkButton(
     { variant?: Variant; size?: keyof typeof SIZES; class?: string; href: string } & JSX.AnchorHTMLAttributes<HTMLAnchorElement>
   >,
 ) {
-  const [local, rest] = splitProps(props, ["variant", "size", "class", "children", "href"]);
-  const external = () => /^https?:/.test(local.href);
+  const rest = omit(props, "variant", "size", "class", "children", "href");
+  const external = () => /^https?:/.test(props.href);
 
   return (
     <Show
@@ -56,18 +56,18 @@ export function LinkButton(
       fallback={
         <a
           {...rest}
-          href={local.href}
+          href={props.href}
           target="_blank"
           rel="noreferrer noopener"
-          class={buttonClass(local.variant, local.size, local.class)}
+          class={buttonClass(props.variant, props.size, props.class)}
         >
-          {local.children}
+          {props.children}
         </a>
       }
     >
-      <A {...rest} href={local.href} class={buttonClass(local.variant, local.size, local.class)}>
-        {local.children}
-      </A>
+      <a {...rest} href={props.href} class={buttonClass(props.variant, props.size, props.class)}>
+        {props.children}
+      </a>
     </Show>
   );
 }

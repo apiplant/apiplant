@@ -1,6 +1,7 @@
 /** Shared presentational pieces. Nothing here knows about apiplant. */
 
-import { For, Show, createSignal, createUniqueId, splitProps, type JSX, type ParentProps } from "solid-js";
+import { For, Show, createSignal, createUniqueId, omit, type ParentProps } from "solid-js";
+import type { JSX } from "@solidjs/web";
 import { theme, toggleTheme } from "../lib/theme";
 
 // ---- buttons ----------------------------------------------------------------
@@ -23,19 +24,19 @@ export function Button(
     } & JSX.ButtonHTMLAttributes<HTMLButtonElement>
   >,
 ) {
-  const [local, rest] = splitProps(props, ["variant", "size", "class", "children"]);
+  const rest = omit(props, "variant", "size", "class", "children");
   return (
     <button
       {...rest}
       class={[
         "inline-flex items-center justify-center gap-1.5 rounded-lg whitespace-nowrap transition-colors duration-100",
         "disabled:opacity-40 disabled:pointer-events-none",
-        local.size === "sm" ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-[0.8125rem]",
-        BUTTON_VARIANTS[local.variant ?? "secondary"],
-        local.class ?? "",
+        props.size === "sm" ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-[0.8125rem]",
+        BUTTON_VARIANTS[props.variant ?? "secondary"],
+        props.class ?? "",
       ].join(" ")}
     >
-      {local.children}
+      {props.children}
     </button>
   );
 }
@@ -256,7 +257,7 @@ export function Switch(props: { checked: boolean; onChange: (value: boolean) => 
     <button
       type="button"
       role="switch"
-      aria-checked={props.checked}
+      aria-checked={props.checked ? "true" : "false"}
       onClick={() => props.onChange(!props.checked)}
       class="inline-flex items-center gap-2 text-[0.8125rem] text-ink"
     >

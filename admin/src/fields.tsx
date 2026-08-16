@@ -8,7 +8,7 @@
  * `customer_id` becomes a searchable picker rather than a UUID field.
  */
 
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, createStore, onCleanup } from "solid-js";
 import { Button, Field, Spinner, Toggle } from "./ui";
 import { MarkupEditor } from "./markup";
 import {
@@ -26,6 +26,35 @@ import type { ApiRecord, FieldManifest, JsonValue, ResourceManifest } from "./ty
 /** A form's working copy: every value held as the string (or boolean) the
  *  input produces, converted back on submit. */
 export type Draft = Record<string, string | boolean>;
+
+/**
+ * A draft as a reactive store. Solid 2 writes through a setter rather than by
+ * mutating the object, so the setter travels with the values: a form hands the
+ * pair to every editor it renders, and each writes one key.
+ */
+export interface DraftStore {
+  readonly values: Draft;
+  set(name: string, value: string | boolean): void;
+  /** Replace the whole draft — a different record, or a reset after save. */
+  reset(next: Draft): void;
+}
+
+export function createDraftStore(initial: Draft = {}): DraftStore {
+  const [values, setValues] = createStore<Draft>({ ...initial });
+  return {
+    get values() {
+      return values;
+    },
+    set(name, value) {
+      setValues((state) => {
+        state[name] = value;
+      });
+    },
+    reset(next) {
+      setValues(() => ({ ...next }));
+    },
+  };
+}
 
 // --- reading ---------------------------------------------------------------
 
@@ -247,14 +276,14 @@ export function buildPayload(
 
 export function FieldEditor(props: {
   field: FieldManifest;
-  draft: Draft;
+  draft: DraftStore;
   error?: string | null;
   disabled?: boolean;
 }) {
-  const value = () => props.draft[props.field.name];
+  const value = () => props.draft.values[props.field.name];
   const text = () => (typeof value() === "string" ? (value() as string) : "");
   const set = (next: string | boolean) => {
-    props.draft[props.field.name] = next;
+    props.draft.set(props.field.name, next);
   };
 
   if (props.field.widget === "switch") {
@@ -381,7 +410,7 @@ export function FieldEditor(props: {
         class="input"
         type={inputType()}
         step={props.field.type === "float" ? "any" : undefined}
-        maxLength={props.field.max_length ?? undefined}
+        maxlength={props.field.max_length ?? undefined}
         disabled={props.disabled}
         placeholder={props.field.placeholder ?? undefined}
         value={text()}
@@ -413,10 +442,12 @@ export function FilePicker(props: {
 
   // A changed value deserves a fresh attempt at previewing it; otherwise one
   // URL that failed to load would leave the slot blank for its replacement.
-  createEffect(() => {
-    props.value;
-    setBroken(false);
-  });
+  createEffect(
+    () => props.value,
+    () => {
+      setBroken(false);
+    },
+  );
 
   const name = () => props.value.split("?")[0].split("/").pop() || props.value;
 
@@ -431,7 +462,8 @@ export function FilePicker(props: {
       setBusy(false);
       // Cleared so that picking the same file twice — after a failure — still
       // fires a change event.
-      if (input) input.value = "";
+      const element = input;
+      if (element) element.value = "";
     }
   };
 
@@ -480,7 +512,7 @@ export function FilePicker(props: {
         class="input font-mono text-[0.78125rem]"
         type="text"
         disabled={props.disabled || busy()}
-        maxLength={props.maxLength}
+        maxlength={props.maxLength}
         placeholder={props.placeholder ?? "/files/… or https://…"}
         value={props.value}
         onInput={(event) => props.onChange(event.currentTarget.value)}
@@ -545,10 +577,12 @@ export function ReferencePicker(props: {
   };
 
   // Resolve whenever the bound value changes, including the first render.
-  createEffect(() => {
-    void props.value;
-    void resolveSelection();
-  });
+  createEffect(
+    () => props.value,
+    () => {
+      void resolveSelection();
+    },
+  );
 
   const search = (term: string) => {
     window.clearTimeout(searchTimer);
@@ -580,7 +614,8 @@ export function ReferencePicker(props: {
     setOpen(true);
     search(query());
     const onDocument = (event: MouseEvent) => {
-      if (container && !container.contains(event.target as Node)) {
+      const element = container;
+      if (element && !element.contains(event.target as Node)) {
         setOpen(false);
         document.removeEventListener("mousedown", onDocument);
       }

@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
-import solid from "vite-plugin-solid";
+import solid from "@solidjs/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
@@ -14,6 +14,6 @@ export default defineConfig({
     // CodeMirror plus four language grammars is most of the bundle. This is a
     // tool you run on localhost against your own directory, so one chunk is the
     // right trade; the warning would only be noise.
-    chunkSizeWarningLimit: 900,
+    chunkSizeWarningLimit: 1200,
   },
 });

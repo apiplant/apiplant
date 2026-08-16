@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onSettled } from "solid-js";
 import { Landing } from "./components/Landing";
 import { Sidebar } from "./components/Sidebar";
 import { OverviewPage } from "./components/OverviewPage";
@@ -119,10 +119,12 @@ export function App() {
     await openSelection(selection);
   };
 
-  onMount(() => window.addEventListener("keydown", onKeyDown));
-  onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  onSettled(() => {
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
-  onMount(() => {
+  onSettled(() => {
     let cancelled = false;
     void (async () => {
       try {
@@ -141,19 +143,17 @@ export function App() {
         // Remembered project restore is best effort only.
       }
     })();
-    onCleanup(() => {
-      cancelled = true;
-    });
+    syncViewFromLocation();
+    const onPopState = () => syncViewFromLocation();
+    window.addEventListener("popstate", onPopState);
 
-    onMount(() => {
-      syncViewFromLocation();
-      const onPopState = () => syncViewFromLocation();
-      window.addEventListener("popstate", onPopState);
-      onCleanup(() => window.removeEventListener("popstate", onPopState));
-    });
+    return () => {
+      cancelled = true;
+      window.removeEventListener("popstate", onPopState);
+    };
   });
 
-  onMount(() => {
+  onSettled(() => {
     let dragDepth = 0;
     const hasFiles = (dataTransfer: DataTransfer | null) =>
       !!dataTransfer && Array.from(dataTransfer.types).includes("Files");
@@ -203,12 +203,12 @@ export function App() {
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("dragleave", onDragLeave);
     window.addEventListener("drop", onDrop);
-    onCleanup(() => {
+    return () => {
       window.removeEventListener("dragenter", onDragEnter);
       window.removeEventListener("dragover", onDragOver);
       window.removeEventListener("dragleave", onDragLeave);
       window.removeEventListener("drop", onDrop);
-    });
+    };
   });
 
   const saveAndOpen = async () => {
@@ -236,25 +236,26 @@ export function App() {
     }
   };
 
-  createEffect(() => {
-    const name = studio.project?.name;
-    document.title = name ? `${name} - apiplant studio` : "apiplant studio";
-  });
+  createEffect(
+    () => studio.project?.name,
+    (name) => {
+      document.title = name ? `${name} - apiplant studio` : "apiplant studio";
+    },
+  );
 
-  createEffect(() => {
-    void view();
+  createEffect(view, () => {
     setNavOpen(false);
   });
 
   // Losing unsaved edits to a stray tab close would be unrecoverable.
-  createEffect(() => {
+  onSettled(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (!dirty()) return;
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
-    onCleanup(() => window.removeEventListener("beforeunload", warn));
+    return () => window.removeEventListener("beforeunload", warn);
   });
 
   return (

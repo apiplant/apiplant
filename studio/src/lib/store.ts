@@ -9,7 +9,7 @@
  * disk" answerable at any moment, and makes discarding a rescan.
  */
 
-import { createStore, produce, unwrap } from "solid-js/store";
+import { createStore, snapshot } from "solid-js";
 import {
   agentStorageBuiltinEntries,
   emitAgent,
@@ -106,12 +106,22 @@ let toastId = 0;
 
 export function toast(message: string, kind: Toast["kind"] = "info") {
   const id = ++toastId;
-  setState("toasts", (list) => [...list, { id, kind, message }]);
-  setTimeout(() => setState("toasts", (list) => list.filter((t) => t.id !== id)), 4200);
+  setState((s) => {
+    s.toasts.push({ id, kind, message });
+  });
+  setTimeout(
+    () =>
+      setState((s) => {
+        s.toasts = s.toasts.filter((t) => t.id !== id);
+      }),
+    4200,
+  );
 }
 
 export function dismissToast(id: number) {
-  setState("toasts", (list) => list.filter((t) => t.id !== id));
+  setState((s) => {
+    s.toasts = s.toasts.filter((t) => t.id !== id);
+  });
 }
 
 // ---- opening ----------------------------------------------------------------
@@ -349,12 +359,17 @@ export async function openProject(
   handle: FileSystemDirectoryHandle,
   options: { quiet?: boolean; preserveView?: boolean } = {},
 ): Promise<void> {
-  setState("loading", true);
+  setState((s) => {
+    s.loading = true;
+  });
   try {
     if (!(await ensurePermission(handle))) {
       throw new Error(`Permission to read and write ${handle.name} was not granted`);
     }
-    setState("project", await buildProject(handle));
+    const built = await buildProject(handle);
+    setState((s) => {
+      s.project = built;
+    });
     try {
       await rememberProject(handle);
     } catch {
@@ -363,7 +378,9 @@ export async function openProject(
     if (!options.preserveView) setView({ kind: "overview" }, { replace: true });
     if (!options.quiet) toast(`Opened ${handle.name}`, "success");
   } finally {
-    setState("loading", false);
+    setState((s) => {
+      s.loading = false;
+    });
   }
 }
 
@@ -371,16 +388,25 @@ export async function openProject(
 export async function reloadProject(): Promise<void> {
   const project = state.project;
   if (!project) return;
-  setState("loading", true);
+  setState((s) => {
+    s.loading = true;
+  });
   try {
-    setState("project", await buildProject(project.handle));
+    const built = await buildProject(project.handle);
+    setState((s) => {
+      s.project = built;
+    });
   } finally {
-    setState("loading", false);
+    setState((s) => {
+      s.loading = false;
+    });
   }
 }
 
 export function closeProject() {
-  setState("project", null);
+  setState((s) => {
+    s.project = null;
+  });
 }
 
 // ---- file plumbing ----------------------------------------------------------
@@ -395,40 +421,34 @@ export function fileState(path: string): FileState | undefined {
 
 export function setFileText(path: string, text: string) {
   if (!state.project) return;
-  setState(
-    "project",
-    "files",
-    produce((files: Record<string, FileState>) => {
-      const existing = files[path];
-      if (existing) {
-        existing.current = text;
-        existing.size = text.length;
-        existing.deleted = false;
-      } else {
-        files[path] = { original: null, current: text, binary: !isTextPath(path), size: text.length };
-      }
-    }),
-  );
+  setState((s) => {
+    const files: Record<string, FileState> = s.project!.files;
+    const existing = files[path];
+    if (existing) {
+      existing.current = text;
+      existing.size = text.length;
+      existing.deleted = false;
+    } else {
+      files[path] = { original: null, current: text, binary: !isTextPath(path), size: text.length };
+    }
+  });
 }
 
 function markDeleted(path: string) {
   if (!state.project) return;
-  setState(
-    "project",
-    "files",
-    produce((files: Record<string, FileState>) => {
-      const existing = files[path];
-      if (!existing) return;
-      // A file the studio itself created was never on disk: it just stops being
-      // tracked. Anything read from the directory — including a compiled
-      // library, which has no text to compare — is staged for removal.
-      if (existing.original === null && !existing.binary) delete files[path];
-      else {
-        existing.deleted = true;
-        existing.current = null;
-      }
-    }),
-  );
+  setState((s) => {
+    const files: Record<string, FileState> = s.project!.files;
+    const existing = files[path];
+    if (!existing) return;
+    // A file the studio itself created was never on disk: it just stops being
+    // tracked. Anything read from the directory — including a compiled
+    // library, which has no text to compare — is staged for removal.
+    if (existing.original === null && !existing.binary) delete files[path];
+    else {
+      existing.deleted = true;
+      existing.current = null;
+    }
+  });
 }
 
 export type ChangeKind = "added" | "modified" | "deleted";
@@ -460,42 +480,59 @@ export async function saveAll(): Promise<void> {
     return;
   }
 
-  setState("saving", true);
+  setState((s) => {
+    s.saving = true;
+  });
   try {
     for (const change of changes) {
       if (change.kind === "deleted") await deleteFile(project.handle, change.path);
       else await writeTextFile(project.handle, change.path, project.files[change.path].current!);
     }
-    for (const dir of unwrap(project.pendingDirDeletes)) {
+    for (const dir of snapshot(project.pendingDirDeletes)) {
       await deleteDirectory(project.handle, dir);
     }
 
-    setState(
-      "project",
-      "files",
-      produce((files: Record<string, FileState>) => {
-        for (const change of changes) {
-          if (change.kind === "deleted") delete files[change.path];
-          else files[change.path].original = files[change.path].current;
-        }
-      }),
-    );
-    setState("project", "pendingDirDeletes", []);
+    setState((s) => {
+      const files: Record<string, FileState> = s.project!.files;
+      for (const change of changes) {
+        if (change.kind === "deleted") delete files[change.path];
+        else files[change.path].original = files[change.path].current;
+      }
+    });
+    setState((s) => {
+      s.project!.pendingDirDeletes = [];
+    });
     toast(`Saved ${changes.length} file${changes.length === 1 ? "" : "s"} to ${project.name}`, "success");
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error), "error");
     throw error;
   } finally {
-    setState("saving", false);
+    setState((s) => {
+      s.saving = false;
+    });
   }
 }
 
 // ---- config -----------------------------------------------------------------
 
-function syncConfigFile() {
+/**
+ * Edit `main.toml` and re-emit it.
+ *
+ * The edit is made on a plain copy rather than through the store's draft, and
+ * the copy is what gets written *and* what gets emitted. Solid 2 commits store
+ * writes on the next microtask, so reading the config back here to serialise it
+ * would serialise the version from before the edit.
+ */
+function mutateConfig(mutate: (config: TomlTable) => void): TomlTable | undefined {
   const project = state.project;
-  if (!project) return;
-  setFileText(CONFIG_PATH, emitTable(unwrap(project.config)));
+  if (!project) return undefined;
+  const config = snapshot(project.config) as TomlTable;
+  mutate(config);
+  setState((s) => {
+    s.project!.config = config;
+  });
+  setFileText(CONFIG_PATH, emitTable(config));
+  return config;
 }
 
 function isConfigTable(value: unknown): value is TomlTable {
@@ -517,8 +554,8 @@ function configTable(config: TomlTable, sectionPath: string, create: boolean): T
 }
 
 export function setConfigValue(section: string, key: string, value: string | number | boolean | undefined) {
-  writeConfig(section, key, value === "" ? undefined : value);
-  if (section === "payments" && key === "provider") syncBillingBuiltins();
+  const config = writeConfig(section, key, value === "" ? undefined : value);
+  if (config && section === "payments" && key === "provider") syncBillingBuiltins(config);
 }
 
 /**
@@ -529,29 +566,23 @@ export function setConfigValue(section: string, key: string, value: string | num
  * nothing under it. Shared by every writer below, since a list and a map empty
  * out exactly like a scalar does.
  */
-function writeConfig(section: string, key: string, value: TomlValue | undefined) {
-  if (!state.project) return;
-  setState(
-    "project",
-    "config",
-    produce((config: TomlTable) => {
-      const parents: TomlTable[] = [config];
-      let table = config;
-      for (const segment of section.split(".")) {
-        const next = configTable(table, segment, true);
-        table = next!;
-        parents.push(table);
-      }
-      if (value === undefined) delete table[key];
-      else table[key] = value;
-      const segments = section.split(".");
-      for (let i = segments.length - 1; i >= 0; i--) {
-        if (Object.keys(parents[i + 1]).length > 0) break;
-        delete parents[i][segments[i]];
-      }
-    }),
-  );
-  syncConfigFile();
+function writeConfig(section: string, key: string, value: TomlValue | undefined): TomlTable | undefined {
+  return mutateConfig((config) => {
+    const parents: TomlTable[] = [config];
+    let table = config;
+    for (const segment of section.split(".")) {
+      const next = configTable(table, segment, true);
+      table = next!;
+      parents.push(table);
+    }
+    if (value === undefined) delete table[key];
+    else table[key] = value;
+    const segments = section.split(".");
+    for (let i = segments.length - 1; i >= 0; i--) {
+      if (Object.keys(parents[i + 1]).length > 0) break;
+      delete parents[i][segments[i]];
+    }
+  });
 }
 
 /**
@@ -617,74 +648,66 @@ export function setConfigEntries(section: string, key: string, entries: ConfigEn
  * the app has a file for stays either way; turning payments off just makes it
  * an ordinary resource of the app's own, which is what it then is.
  */
-function syncBillingBuiltins() {
-  const project = state.project;
-  if (!project) return;
-  const enabled = paymentsEnabled(project.config);
+function syncBillingBuiltins(config: TomlTable) {
+  if (!state.project) return;
+  const enabled = paymentsEnabled(config);
 
-  setState(
-    "project",
-    "resources",
-    produce((resources: ResourceEntry[]) => {
-      for (const name of BILLING_BUILTIN_NAMES) {
-        const index = resources.findIndex((entry) => entry.name === name);
-        if (enabled) {
-          if (index < 0) {
-            resources.push({
-              name,
-              path: null,
-              builtin: true,
-              builtinSummary: BUILTIN_SUMMARY[name],
-              resource: builtinResource(name),
-            });
-          } else {
-            resources[index].builtin = true;
-            resources[index].builtinSummary = BUILTIN_SUMMARY[name];
-          }
-        } else if (index >= 0) {
-          if (resources[index].path) resources[index].builtin = false;
-          else resources.splice(index, 1);
+  setState((s) => {
+    const resources: ResourceEntry[] = s.project!.resources;
+    for (const name of BILLING_BUILTIN_NAMES) {
+      const index = resources.findIndex((entry) => entry.name === name);
+      if (enabled) {
+        if (index < 0) {
+          resources.push({
+            name,
+            path: null,
+            builtin: true,
+            builtinSummary: BUILTIN_SUMMARY[name],
+            resource: builtinResource(name),
+          });
+        } else {
+          resources[index].builtin = true;
+          resources[index].builtinSummary = BUILTIN_SUMMARY[name];
         }
+      } else if (index >= 0) {
+        if (resources[index].path) resources[index].builtin = false;
+        else resources.splice(index, 1);
       }
-      resources.sort((a, b) => a.name.localeCompare(b.name));
-    }),
-  );
+    }
+    resources.sort((a, b) => a.name.localeCompare(b.name));
+  });
 }
 
-function syncAgentStorageBuiltins() {
-  const project = state.project;
-  if (!project) return;
-  const generated = new Map(project.agents.flatMap((agent) => agentStorageBuiltinEntries(agent).map((entry) => [entry.name, entry])));
+function syncAgentStorageBuiltins(agents: AgentEntry[]) {
+  if (!state.project) return;
+  const generated = new Map(agents.flatMap((agent) => agentStorageBuiltinEntries(agent).map((entry) => [entry.name, entry])));
 
-  setState(
-    "project",
-    "resources",
-    produce((resources: ResourceEntry[]) => {
-      for (const [name, entry] of generated) {
-        const index = resources.findIndex((resource) => resource.name === name);
-        if (index < 0) {
-          resources.push(entry);
-          continue;
-        }
-        resources[index].builtin = true;
-        resources[index].builtinSummary = entry.builtinSummary;
-        if (!resources[index].path) resources[index].resource = entry.resource;
+  setState((s) => {
+    const resources: ResourceEntry[] = s.project!.resources;
+    for (const [name, entry] of generated) {
+      const index = resources.findIndex((resource) => resource.name === name);
+      if (index < 0) {
+        resources.push(entry);
+        continue;
       }
+      resources[index].builtin = true;
+      resources[index].builtinSummary = entry.builtinSummary;
+      if (!resources[index].path) resources[index].resource = entry.resource;
+    }
 
-      for (let index = resources.length - 1; index >= 0; index -= 1) {
-        const resource = resources[index];
-        if (!isAgentStorageBuiltinName(resource.name) || generated.has(resource.name)) continue;
-        if (resource.path) {
-          resource.builtin = false;
-          delete resource.builtinSummary;
-        } else {
-          resources.splice(index, 1);
-        }
+    for (let index = resources.length - 1; index >= 0; index -= 1) {
+      const resource = resources[index];
+      if (!isAgentStorageBuiltinName(resource.name) || generated.has(resource.name)) continue;
+      if (resource.path) {
+        resource.builtin = false;
+        delete resource.builtinSummary;
+      } else {
+        resources.splice(index, 1);
       }
+    }
 
-      resources.sort((a, b) => a.name.localeCompare(b.name));
-    }),
-  );
+    resources.sort((a, b) => a.name.localeCompare(b.name));
+  });
 }
 
 export function configValue(section: string, key: string): string | number | boolean | undefined {
@@ -735,45 +758,44 @@ export function subscriptions(): Subscription[] {
  * mid-edit in the form, and neither spelling means anything to the server.
  */
 export function setSubscriptions(list: Subscription[]) {
-  if (!state.project) return;
-  setState(
-    "project",
-    "config",
-    produce((config: TomlTable) => {
-      const usable = list.filter((entry) => entry.topic.trim() && entry.functions.length > 0);
-      if (usable.length === 0) {
-        const queues = configTable(config, "queues", false);
-        if (queues) delete queues.subscribe;
-        // A `[queues]` left with nothing in it is noise in the file.
-        if (queues && Object.keys(queues).length === 0) delete config.queues;
-        return;
-      }
-      const table = configTable(config, "queues.subscribe", true)!;
-      for (const key of Object.keys(table)) delete table[key];
-      for (const entry of usable) {
-        table[entry.topic.trim()] =
-          entry.functions.length === 1 ? entry.functions[0] : [...entry.functions];
-      }
-    }),
-  );
-  syncConfigFile();
+  mutateConfig((config) => {
+    const usable = list.filter((entry) => entry.topic.trim() && entry.functions.length > 0);
+    if (usable.length === 0) {
+      const queues = configTable(config, "queues", false);
+      if (queues) delete queues.subscribe;
+      // A `[queues]` left with nothing in it is noise in the file.
+      if (queues && Object.keys(queues).length === 0) delete config.queues;
+      return;
+    }
+    const table = configTable(config, "queues.subscribe", true)!;
+    for (const key of Object.keys(table)) delete table[key];
+    for (const entry of usable) {
+      table[entry.topic.trim()] =
+        entry.functions.length === 1 ? entry.functions[0] : [...entry.functions];
+    }
+  });
 }
 
 /** Replace main.toml wholesale from the raw editor. */
 export function setConfigFromToml(text: string) {
   const parsed = parseTable(text);
-  setState("project", "config", parsed);
+  setState((s) => {
+    s.project!.config = parsed;
+  });
   setFileText(CONFIG_PATH, text);
-  syncBillingBuiltins();
+  syncBillingBuiltins(parsed);
 }
 
 export function ensureMainToml() {
   const project = state.project;
   if (!project || project.files[CONFIG_PATH]) return;
   const text = scaffoldMainToml(project.name);
-  setState("project", "config", parseTable(text));
+  const parsed = parseTable(text);
+  setState((s) => {
+    s.project!.config = parsed;
+  });
   setFileText(CONFIG_PATH, text);
-  syncBillingBuiltins();
+  syncBillingBuiltins(parsed);
 }
 
 // ---- resources --------------------------------------------------------------
@@ -799,28 +821,24 @@ export function updateResource(name: string, update: (resource: Resource) => voi
   const index = project.resources.findIndex((entry) => entry.name === name);
   if (index < 0) return;
 
-  setState(
-    "project",
-    "resources",
-    index,
-    produce((entry: ResourceEntry) => {
-      update(entry.resource);
-      if (!entry.path) entry.path = pathForResource(entry.resource.name);
-    }),
-  );
+  // The edit is applied to a plain copy first: the store commits on the next
+  // microtask, so the entry read back here would still be the one from before.
+  const before = project.resources[index];
+  const resource = snapshot(before.resource) as Resource;
+  update(resource);
 
-  const entry = state.project!.resources[index];
-  const emitted = emitResource(unwrap(entry.resource));
+  const renamed = before.name !== resource.name;
+  const path = renamed || !before.path ? pathForResource(resource.name) : before.path;
+  if (renamed && before.path && before.path !== path) markDeleted(before.path);
 
-  // A rename moves the file for custom resources.
-  if (entry.name !== entry.resource.name) {
-    const oldPath = entry.path;
-    const newPath = pathForResource(entry.resource.name);
-    if (oldPath && oldPath !== newPath) markDeleted(oldPath);
-    setState("project", "resources", index, { name: entry.resource.name, path: newPath });
-  }
+  setState((s) => {
+    const entry: ResourceEntry = s.project!.resources[index];
+    entry.resource = resource;
+    entry.path = path;
+    if (renamed) entry.name = resource.name;
+  });
 
-  setFileText(state.project!.resources[index].path!, emitted);
+  setFileText(path, emitResource(resource));
 }
 
 /** Write a built-in's default definition to disk so it can be extended. */
@@ -842,14 +860,11 @@ export function addResource(name: string, options: { scope?: "organization" | "g
   resource.fields = [{ name: "title", type: "string", required: true }];
 
   const path = pathForResource(name);
-  setState(
-    "project",
-    "resources",
-    produce((resources: ResourceEntry[]) => {
-      resources.push({ name, path, builtin: false, resource });
-      resources.sort((a, b) => a.name.localeCompare(b.name));
-    }),
-  );
+  setState((s) => {
+    const resources: ResourceEntry[] = s.project!.resources;
+    resources.push({ name, path, builtin: false, resource });
+    resources.sort((a, b) => a.name.localeCompare(b.name));
+  });
   setFileText(path, emitResource(resource));
   return true;
 }
@@ -876,14 +891,17 @@ export function deleteResource(name: string) {
           .flatMap((agent) => agentStorageBuiltinEntries(agent))
           .find((resource) => resource.name === name);
     if (!builtin) return;
-    setState("project", "resources", index, {
-      path: null,
-      builtinSummary: builtin.builtinSummary,
-      resource: builtin.resource,
+    setState((s) => {
+      const target = s.project!.resources[index];
+      target.path = null;
+      target.builtinSummary = builtin.builtinSummary;
+      target.resource = builtin.resource;
     });
     toast(`${name} reverted to the built-in definition`);
   } else {
-    setState("project", "resources", (resources) => resources.filter((r) => r.name !== name));
+    setState((s) => {
+      s.project!.resources = s.project!.resources.filter((r) => r.name !== name);
+    });
     toast(`Deleted ${name}`);
   }
 }
@@ -896,7 +914,12 @@ export function setResourceFromToml(name: string, text: string) {
   if (index < 0) return;
   const parsed = parseResource(text);
   const path = project.resources[index].path ?? pathForResource(parsed.name);
-  setState("project", "resources", index, { name: parsed.name, path, resource: parsed });
+  setState((s) => {
+    const target = s.project!.resources[index];
+    target.name = parsed.name;
+    target.path = path;
+    target.resource = parsed;
+  });
   setFileText(path, text);
 }
 
@@ -957,14 +980,11 @@ export function addFunction(
     exports: [name],
   };
 
-  setState(
-    "project",
-    "functions",
-    produce((functions: FunctionEntry[]) => {
-      functions.push(entry);
-      functions.sort((a, b) => a.name.localeCompare(b.name));
-    }),
-  );
+  setState((s) => {
+    const functions: FunctionEntry[] = s.project!.functions;
+    functions.push(entry);
+    functions.sort((a, b) => a.name.localeCompare(b.name));
+  });
   return true;
 }
 
@@ -978,16 +998,11 @@ export function addFunctionConfig(entryName: string, functionName: string) {
   if (project.functions[index].configs.some((config) => config.path === path)) return;
 
   setFileText(path, `# Configuration for the \`${functionName}\` function.\n`);
-  setState(
-    "project",
-    "functions",
-    index,
-    "configs",
-    produce((configs: { name: string; path: string }[]) => {
-      configs.push({ name: functionName, path });
-      configs.sort((a, b) => a.name.localeCompare(b.name));
-    }),
-  );
+  setState((s) => {
+    const configs: { name: string; path: string }[] = s.project!.functions[index].configs;
+    configs.push({ name: functionName, path });
+    configs.sort((a, b) => a.name.localeCompare(b.name));
+  });
 }
 
 /** Remove a function: its sources, its config, and the library it built to. */
@@ -1001,10 +1016,14 @@ export function deleteFunction(name: string) {
   for (const config of entry.configs) markDeleted(config.path);
   if (entry.libPath) markDeleted(entry.libPath);
   if (entry.layout === "directory") {
-    setState("project", "pendingDirDeletes", (dirs) => [...dirs, `functions/${name}`]);
+    setState((s) => {
+      s.project!.pendingDirDeletes.push(`functions/${name}`);
+    });
   }
 
-  setState("project", "functions", (functions) => functions.filter((fn) => fn.name !== name));
+  setState((s) => {
+    s.project!.functions = s.project!.functions.filter((fn) => fn.name !== name);
+  });
   toast(`Deleted function ${name}`);
 }
 
@@ -1016,16 +1035,11 @@ export function addFunctionFile(entryName: string, fileName: string, text: strin
   if (index < 0) return;
   const path = `functions/${entryName}/${fileName}`;
   setFileText(path, text);
-  setState(
-    "project",
-    "functions",
-    index,
-    "files",
-    produce((files: { path: string; text: string | null; size: number }[]) => {
-      files.push({ path, text, size: text.length });
-      files.sort((a, b) => a.path.localeCompare(b.path));
-    }),
-  );
+  setState((s) => {
+    const files: { path: string; text: string | null; size: number }[] = s.project!.functions[index].files;
+    files.push({ path, text, size: text.length });
+    files.sort((a, b) => a.path.localeCompare(b.path));
+  });
 }
 
 // ---- agents -----------------------------------------------------------------
@@ -1041,16 +1055,12 @@ export function addAgent(name: string, storageEnabled: boolean): string | null {
 
   const text = scaffoldAgent(name, storageEnabled);
   const entry = summarizeAgent(path, text);
+  const agents = [...project.agents, entry].sort((a, b) => a.name.localeCompare(b.name));
   setFileText(path, text);
-  setState(
-    "project",
-    "agents",
-    produce((agents: AgentEntry[]) => {
-      agents.push(entry);
-      agents.sort((a, b) => a.name.localeCompare(b.name));
-    }),
-  );
-  syncAgentStorageBuiltins();
+  setState((s) => {
+    s.project!.agents = agents;
+  });
+  syncAgentStorageBuiltins(agents);
   return path;
 }
 
@@ -1061,17 +1071,21 @@ export function updateAgent(name: string, update: (agent: AgentEntry) => void) {
   if (index < 0) return;
   const before = project.agents[index];
 
-  setState("project", "agents", index, produce((entry: AgentEntry) => update(entry)));
+  // Edited on a plain copy, for the same reason as `updateResource`: a read of
+  // the store here would still hold the values from before the write.
+  const updated = snapshot(before) as AgentEntry;
+  update(updated);
 
-  const updated = state.project!.agents[index];
   const nextPath = `agents/${updated.name}.toml`;
-  if (before.path !== nextPath) {
-    markDeleted(before.path);
-    setState("project", "agents", index, "path", nextPath);
-  }
-  setState("project", "agents", index, "fallbackName", updated.name);
-  setFileText(state.project!.agents[index].path, emitAgent(unwrap(state.project!.agents[index])));
-  syncAgentStorageBuiltins();
+  if (before.path !== nextPath) markDeleted(before.path);
+  updated.path = nextPath;
+  updated.fallbackName = updated.name;
+
+  setState((s) => {
+    Object.assign(s.project!.agents[index], updated);
+  });
+  setFileText(nextPath, emitAgent(updated));
+  syncAgentStorageBuiltins(project.agents.map((agent, other) => (other === index ? updated : agent)));
 }
 
 export function setAgentFromToml(name: string, text: string): string | null {
@@ -1087,9 +1101,11 @@ export function setAgentFromToml(name: string, text: string): string | null {
     markDeleted(project.agents[index].path);
     parsed.path = `agents/${parsed.name}.toml`;
   }
-  setState("project", "agents", index, parsed);
+  setState((s) => {
+    Object.assign(s.project!.agents[index], parsed);
+  });
   setFileText(parsed.path, text);
-  syncAgentStorageBuiltins();
+  syncAgentStorageBuiltins(project.agents.map((agent, other) => (other === index ? parsed : agent)));
   return parsed.name;
 }
 
@@ -1099,8 +1115,11 @@ export function deleteAgent(name: string) {
   const entry = project.agents.find((agent) => agent.name === name);
   if (!entry) return;
   markDeleted(entry.path);
-  setState("project", "agents", (agents) => agents.filter((agent) => agent.name !== name));
-  syncAgentStorageBuiltins();
+  const agents = project.agents.filter((agent) => agent.name !== name);
+  setState((s) => {
+    s.project!.agents = agents;
+  });
+  syncAgentStorageBuiltins(agents);
   toast(`Deleted agent ${entry.name}`);
 }
 

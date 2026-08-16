@@ -24,7 +24,7 @@
  * below.
  */
 
-import type { JSX } from "solid-js";
+import type { JSX } from "@solidjs/web";
 
 /** Every mark is square and sized by its container. */
 function frame(children: JSX.Element, label: string, extra = ""): JSX.Element {

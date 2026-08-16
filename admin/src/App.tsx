@@ -6,7 +6,7 @@
  * would return a permission error.
  */
 
-import { For, Match, Show, Switch, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Match, Show, Switch, createMemo, createSignal, onSettled } from "solid-js";
 import {
   Avatar,
   Button,
@@ -40,6 +40,7 @@ import {
   dismissToast,
   functionByName,
   isSignedIn,
+  signedInNow,
   manifest,
   navigate,
   navigationGroups,
@@ -70,7 +71,7 @@ export function App() {
   const [loading, setLoading] = createSignal(true);
   const [fatal, setFatal] = createSignal<string | null>(null);
 
-  onMount(() => {
+  onSettled(() => {
     restoreSession();
     // A sign-in that went out to GitHub and came back leaves the session in the
     // URL fragment. Take it before the router looks at the hash, since
@@ -84,19 +85,18 @@ export function App() {
     const onPopState = () => syncRouteFromHash();
     window.addEventListener("popstate", onPopState);
     window.addEventListener("hashchange", onPopState);
-    onCleanup(() => {
-      window.removeEventListener("popstate", onPopState);
-      window.removeEventListener("hashchange", onPopState);
-    });
 
     void (async () => {
       try {
         const response = await fetch(MANIFEST_URL);
         if (!response.ok) throw new Error("This dashboard's configuration could not be loaded.");
-        setManifest((await response.json()) as AdminManifest);
-        document.title = manifest()?.title ?? "apiplant admin";
+        const loaded = (await response.json()) as AdminManifest;
+        setManifest(loaded);
+        // From `loaded`, not from `manifest()`: the signal write above is not
+        // visible to a read in this same tick.
+        document.title = loaded.title ?? "apiplant admin";
         if (arrived) notify("success", "Welcome back.");
-        if (isSignedIn()) {
+        if (signedInNow()) {
           try {
             // Verify the stored credential before loading anything with it;
             // an invalid token is dropped here and the sign-in screen takes
@@ -115,6 +115,11 @@ export function App() {
         setLoading(false);
       }
     })();
+
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("hashchange", onPopState);
+    };
   });
 
   return (
@@ -499,20 +504,23 @@ function Navigation(props: { onNavigate: () => void }) {
 function CurrentPage() {
   return (
     <Switch fallback={<DashboardPage />}>
-      <Match when={route().kind === "resource" && resourceByName((route() as { name: string }).name)}>
-        {(resource) => <ResourceListPage resource={resource()} />}
+      {/* Keyed: the matched manifest is handed to the page as a value, so
+          the page is rebuilt when the route names a different one and nothing
+          in it can read the match after it has stopped matching. */}
+      <Match keyed when={route().kind === "resource" && resourceByName((route() as { name: string }).name)}>
+        {(resource) => <ResourceListPage resource={resource} />}
       </Match>
-      <Match when={route().kind === "new" && resourceByName((route() as { name: string }).name)}>
-        {(resource) => <RecordPage resource={resource()} id={null} />}
+      <Match keyed when={route().kind === "new" && resourceByName((route() as { name: string }).name)}>
+        {(resource) => <RecordPage resource={resource} id={null} />}
       </Match>
-      <Match when={route().kind === "record" && resourceByName((route() as { name: string }).name)}>
-        {(resource) => <RecordPage resource={resource()} id={(route() as { id: string }).id} />}
+      <Match keyed when={route().kind === "record" && resourceByName((route() as { name: string }).name)}>
+        {(resource) => <RecordPage resource={resource} id={(route() as { id: string }).id} />}
       </Match>
-      <Match when={route().kind === "action" && functionByName((route() as { name: string }).name)}>
-        {(fn) => <ActionPage fn={fn()} />}
+      <Match keyed when={route().kind === "action" && functionByName((route() as { name: string }).name)}>
+        {(fn) => <ActionPage fn={fn} />}
       </Match>
-      <Match when={route().kind === "agent" && agentByName((route() as { name: string }).name)}>
-        {(agent) => <AgentPage agent={agent()} threadId={(route() as { threadId?: string }).threadId ?? null} />}
+      <Match keyed when={route().kind === "agent" && agentByName((route() as { name: string }).name)}>
+        {(agent) => <AgentPage agent={agent} threadId={(route() as { threadId?: string }).threadId ?? null} />}
       </Match>
       <Match when={route().kind === "account"}>
         <AccountPage />

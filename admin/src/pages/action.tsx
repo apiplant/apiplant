@@ -7,8 +7,8 @@
  * short form. A function without a usable schema falls back to raw JSON.
  */
 
-import { For, Show, createEffect, createMemo, createSignal, untrack } from "solid-js";
-import { createMutable } from "solid-js/store";
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { createDraftStore } from "../fields";
 import { Badge, Button, Card, CardHeader, ConfirmDialog, EmptyState, Field, PageTitle, Toggle } from "../ui";
 import { apiStream, notify, reportError, session } from "../store";
 import type { FunctionManifest, JsonSchema, JsonValue } from "../types";
@@ -117,7 +117,7 @@ export function ActionPage(props: { fn: FunctionManifest }) {
   const usesForm = createMemo(() => props.fn.method !== "GET" && fields() !== null);
   const needsBody = () => props.fn.method !== "GET";
 
-  const draft = createMutable<Record<string, string | boolean>>({});
+  const draft = createDraftStore();
   const [rawInput, setRawInput] = createSignal("{}");
   const [running, setRunning] = createSignal(false);
   const [confirming, setConfirming] = createSignal(false);
@@ -125,21 +125,18 @@ export function ActionPage(props: { fn: FunctionManifest }) {
   const [result, setResult] = createSignal<unknown>(undefined);
   const [failure, setFailure] = createSignal<string | null>(null);
 
-  // Seed the form (and reset it) whenever the action changes.
-  createEffect(() => {
-    void props.fn.name;
-    const schema = fields();
-    // Untracked: reading the draft's keys in order to clear them would make
-    // this effect depend on its own writes.
-    untrack(() => {
-      for (const key of Object.keys(draft)) delete draft[key];
-      if (schema) Object.assign(draft, initialDraft(schema));
-    });
-    setRawInput("{}");
-    setStreamed("");
-    setResult(undefined);
-    setFailure(null);
-  });
+  // Seed the form (and reset it) whenever the action changes. The apply phase
+  // is untracked, so clearing the draft cannot feed back into the compute.
+  createEffect(
+    () => [props.fn.name, fields()] as const,
+    ([, schema]) => {
+      draft.reset(schema ? initialDraft(schema) : {});
+      setRawInput("{}");
+      setStreamed("");
+      setResult(undefined);
+      setFailure(null);
+    },
+  );
 
   const blockedByOrganization = () => props.fn.requires_org && !session.organizationId;
 
@@ -159,7 +156,7 @@ export function ActionPage(props: { fn: FunctionManifest }) {
 
     const body: Record<string, unknown> = {};
     for (const field of schema) {
-      const value = draft[field.name];
+      const value = draft.values[field.name];
       if (field.kind === "boolean") {
         body[field.name] = Boolean(value);
         continue;
@@ -284,9 +281,9 @@ export function ActionPage(props: { fn: FunctionManifest }) {
                         when={field.kind !== "boolean"}
                         fallback={
                           <Toggle
-                            checked={Boolean(draft[field.name])}
+                            checked={Boolean(draft.values[field.name])}
                             onChange={(value) => {
-                              draft[field.name] = value;
+                              draft.set(field.name, value);
                             }}
                             label={field.label}
                             help={field.description}
@@ -302,9 +299,9 @@ export function ActionPage(props: { fn: FunctionManifest }) {
                                 fallback={
                                   <textarea
                                     class="input min-h-28 font-mono text-[0.78125rem]"
-                                    value={String(draft[field.name] ?? "")}
+                                    value={String(draft.values[field.name] ?? "")}
                                     onInput={(event) => {
-                                      draft[field.name] = event.currentTarget.value;
+                                      draft.set(field.name, event.currentTarget.value);
                                     }}
                                   />
                                 }
@@ -313,9 +310,9 @@ export function ActionPage(props: { fn: FunctionManifest }) {
                                   class="input"
                                   type={inputTypeFor(field)}
                                   step={field.kind === "number" ? "any" : undefined}
-                                  value={String(draft[field.name] ?? "")}
+                                  value={String(draft.values[field.name] ?? "")}
                                   onInput={(event) => {
-                                    draft[field.name] = event.currentTarget.value;
+                                    draft.set(field.name, event.currentTarget.value);
                                   }}
                                 />
                               </Show>
@@ -323,9 +320,9 @@ export function ActionPage(props: { fn: FunctionManifest }) {
                           >
                             <select
                               class="input"
-                              value={String(draft[field.name] ?? "")}
+                              value={String(draft.values[field.name] ?? "")}
                               onChange={(event) => {
-                                draft[field.name] = event.currentTarget.value;
+                                draft.set(field.name, event.currentTarget.value);
                               }}
                             >
                               <Show when={!field.required}>

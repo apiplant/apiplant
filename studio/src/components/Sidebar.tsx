@@ -1,4 +1,5 @@
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
+import type { JSX } from "@solidjs/web";
 import { isActive, setView, view, type View } from "../lib/nav";
 import { pendingChanges, studio, type Project } from "../lib/store";
 import { LANGUAGE_LABEL, type AgentEntry, type FunctionEntry, type ResourceEntry } from "../lib/types";

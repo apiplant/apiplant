@@ -7,7 +7,7 @@
  * keeps the cursor and history when a different file of the same editor loads.
  */
 
-import { createEffect, on, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, onSettled, Show } from "solid-js";
 import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import {
   EditorView,
@@ -206,7 +206,7 @@ export function CodeEditor(props: {
   const editable = new Compartment();
   const appearance = new Compartment();
 
-  onMount(() => {
+  onSettled(() => {
     view = new EditorView({
       parent: host,
       state: EditorState.create({
@@ -239,53 +239,44 @@ export function CodeEditor(props: {
         ],
       }),
     });
+    return () => view?.destroy();
   });
 
   // An external change (a different file, a form edit, a discard) replaces the
   // document; an edit the user just made is already in the view, so it is a
   // no-op rather than a cursor-losing round trip.
   createEffect(
-    on(
-      () => props.value,
-      (value) => {
-        if (!view || value === view.state.doc.toString()) return;
-        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
-      },
-      { defer: true },
-    ),
+    () => props.value,
+    (value) => {
+      if (!view || value === view.state.doc.toString()) return;
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
+    },
+    { defer: true },
   );
 
   createEffect(
-    on(
-      () => props.language,
-      (name) => view?.dispatch({ effects: language.reconfigure(languageExtension(name)) }),
-      { defer: true },
-    ),
+    () => props.language,
+    (name) => void view?.dispatch({ effects: language.reconfigure(languageExtension(name)) }),
+    { defer: true },
   );
 
   createEffect(
-    on(
-      theme,
-      (current) => view?.dispatch({ effects: appearance.reconfigure(editorTheme(current === "dark")) }),
-      { defer: true },
-    ),
+    theme,
+    (current) => void view?.dispatch({ effects: appearance.reconfigure(editorTheme(current === "dark")) }),
+    { defer: true },
   );
 
   createEffect(
-    on(
-      () => props.readOnly,
-      (readOnly) =>
-        view?.dispatch({
-          effects: editable.reconfigure([
-            EditorView.editable.of(!readOnly),
-            EditorState.readOnly.of(!!readOnly),
-          ]),
-        }),
-      { defer: true },
-    ),
+    () => props.readOnly,
+    (readOnly) =>
+      void view?.dispatch({
+        effects: editable.reconfigure([
+          EditorView.editable.of(!readOnly),
+          EditorState.readOnly.of(!!readOnly),
+        ]),
+      }),
+    { defer: true },
   );
-
-  onCleanup(() => view?.destroy());
 
   return (
     <div

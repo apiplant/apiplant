@@ -1,5 +1,4 @@
 import { For } from "solid-js";
-import { A } from "@solidjs/router";
 import { HeadMark } from "./ui";
 import { COMPANY_URL, CRATE_URL, GITHUB_URL, STUDIO_URL } from "../lib/links";
 import { DOCS } from "../lib/docs";
@@ -33,9 +32,9 @@ const COLUMNS = [
 
 function FooterLink(props: { href: string; label: string }) {
   return props.href.startsWith("/") ? (
-    <A href={props.href} class="text-muted transition-colors hover:text-ink">
+    <a href={props.href} class="text-muted transition-colors hover:text-ink">
       {props.label}
-    </A>
+    </a>
   ) : (
     <a
       href={props.href}
