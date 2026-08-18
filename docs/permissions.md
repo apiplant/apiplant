@@ -41,6 +41,126 @@ The same `list` policy also governs the nested `GET /parent/{id}/res` endpoint
 Any of them can be narrowed to a **class of organisation** by appending
 `@org_class=<name>` — see [Organisation classes](#organisation-classes).
 
+## More than one answer per action
+
+A single level gives everybody the same answer. Often an action needs several —
+a `parent` who may edit the whole family's chores while a `kid` may edit only
+their own is two answers to one question, and no level says both. So an action
+may instead be a **set of rules**:
+
+```toml
+[permissions.update]
+allow = ["role:parent@org_class=family"]
+own   = ["role:kid@org_class=family"]
+deny  = ["role:suspended"]
+```
+
+Each key takes one policy string or a list of them, each written in exactly the
+grammar above — level, optionally narrowed to a class. What differs is what
+matching one **gets you**:
+
+| Key | Effect |
+|-----|--------|
+| `allow` | the action, unrestricted |
+| `own` | the action, scoped to rows you own — the *allow-if-owner* outcome |
+| `deny` | nothing, whatever else you match |
+
+Two shorthands cover the ordinary cases, and both mean exactly a set:
+
+```toml
+update = "role:parent"                    # one allow rule — the original grammar
+update = ["role:manager", "role:worker"]  # an allow list
+```
+
+So nothing written before rule sets existed changes meaning, and a policy that
+never needs `own` or `deny` never needs the table form.
+
+### How a caller is matched
+
+In the order the server asks:
+
+1. **`deny` first.** A caller matching any `deny` is refused even if they also
+   match an `allow`, so an exception carved out of a broad grant cannot be won
+   back by a second role they happen to hold.
+2. **`allow` before `own`.** Both are a yes and `own` is the narrower one, so
+   somebody matching both gets the wider answer — a parent who is also a kid
+   edits everything.
+3. **Otherwise, no.** There is no implicit "everyone else": naming who may act
+   is the whole statement, and `deny` exists only to carve an exception out of
+   an `allow`.
+
+A rule matches exactly when its policy would have allowed the caller **on its
+own**. That is the same code path the single-level form takes, which is what
+keeps the two from drifting.
+
+### Rules use the ordinary levels
+
+Every level works in every clause, and this is where a set earns its keep:
+
+```toml
+# Admins manage the whole catalogue; anyone else signed in manages their own.
+[permissions.update]
+allow = ["role:admin"]
+own   = ["authenticated"]
+```
+
+```toml
+# Public to read, except for one organisation that has been cut off. `deny`
+# wins over `public`, which is the only way to say this at all.
+[permissions.read]
+allow = ["public"]
+deny  = ["member@org_class=suspended"]
+```
+
+```toml
+# Anybody in the organisation may file one; only the two roles may resolve one.
+[permissions.create]
+allow = ["member"]
+
+[permissions.update]
+allow = ["role:support", "role:engineer"]
+own   = ["member"]          # the reporter can still edit their own report
+```
+
+```toml
+# The same action, answered per class: a school's teachers edit everything,
+# a family's parents edit everything, and everyone else edits their own.
+[permissions.update]
+allow = ["role:teacher@org_class=school", "role:parent@org_class=family"]
+own   = ["member"]
+```
+
+`owner` as a *level* and `own` as an *effect* are the same outcome reached two
+ways: `update = "owner"` and `[permissions.update] own = ["authenticated"]` are
+the same policy. The effect exists because the level cannot be combined with a
+role — `own = ["role:kid"]` is the thing that had no spelling before.
+
+### What `deny` does and does not match
+
+A `deny` naming a role matches only a role the caller **actually holds**, never
+the blanket one an [admin gets](#admin-holds-every-role). Read the other way,
+`deny = ["role:kid"]` would lock out the very administrators who granted the
+role — so denials are answered against stored roles alone.
+
+### The shapes that mean `private`
+
+An action is `private` — not exposed, `404`, omitted from the docs — when it is
+written as the string `"private"`, and a table naming nobody at all collapses to
+the same thing, since it has granted nothing:
+
+```toml
+update = "private"     # not exposed
+[permissions.update]   # …and so is this: an empty table grants nobody
+```
+
+A set that merely matches nobody *today* is different: it is a live endpoint
+refusing callers, because granting the role tomorrow changes the answer without
+touching the config.
+
+A misspelled key is an error rather than an omission — `alow = [...]` would
+otherwise be an empty table, and a typo that silently locks everyone out is only
+marginally better than one that lets everyone in.
+
 ## Defaults
 
 If you omit `[permissions]` entirely, or any individual key, these safe defaults
@@ -199,7 +319,8 @@ For a given action and caller, evaluation yields one of:
 | **Allow-if-owner** | proceed, but every query is scoped with `owner_column = caller` |
 | **Deny** | `401` if the caller is anonymous, `403` if authenticated but not permitted |
 
-`owner` produces *allow-if-owner*; the rest produce *allow* or *deny*.
+`owner` produces *allow-if-owner*, as does an [`own` clause](#more-than-one-answer-per-action);
+the rest produce *allow* or *deny*.
 
 ## Ownership
 

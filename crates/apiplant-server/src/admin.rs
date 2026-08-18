@@ -28,7 +28,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use apiplant_abi::{FunctionAccess, HttpMethod};
 use apiplant_core::schema::{
     is_auth_resource, relation_name, titleize, Access, ContentFormat, DefaultType, Field,
-    FieldType, OnDelete, Policy, Resource, Widget,
+    FieldType, OnDelete, Policy, PolicySet, Resource, Widget,
 };
 use apiplant_core::{Agent, App, ORG_CLASS_FIELD};
 use serde::Serialize;
@@ -130,6 +130,10 @@ struct AuthManifest {
     /// the register form can say what will happen instead of waiting for a
     /// login to be refused.
     require_email_verification: bool,
+    /// Where to send somebody once they have confirmed their address —
+    /// `[auth] verify_email_redirect`. Empty means nowhere in particular, and
+    /// the confirmation screen stays put and says so.
+    verify_email_redirect: String,
     /// Whether the team screen may invite somebody who has no account yet.
     invitations_enabled: bool,
     /// Whether to offer "forgot your password?".
@@ -224,6 +228,25 @@ struct ActionPermissionManifest {
     /// the `@org_class=` half of the value, split out for the same reason.
     org_class: Option<String>,
     note: String,
+    requires_org: bool,
+    /// Every clause of the action, in evaluation order.
+    ///
+    /// The four fields above describe the *primary* clause alone, which is all
+    /// a badge can show; a dashboard deciding whether to offer a button has to
+    /// walk the rules, because the answer differs per caller. A policy written
+    /// as a plain string has exactly one rule here, so there is one shape to
+    /// read either way.
+    rules: Vec<RuleManifest>,
+}
+
+/// One clause of an [`ActionPermissionManifest`].
+#[derive(Debug, Serialize)]
+struct RuleManifest {
+    /// `allow`, `own` or `deny`.
+    effect: &'static str,
+    value: String,
+    role: Option<String>,
+    org_class: Option<String>,
     requires_org: bool,
 }
 
@@ -568,6 +591,7 @@ fn build_manifest(
             allow_registration: app.config.auth.allow_registration,
             email_enabled,
             require_email_verification: app.config.auth.requires_email_verification(email_enabled),
+            verify_email_redirect: app.config.auth.verify_email_redirect.trim().to_string(),
             invitations_enabled: app.config.auth.invitations_enabled(email_enabled),
             password_reset_enabled: app.config.auth.password_reset_enabled(email_enabled),
             signup_fields,
@@ -668,14 +692,12 @@ fn known_classes(app: &App) -> Vec<String> {
         }
     };
     for resource in app.resources.values() {
-        for policy in [
-            &resource.permissions.list,
-            &resource.permissions.read,
-            &resource.permissions.create,
-            &resource.permissions.update,
-            &resource.permissions.delete,
-        ] {
-            note(policy);
+        // Every clause, not just the primary one: a class named only by the
+        // `own` half of an action is still a class the deployment uses.
+        for set in resource.permissions.all() {
+            for rule in &set.rules {
+                note(&rule.policy);
+            }
         }
     }
     for agent in app.agents.values() {
@@ -699,15 +721,11 @@ fn known_roles(app: &App, functions: &FunctionRegistry) -> Vec<String> {
     roles.insert("admin".to_string());
 
     for resource in app.resources.values() {
-        for access in [
-            &resource.permissions.list,
-            &resource.permissions.read,
-            &resource.permissions.create,
-            &resource.permissions.update,
-            &resource.permissions.delete,
-        ] {
-            if let Access::Role(role) = &access.level {
-                roles.insert(role.clone());
+        for set in resource.permissions.all() {
+            for rule in &set.rules {
+                if let Access::Role(role) = &rule.policy.level {
+                    roles.insert(role.clone());
+                }
             }
         }
         roles.extend(resource.admin.roles.iter().cloned());
@@ -802,11 +820,11 @@ fn resource_manifest(
             .filter(|column| column != password_field || resource.meta.name != "user")
             .collect(),
         permissions: ActionPermissionsManifest {
-            list: permission_manifest(&resource.permissions.list, org_scoped),
-            read: permission_manifest(&resource.permissions.read, org_scoped),
-            create: permission_manifest(&resource.permissions.create, org_scoped),
-            update: permission_manifest(&resource.permissions.update, org_scoped),
-            delete: permission_manifest(&resource.permissions.delete, org_scoped),
+            list: permission_set_manifest(&resource.permissions.list, org_scoped),
+            read: permission_set_manifest(&resource.permissions.read, org_scoped),
+            create: permission_set_manifest(&resource.permissions.create, org_scoped),
+            update: permission_set_manifest(&resource.permissions.update, org_scoped),
+            delete: permission_set_manifest(&resource.permissions.delete, org_scoped),
         },
         name: resource.meta.name.clone(),
         fields,
@@ -907,20 +925,43 @@ fn resolve_widget(field: &Field) -> &'static str {
 }
 
 fn permission_manifest(policy: &Policy, org_scoped: bool) -> ActionPermissionManifest {
-    let access = &policy.level;
+    permission_set_manifest(&PolicySet::from(policy.clone()), org_scoped)
+}
+
+/// Whether a clause can only be answered with an organisation selected: a class
+/// qualifier is read off the active organisation, so it needs one even where the
+/// level alone would not.
+fn requires_org(policy: &Policy, org_scoped: bool) -> bool {
+    org_scoped
+        || policy.org_class.is_some()
+        || matches!(&policy.level, Access::Role(_) | Access::Member)
+}
+
+fn permission_set_manifest(set: &PolicySet, org_scoped: bool) -> ActionPermissionManifest {
+    let primary = set.primary();
     ActionPermissionManifest {
-        value: policy.as_string(),
-        role: match access {
+        value: primary.as_string(),
+        role: match &primary.level {
             Access::Role(role) => Some(role.clone()),
             _ => None,
         },
-        org_class: policy.org_class.clone(),
-        note: access_note(policy, org_scoped),
-        // A class qualifier is answered from the active organisation, so it
-        // needs one selected even where the level alone would not.
-        requires_org: org_scoped
-            || policy.org_class.is_some()
-            || matches!(access, Access::Role(_) | Access::Member),
+        org_class: primary.org_class.clone(),
+        note: access_note(&primary, org_scoped),
+        requires_org: requires_org(&primary, org_scoped),
+        rules: set
+            .rules
+            .iter()
+            .map(|rule| RuleManifest {
+                effect: rule.effect.as_str(),
+                value: rule.policy.as_string(),
+                role: match &rule.policy.level {
+                    Access::Role(role) => Some(role.clone()),
+                    _ => None,
+                },
+                org_class: rule.policy.org_class.clone(),
+                requires_org: requires_org(&rule.policy, org_scoped),
+            })
+            .collect(),
     }
 }
 

@@ -137,6 +137,7 @@ my-app/
 ├── resources/      # one <name>.toml per resource ⇒ a table + CRUD endpoints
 ├── seed/           # optional <resource>.toml|csv ⇒ initial rows
 ├── agents/         # optional <name>.toml per configured AI agent
+├── emails/         # optional <name>.liquid ⇒ your wording for the mail it sends
 └── functions/      # function sources (.rs), their config, and built libraries
 ```
 

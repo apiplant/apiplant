@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use apiplant_auth::{Principal, ADMIN_ROLE};
-use apiplant_core::schema::{Access, Policy};
+use apiplant_core::schema::{Access, Effect, Policy, PolicySet, Rule};
 use apiplant_core::{CrudAction, FieldType, HookEvent, Resource, ORG_CLASS_FIELD};
 use apiplant_db::{value, Filter, Sort};
 use ntex::web::types::{Json, Path, State};
@@ -187,7 +187,124 @@ fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpRes
 
 /// Authorize an action, returning the filters that must scope the query (org
 /// isolation, ownership, org membership set) or an error response.
-fn authorize(policy: &Policy, caller: &Caller, r: &Resource) -> Result<Vec<Filter>, HttpResponse> {
+fn authorize(set: &PolicySet, caller: &Caller, r: &Resource) -> Result<Vec<Filter>, HttpResponse> {
+    select(set, caller, r).map(|(_, filters)| filters)
+}
+
+/// Pick the clause of `set` that answers this caller, and scope the query the
+/// way it asks.
+///
+/// An action's permission is a set of rules rather than one level, so the first
+/// question is *which* rule the caller falls under. The order is the only one
+/// that is safe:
+///
+/// 1. **`deny` first.** A caller matching any `deny` is refused even if they
+///    also match an `allow`, so an exception carved out of a broad grant cannot
+///    be won back by a second role they happen to hold.
+/// 2. **`allow` before `own`.** Both are a yes, and `own` is the narrower of
+///    the two, so someone matching both gets the wider answer — a parent who is
+///    also a kid edits everything.
+/// 3. **Otherwise no.** Nothing matched means nobody said yes, and the set
+///    never has an implicit "everyone else".
+///
+/// Matching *is* the ordinary single-level check: a rule matches exactly when
+/// its policy would have allowed the caller on its own. That is what keeps the
+/// two grammars from drifting — `update = "role:parent"` and a set holding only
+/// that one `allow` are the same code path.
+fn select<'s>(
+    set: &'s PolicySet,
+    caller: &Caller,
+    r: &Resource,
+) -> Result<(&'s Rule, Vec<Filter>), HttpResponse> {
+    // `private` is not a refusal but an absence, and it is the whole set when
+    // it appears, so it answers before anything is matched.
+    if set.is_private() {
+        return Err(error(404, "not found"));
+    }
+
+    let matches = |policy: &Policy| authorize_policy(policy, caller, r);
+
+    for rule in set.rules.iter().filter(|rule| rule.effect == Effect::Deny) {
+        if denies(&rule.policy, caller, r) {
+            return Err(forbidden(caller));
+        }
+    }
+
+    // The refusal to report if nothing matches: the first positive clause's
+    // own complaint, which names the role or class the caller is missing and is
+    // more use than a bare "forbidden". Later clauses are tried regardless.
+    let mut first_refusal = None;
+    for effect in [Effect::Allow, Effect::Own] {
+        for rule in set.rules.iter().filter(|rule| rule.effect == effect) {
+            match matches(&rule.policy) {
+                Ok(mut filters) => {
+                    if effect == Effect::Own {
+                        filters.extend(owner_narrowing(caller, r));
+                    }
+                    return Ok((rule, filters));
+                }
+                Err(refusal) => first_refusal.get_or_insert(refusal),
+            };
+        }
+    }
+    Err(first_refusal.unwrap_or_else(|| forbidden(caller)))
+}
+
+/// Whether a `deny` clause is about this caller.
+///
+/// Almost the ordinary check, with one deliberate exception: a `role:` here
+/// matches only a role the caller **actually holds**, never the blanket one an
+/// admin gets. `admin` satisfying every `role:` is what stops a new role from
+/// locking an organisation's administrators out of their own data — read into a
+/// denial it would do exactly that, and `deny = ["role:kid"]` would shut out the
+/// very people who granted the role.
+fn denies(policy: &Policy, caller: &Caller, r: &Resource) -> bool {
+    if authorize_policy(policy, caller, r).is_err() {
+        return false;
+    }
+    let Access::Role(role) = &policy.level else {
+        return true;
+    };
+    caller
+        .principal
+        .as_ref()
+        .zip(caller.active_org)
+        .and_then(|(principal, org)| principal.membership(org))
+        .is_some_and(|membership| membership.roles.iter().any(|held| held == role))
+}
+
+/// The refusal for a caller who matched nothing: `401` when credentials would
+/// change the answer, `403` when they would not.
+fn forbidden(caller: &Caller) -> HttpResponse {
+    if caller.principal.is_none() {
+        error(401, "authentication required")
+    } else {
+        error(403, "forbidden")
+    }
+}
+
+/// The narrowing an `own` clause adds on top of whatever matched it.
+///
+/// This is exactly what the `owner` level does, including its exemption: an
+/// admin of the organisation is not narrowed, because `owner` has never
+/// narrowed them and an `own` clause is the same promise written per-role.
+fn owner_narrowing(caller: &Caller, r: &Resource) -> Option<Filter> {
+    let principal = caller.principal.as_ref()?;
+    if r.is_org_scoped() {
+        let membership = caller.active_org.and_then(|org| principal.membership(org))?;
+        if membership.has_role(ADMIN_ROLE) {
+            return None;
+        }
+    }
+    Some(Filter::eq(owner_column(r).to_string(), principal.user_id))
+}
+
+/// Whether one clause admits this caller, and how it scopes the query.
+fn authorize_policy(
+    policy: &Policy,
+    caller: &Caller,
+    r: &Resource,
+) -> Result<Vec<Filter>, HttpResponse> {
     if r.is_org_scoped() {
         authorize_org_scoped(policy, caller, r)
     } else {
@@ -265,13 +382,18 @@ fn authorize_org_scoped(
 /// handler that turns a policy into a query goes through here.
 async fn scope(
     state: &AppState,
-    policy: &Policy,
+    set: &PolicySet,
     caller: &Caller,
     r: &Resource,
     action: CrudAction,
 ) -> Result<Vec<Filter>, HttpResponse> {
-    let access = &policy.level;
-    let mut filters = authorize(policy, caller, r)?;
+    let (rule, mut filters) = select(set, caller, r)?;
+    // The extras below are properties of the answer, not of how it was spelled,
+    // so an `own` clause is read as `owner` however its own level reads.
+    let access = match rule.effect {
+        Effect::Own => &Access::Owner,
+        _ => &rule.policy.level,
+    };
 
     // Somebody who administers organisation *classes* administers them across
     // the deployment, so they have to be able to find an organisation they are
@@ -289,8 +411,12 @@ async fn scope(
     if *access == Access::Owner && !r.is_org_scoped() {
         if let (Some(principal), Some(org)) = (caller.principal.as_ref(), caller.active_org) {
             if principal.is_admin_of(org) {
+                // Widen the ownership narrowing to the whole organisation,
+                // leaving any other narrowing the clause asked for in place.
+                let owner = owner_column(r);
                 let ids = state.organization_user_ids(org).await;
-                filters = vec![Filter::in_uuids(owner_column(r), ids)];
+                filters.retain(|filter| !matches!(filter, Filter::Eq { column, .. } if column == owner));
+                filters.push(Filter::in_uuids(owner, ids));
             }
         }
     }
@@ -1497,20 +1623,20 @@ references = "user"
         );
 
         let caller = caller_with_org(org, Some("member"));
-        let member = authorize(&Access::Member.into(), &caller, &resource).unwrap();
+        let member = authorize_policy(&Access::Member.into(), &caller, &resource).unwrap();
         assert!(matches!(
             &member[0],
             Filter::Eq { column, .. } if column == "organization_id"
         ));
 
-        let owner = authorize(&Access::Owner.into(), &caller, &resource).unwrap();
+        let owner = authorize_policy(&Access::Owner.into(), &caller, &resource).unwrap();
         assert_eq!(owner.len(), 2);
         assert!(matches!(
             &owner[1],
             Filter::Eq { column, .. } if column == "owner_id"
         ));
 
-        let admin = authorize(
+        let admin = authorize_policy(
             &Access::Owner.into(),
             &caller_with_org(org, Some("admin")),
             &resource,
@@ -1586,7 +1712,7 @@ type = "string"
         let policy = Policy::parse("role:admin@org_class=school");
 
         // The role holds and the class matches: ordinary org isolation.
-        let allowed = authorize(
+        let allowed = authorize_policy(
             &policy,
             &caller_in_class(org, Some("admin"), Some("school")),
             &resource,
@@ -1600,7 +1726,7 @@ type = "string"
         // The same admin, in an organisation of another class — or of none —
         // is refused: the class can only ever narrow.
         for class in [Some("staff"), None] {
-            let err = authorize(
+            let err = authorize_policy(
                 &policy,
                 &caller_in_class(org, Some("admin"), class),
                 &resource,
@@ -1610,7 +1736,7 @@ type = "string"
         }
 
         // Right class, wrong role is still a refusal.
-        assert!(authorize(
+        assert!(authorize_policy(
             &policy,
             &caller_in_class(org, Some("member"), Some("school")),
             &resource
@@ -1618,7 +1744,7 @@ type = "string"
         .is_err());
 
         // An unqualified policy is unaffected by any class.
-        assert!(authorize(
+        assert!(authorize_policy(
             &Access::Role("admin".into()).into(),
             &caller_in_class(org, Some("admin"), Some("staff")),
             &resource
@@ -1646,7 +1772,7 @@ type = "string"
 
         // On `organization` the class is one more narrowing of the list, not a
         // gate: you see the schools you administer, and nothing else.
-        let filters = authorize(
+        let filters = authorize_policy(
             &Policy::parse("role:admin@org_class=school"),
             &caller,
             &organization,
@@ -1657,7 +1783,7 @@ type = "string"
             Filter::In { column, values } if column == "id" && values.len() == 1
         ));
 
-        let members = authorize(
+        let members = authorize_policy(
             &Policy::parse("member@org_class=staff"),
             &caller,
             &organization,
@@ -1691,13 +1817,13 @@ type = "string"
             "authenticated@org_class=staff",
         ] {
             let policy = Policy::parse(policy);
-            assert!(authorize(
+            assert!(authorize_policy(
                 &policy,
                 &caller_in_class(org, Some("admin"), Some("staff")),
                 &plan
             )
             .is_ok());
-            let err = authorize(
+            let err = authorize_policy(
                 &policy,
                 &caller_in_class(org, Some("admin"), Some("school")),
                 &plan,
@@ -1712,7 +1838,7 @@ type = "string"
             principal: None,
             active_org: None,
         };
-        let err = authorize(&Policy::parse("public@org_class=staff"), &anonymous, &plan)
+        let err = authorize_policy(&Policy::parse("public@org_class=staff"), &anonymous, &plan)
             .expect_err("a class qualifier always needs an organisation");
         assert_eq!(err.status().as_u16(), 401);
     }
@@ -1743,14 +1869,14 @@ scope = "global"
 type = "string"
 "#,
         );
-        let org_filters = authorize(&Access::Member.into(), &caller, &organization).unwrap();
+        let org_filters = authorize_policy(&Access::Member.into(), &caller, &organization).unwrap();
         assert!(matches!(
             &org_filters[0],
             Filter::In { column, values } if column == "id" && values.len() == 2
         ));
 
         let admin_filters =
-            authorize(&Access::Role("admin".into()).into(), &caller, &organization).unwrap();
+            authorize_policy(&Access::Role("admin".into()).into(), &caller, &organization).unwrap();
         assert!(matches!(
             &admin_filters[0],
             Filter::In { column, values } if column == "id" && values.len() == 1
@@ -1759,7 +1885,7 @@ type = "string"
         // A role on an ordinary global resource gates rather than filters, so
         // it needs an organisation to be checked against. Without one there is
         // no question to answer.
-        let err = match authorize(&Access::Role("admin".into()).into(), &caller, &plan) {
+        let err = match authorize_policy(&Access::Role("admin".into()).into(), &caller, &plan) {
             Ok(_) => panic!("a role check needs an active organisation"),
             Err(err) => err,
         };
@@ -1772,7 +1898,7 @@ type = "string"
             active_org: Some(org_a),
         };
         assert!(
-            authorize(&Access::Role("admin".into()).into(), &admin_here, &plan)
+            authorize_policy(&Access::Role("admin".into()).into(), &admin_here, &plan)
                 .unwrap()
                 .is_empty()
         );
@@ -1782,7 +1908,7 @@ type = "string"
             principal: caller.principal.clone(),
             active_org: Some(org_b),
         };
-        let err = match authorize(&Access::Role("admin".into()).into(), &member_here, &plan) {
+        let err = match authorize_policy(&Access::Role("admin".into()).into(), &member_here, &plan) {
             Ok(_) => panic!("a member is not an admin"),
             Err(err) => err,
         };

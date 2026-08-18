@@ -318,6 +318,7 @@ async fn invoke(
     let functions = state.functions.clone();
     let db = state.db.clone();
     let mailer = state.mailer.clone();
+    let email_templates = state.email_templates.clone();
     let cache = state.cache.clone();
     let payments = state.payments.clone();
     let ai = state.ai.clone();
@@ -330,6 +331,7 @@ async fn invoke(
         let f = functions.get(&name).expect("checked above");
         let bridge = HostBridge::new(db, handle, f.config_json.clone(), principal_id)
             .with_services(mailer, cache, payments, ai)
+            .with_email_templates(email_templates)
             .with_queue(queue)
             .with_hook(context);
         f.invoke(bridge, &input)

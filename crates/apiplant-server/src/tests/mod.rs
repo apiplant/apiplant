@@ -340,6 +340,11 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
         auth: Authenticator::new(b"test-secret".to_vec(), 3600),
         functions: Arc::new(functions),
         mailer,
+        // Compiled from the app being loaded, so a test that writes an
+        // `emails/` directory gets its templates the way a real boot would.
+        email_templates: Arc::new(
+            crate::email_templates::EmailTemplates::load(root).expect("email templates"),
+        ),
         // No test configures a cache, so a function that reaches for one gets
         // the same "not configured" error a real app would.
         cache: None,

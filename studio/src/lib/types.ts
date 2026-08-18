@@ -44,6 +44,27 @@ export const ORG_CLASS_SUFFIX = "@org_class=";
 export const ACCESS_LEVELS = ["public", "authenticated", "member", "owner", "role", "private"] as const;
 export type AccessLevel = (typeof ACCESS_LEVELS)[number];
 
+/** What matching a clause gets you: yes, yes-for-your-own-rows, or no. */
+export const EFFECTS = ["allow", "own", "deny"] as const;
+export type Effect = (typeof EFFECTS)[number];
+
+/** One clause of an action's permission. */
+export interface PermissionRule {
+  /** A policy string — `<level>` or `<level>@org_class=<name>`. */
+  policy: string;
+  effect: Effect;
+}
+
+/**
+ * A whole action's permission.
+ *
+ * Written back as the tersest shape that says the same thing: one `allow`
+ * clause is a bare string, several are an array, and anything using `own` or
+ * `deny` needs the table form. Nothing here is denied implicitly — a rule set
+ * names everyone who may act, and anyone unmatched is refused.
+ */
+export type PermissionSet = PermissionRule[];
+
 export const HOOK_EVENTS = [
   "before_list",
   "after_list",
@@ -102,7 +123,7 @@ export interface Resource {
   timestamps: boolean;
   owner_field: string;
   scope: Scope;
-  permissions: Partial<Record<Action, string>>;
+  permissions: Partial<Record<Action, PermissionSet>>;
   /** Ordered for the file; the server sorts them anyway. */
   fields: Field[];
   hooks: Partial<Record<HookEvent | AuthHookEvent, string>>;
@@ -214,12 +235,14 @@ export interface FileState {
   size: number;
 }
 
-export const DEFAULT_PERMISSIONS: Record<Action, string> = {
-  list: "member",
-  read: "member",
-  create: "member",
-  update: "member",
-  delete: "member",
+const memberOnly = (): PermissionSet => [{ policy: "member", effect: "allow" }];
+
+export const DEFAULT_PERMISSIONS: Record<Action, PermissionSet> = {
+  list: memberOnly(),
+  read: memberOnly(),
+  create: memberOnly(),
+  update: memberOnly(),
+  delete: memberOnly(),
 };
 
 export function emptyResource(name: string): Resource {
@@ -228,7 +251,7 @@ export function emptyResource(name: string): Resource {
     timestamps: true,
     owner_field: "owner_id",
     scope: "organization",
-    permissions: { ...DEFAULT_PERMISSIONS },
+    permissions: structuredClone(DEFAULT_PERMISSIONS),
     fields: [],
     hooks: {},
   };

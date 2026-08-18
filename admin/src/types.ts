@@ -84,7 +84,28 @@ export interface ChildManifest {
   label: string;
 }
 
-/** One of the five CRUD actions, in the shared `[permissions]` grammar. */
+/** What matching a rule gets you: yes, yes-for-your-own-rows, or no. */
+export type PermissionEffect = "allow" | "own" | "deny";
+
+/** One clause of an action's permission. */
+export interface PermissionRuleManifest {
+  effect: PermissionEffect;
+  value: string;
+  role: string | null;
+  /** The `@org_class=` half of `value`, when the clause names a class. */
+  org_class: string | null;
+  requires_org: boolean;
+}
+
+/**
+ * One of the five CRUD actions, in the shared `[permissions]` grammar.
+ *
+ * The flat fields describe the *primary* clause — the widest yes — which is all
+ * a badge or a note can show. Deciding whether to offer a button means walking
+ * `rules`, because an action can answer differently for different callers. A
+ * policy written as a plain string has exactly one rule, so there is one shape
+ * to read either way.
+ */
 export interface ActionPermissionManifest {
   value: string;
   role: string | null;
@@ -92,6 +113,7 @@ export interface ActionPermissionManifest {
   org_class: string | null;
   note: string;
   requires_org: boolean;
+  rules: PermissionRuleManifest[];
 }
 
 /** Deployment-wide rules about the tenant itself. */
@@ -194,6 +216,8 @@ export interface AuthManifest {
   email_enabled: boolean;
   /** New accounts must confirm their address before they can sign in. */
   require_email_verification: boolean;
+  /** `[auth] verify_email_redirect` — empty means stay put after confirming. */
+  verify_email_redirect: string;
   /** The team screen may invite somebody who has no account yet. */
   invitations_enabled: boolean;
   /** "Forgot your password?" is worth offering. */

@@ -594,6 +594,7 @@ fn subscriber(state: &AppState, database_url: &str) -> crate::queues::Subscriber
         queue: state.queue.clone(),
         functions: Arc::clone(&state.functions),
         mailer: state.mailer.clone(),
+        email_templates: state.email_templates.clone(),
         cache: state.cache.clone(),
         payments: state.payments.clone(),
         ai: state.ai.clone(),

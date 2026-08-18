@@ -248,16 +248,93 @@ without one gets a banner showing just its name rather than a broken image. The
 URL is built against `[server] public_url`, because the image is fetched from a
 mail client rather than from a page.
 
-An app that wants its own wording and letterhead should send its own messages
-from a hook. `after_register` is intended for this, and a function has access to
-the full API described below.
+An app that wants its own wording writes it, in `emails/`.
+
+## Your own wording: the `emails/` directory
+
+A `.liquid` file named after one of the three built-in messages replaces it,
+keeping the flow around it:
+
+```text
+emails/
+  verification.liquid        # replaces "Confirm your email"
+  verification.text.liquid   # its plain-text half (optional)
+  password_reset.liquid
+  invitation.liquid
+  welcome.liquid             # a new one, sent from a function
+```
+
+A file is [Liquid](https://shopify.github.io/liquid/), optionally preceded by
+TOML front matter carrying the subject:
+
+```liquid
+---
+subject = "Welcome to {{ app_name }}"
+---
+<p>Tap <a href="{{ url }}">here</a> to confirm your address.</p>
+<p>The link stops working in {{ expires_in }}.</p>
+```
+
+The subject is a template too. Omit the front matter and an override keeps the
+subject of the message it is replacing, so changing only the body costs nothing
+else.
+
+### What a template is given
+
+| Variable | In |
+|----------|-----|
+| `app_name` | every message |
+| `logo_url` | every message — empty when there is no `[email] logo` |
+| `url` | every message: the link that spends the token |
+| `expires_in` | every message: `"24 hours"`, `"7 days"` |
+| `organization`, `inviter` | `invitation` only |
+
+Facts, not prose. The URL and its lifetime stay the framework's to decide —
+they are not the template's to get wrong — while every sentence around them is
+yours.
+
+### The plain-text half
+
+Write `<name>.text.liquid` beside it, or let one be derived from the rendered
+HTML (tags dropped, links kept as their URL). Either way the message goes out
+with both parts, because an HTML-only message is scored as spam by most of the
+things that score messages.
+
+### Templates of your own
+
+Any other name is a new template. Nothing sends it by itself; a function asks
+for it by name instead of spelling out a body:
+
+```rust
+ctx.send_email(&json!({
+    "to": "bo@example.com",
+    "template": "welcome",
+    "vars": { "name": "Bo", "plan": "Team" },
+}))?;
+```
+
+A `subject` given beside the template still wins, so one template can serve
+several messages that differ only in their subject line.
+
+### When something is wrong with a template
+
+A template that does not **parse** stops the app at boot, naming the file: it
+was written to be used, and an app that quietly sent the built-in message
+instead would look exactly like the override working. A template that parses but
+fails to **render** falls back to the built-in message and logs why — these
+flows are how somebody recovers an account, and a plain message beats no
+message.
+
+Liquid was chosen for what it cannot do: no filesystem, no includes, no
+arbitrary code. A template is data, and the variables in scope are exactly the
+ones above.
 
 ## What isn't here
 
-* **Attachments and templates.** A message is a subject, a text part and an
-  HTML part. Provider-side templates remain available by calling the provider's
-  own API from a function, which is the appropriate place for a
-  provider-specific feature.
+* **Attachments.** A message is a subject, a text part and an HTML part.
+* **Provider-side templates.** Available by calling the provider's own API from
+  a function, which is the appropriate place for a provider-specific feature.
+  The `emails/` directory above is rendered by apiplant, on your server.
 * **Queueing and retries.** A send is one HTTP request or one SMTP session, and
   it either succeeds or returns an error. Durable delivery belongs to a queue,
   not a request handler.

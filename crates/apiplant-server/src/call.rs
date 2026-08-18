@@ -70,6 +70,8 @@ pub async fn call(app: &App, name: &str, options: Options) -> anyhow::Result<Str
     .await?;
 
     let mailer = apiplant_email::Mailer::from_config(&app.config.email)?;
+    let email_templates =
+        std::sync::Arc::new(crate::email_templates::EmailTemplates::load(&app.root)?);
     let cache = apiplant_cache::Cache::connect(&app.config.cache).await?;
     let ai = apiplant_ai::Ai::from_config(&app.config.ai)?;
     let payments = apiplant_payments::Payments::from_config(
@@ -104,6 +106,7 @@ pub async fn call(app: &App, name: &str, options: Options) -> anyhow::Result<Str
         options.principal.unwrap_or_default(),
     )
     .with_services(mailer, cache, payments, ai)
+    .with_email_templates(email_templates)
     .with_queue(queue);
     if let Some(chunks) = chunks {
         bridge = bridge.streaming(chunks);

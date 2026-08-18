@@ -253,6 +253,12 @@ export function VerifyEmailPage(props: { token: string }) {
         const token = typeof response?.token === "string" ? response.token : "";
         if (!token) throw new Error(DEAD_LINK);
         await signInWith(token, "Your address is confirmed.");
+        // `[auth] verify_email_redirect`, when the deployment named somewhere
+        // to go. Signing in first so the session is in place before the browser
+        // leaves — the app being landed on is usually the reason to confirm at
+        // all. `replace` so Back does not return to a spent token.
+        const redirect = typeof response?.redirect_to === "string" ? response.redirect_to.trim() : "";
+        if (redirect) window.location.replace(redirect);
       } catch (failure) {
         setError(failure instanceof Error ? failure.message : DEAD_LINK);
       }

@@ -24,7 +24,11 @@
 //! [`links_base`](Links::from_app) through `[server] public_url` and can point
 //! its own page at the same three endpoints.
 
+use std::sync::Arc;
+
 use apiplant_core::App;
+
+use crate::email_templates::EmailTemplates;
 
 /// Where the links in an outgoing message point.
 ///
@@ -40,6 +44,11 @@ pub struct Links {
     /// Absolute URL of the mark in the banner, when there is a file behind
     /// `[email] logo`. `None` leaves the banner showing the name alone.
     pub logo_url: Option<String>,
+    /// The app's own versions of these messages, when it wrote any. Carried
+    /// here rather than passed alongside because every composer already takes
+    /// a `Links`, and the two are decided together: an override still gets the
+    /// same URL and the same mark as the message it replaces.
+    templates: Option<Arc<EmailTemplates>>,
 }
 
 impl Links {
@@ -57,12 +66,58 @@ impl Links {
             base,
             app_name: app.display_name(),
             logo_url,
+            templates: None,
         }
+    }
+
+    /// Point these links at an app's own templates.
+    pub fn with_templates(mut self, templates: Arc<EmailTemplates>) -> Links {
+        self.templates = Some(templates);
+        self
     }
 
     /// A dashboard link for `screen`, carrying `token`.
     fn to(&self, screen: &str, token: &str) -> String {
         format!("{}/#/{screen}?token={}", self.base, urlencode(token))
+    }
+
+    /// The variables every template gets, whichever message it is.
+    ///
+    /// Facts, not prose: the app's name, its mark, the URL, and how long that
+    /// URL lasts. An override writes its own sentences — handing it the
+    /// framework's would only invite a template that half-uses them.
+    fn vars(&self, url: &str, expires_in: &str) -> liquid::Object {
+        liquid::object!({
+            "app_name": self.app_name.clone(),
+            "logo_url": self.logo_url.clone().unwrap_or_default(),
+            "url": url,
+            "expires_in": expires_in,
+        })
+    }
+
+    /// The app's version of `name`, when it wrote one.
+    ///
+    /// A template that fails to *render* — a filter applied to the wrong sort
+    /// of value — falls back to the built-in message rather than sending
+    /// nothing: the flows here are how somebody recovers an account, and a
+    /// plain message beats no message. Parse errors cannot reach this point;
+    /// they stop the app at boot.
+    fn rendered(&self, name: &str, vars: &liquid::Object, subject: &str) -> Option<Composed> {
+        let templates = self.templates.as_ref()?;
+        if !templates.has(name) {
+            return None;
+        }
+        match templates.render(name, vars, subject) {
+            Ok(rendered) => Some(Composed {
+                subject: rendered.subject,
+                text: rendered.text,
+                html: rendered.html,
+            }),
+            Err(error) => {
+                tracing::error!(%error, template = name, "falling back to the built-in message");
+                None
+            }
+        }
     }
 }
 
@@ -150,8 +205,19 @@ pub fn invitation(
         "Opening the link lets you choose a password and join. \
          It stops working in {expires_in}."
     );
+    let subject = format!("You're invited to join {organization}");
+    // The two facts only this message has, on top of the common ones.
+    let mut vars = links.vars(&url, expires_in);
+    vars.insert("organization".into(), liquid::model::Value::scalar(organization.to_string()));
+    vars.insert(
+        "inviter".into(),
+        liquid::model::Value::scalar(inviter.unwrap_or_default().to_string()),
+    );
+    if let Some(composed) = links.rendered("invitation", &vars, &subject) {
+        return composed;
+    }
     Composed {
-        subject: format!("You're invited to join {organization}"),
+        subject,
         text: plain(&lead, "Accept the invitation:", &url, &note),
         html: html(links, &lead, "Accept the invitation", &url, &note),
     }
@@ -166,8 +232,12 @@ pub fn verification(links: &Links, token: &str, expires_in: &str) -> Composed {
         links.app_name
     );
     let note = format!("The link stops working in {expires_in}.");
+    let subject = format!("Confirm your email for {}", links.app_name);
+    if let Some(composed) = links.rendered("verification", &links.vars(&url, expires_in), &subject) {
+        return composed;
+    }
     Composed {
-        subject: format!("Confirm your email for {}", links.app_name),
+        subject,
         text: plain(&lead, "Confirm your address:", &url, &note),
         html: html(links, &lead, "Confirm my address", &url, &note),
     }
@@ -187,8 +257,13 @@ pub fn password_reset(links: &Links, token: &str, expires_in: &str) -> Composed 
         "The link stops working in {expires_in}. If this wasn't you, ignore this \
          message — your password has not changed."
     );
+    let subject = format!("Reset your {} password", links.app_name);
+    if let Some(composed) = links.rendered("password_reset", &links.vars(&url, expires_in), &subject)
+    {
+        return composed;
+    }
     Composed {
-        subject: format!("Reset your {} password", links.app_name),
+        subject,
         text: plain(&lead, "Choose a new password:", &url, &note),
         html: html(links, &lead, "Choose a new password", &url, &note),
     }
@@ -326,11 +401,79 @@ pub fn humanise(secs: u64) -> String {
 mod tests {
     use super::*;
 
+    /// An app root with one template in it, and `Links` pointed at it.
+    fn links_with(name: &str, body: &str) -> Links {
+        let root = std::env::temp_dir().join(format!(
+            "apiplant-emails-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let dir = root.join(crate::email_templates::TEMPLATE_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.liquid")), body).unwrap();
+        let templates = crate::email_templates::EmailTemplates::load(&root).unwrap();
+        links().with_templates(Arc::new(templates))
+    }
+
+    #[test]
+    fn an_app_template_replaces_the_built_in_message_and_keeps_its_link() {
+        // The whole contract: the app writes the words, the framework still
+        // decides where the link goes and how long it lasts — those are not the
+        // template's to get wrong.
+        let links = links_with(
+            "verification",
+            "---\nsubject = \"Welcome to {{ app_name }}\"\n---\n             <p>Tap <a href=\"{{ url }}\">here</a> within {{ expires_in }}.</p>",
+        );
+        let message = verification(&links, "tok_abc", "24 hours");
+
+        assert_eq!(message.subject, "Welcome to Acme");
+        assert!(message.html.contains("Tap"));
+        assert!(message.html.contains("verify-email?token=tok_abc"));
+        assert!(message.html.contains("24 hours"));
+        // The built-in wording is gone, not merely added to.
+        assert!(!message.html.contains("Confirm this address to finish"));
+        // …and a text half was derived, so the message is not HTML-only.
+        assert!(message.text.contains("Tap"));
+    }
+
+    #[test]
+    fn a_template_for_one_message_leaves_the_others_alone() {
+        let links = links_with("verification", "<p>ours</p>");
+        assert!(verification(&links, "t", "1 hour").html.contains("ours"));
+        // The reset was not overridden, so it is still the framework's.
+        let reset = password_reset(&links, "t", "1 hour");
+        assert!(reset.html.contains("Choose a new password"));
+        assert_eq!(reset.subject, "Reset your Acme password");
+    }
+
+    #[test]
+    fn an_invitation_template_is_given_the_organisation_and_the_inviter() {
+        // The two facts that message has and the other two do not.
+        let links = links_with(
+            "invitation",
+            "<p>{{ inviter }} invited you to {{ organization }}.</p>",
+        );
+        let message = invitation(&links, "Acme Ltd", Some("Bo"), "inv_1", "7 days");
+        assert!(message.html.contains("Bo invited you to Acme Ltd."));
+        // No front matter, so the subject is the one it is replacing.
+        assert_eq!(message.subject, "You're invited to join Acme Ltd");
+    }
+
+    #[test]
+    fn an_app_with_no_templates_sends_the_built_in_messages() {
+        let message = verification(&links(), "t", "1 hour");
+        assert!(message.html.contains("Confirm this address to finish"));
+    }
+
     fn links() -> Links {
         Links {
             base: "https://example.com/admin".into(),
             app_name: "Acme".into(),
             logo_url: Some("https://example.com/logo.png".into()),
+            templates: None,
         }
     }
 

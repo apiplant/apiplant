@@ -849,7 +849,17 @@ export function includeOrgContext(resource: ResourceManifest, action: Action): b
   if (resource.scope === "organization") return true;
   if (!session.organizationId) return false;
   const policy = resource.permissions[action];
-  return policy.requires_org || (hasRole("admin") && policy.value === "owner");
+  const rules = policy.rules?.length ? policy.rules : [];
+  // Any clause that needs an organisation is reason enough to send the header:
+  // which clause will answer this caller is the server's decision, and sending
+  // it where it turns out to be unnecessary costs nothing.
+  const needed = policy.requires_org || rules.some((rule) => rule.requires_org);
+  // Ownership scoping *widens* for an admin — the whole organisation's rows
+  // rather than only their own — but the server can only do that when it knows
+  // which organisation, so an owner-scoped action wants the header too.
+  const ownerScoped =
+    policy.value === "owner" || rules.some((rule) => rule.effect === "own");
+  return needed || (hasRole("admin") && ownerScoped);
 }
 
 export function can(resource: ResourceManifest, action: Action): boolean {
@@ -862,12 +872,23 @@ export function currentOrganizationClass(): string | null {
   return typeof value === "string" && value ? value : null;
 }
 
-export function canPermission(policy: ActionPermissionManifest, global: boolean): boolean {
+/**
+ * Whether one clause of a policy is about this caller.
+ *
+ * `literalRoles` drops the rule that an admin holds every role. It is on for
+ * `deny` clauses only, mirroring the server: read into a denial, that rule would
+ * turn `deny = ["role:kid"]` into a lockout of the organisation's own admins.
+ */
+function matchesClause(
+  clause: { value: string; role: string | null; org_class: string | null },
+  global: boolean,
+  literalRoles = false,
+): boolean {
   // A class qualifier narrows every level, so it is checked first and on its
   // own: the active organisation has to be of that class, whoever the caller
   // is. Server-side the same check runs before the level.
-  if (policy.org_class && policy.org_class !== currentOrganizationClass()) return false;
-  switch (policy.value.split("@org_class=")[0]) {
+  if (clause.org_class && clause.org_class !== currentOrganizationClass()) return false;
+  switch (clause.value.split("@org_class=")[0]) {
     case "public":
       return true;
     case "private":
@@ -879,8 +900,30 @@ export function canPermission(policy: ActionPermissionManifest, global: boolean)
       // Org-scoped work needs somewhere to do it.
       return isSignedIn() && (global || Boolean(session.organizationId));
     default:
-      return policy.role ? hasRole(policy.role) : false;
+      if (!clause.role) return false;
+      return literalRoles ? session.roles.includes(clause.role) : hasRole(clause.role);
   }
+}
+
+/**
+ * Whether the caller may perform the action at all.
+ *
+ * The same order the server uses, and for the same reasons: a `deny` the caller
+ * matches settles it, then either kind of yes will do. `own` is still a yes —
+ * it decides *which rows*, not whether the button exists — so a screen offers
+ * the control and lets the row-level scoping do the rest.
+ *
+ * As ever this is presentation: it hides controls that would come back `403`,
+ * and the server is what actually enforces any of it.
+ */
+export function canPermission(policy: ActionPermissionManifest, global: boolean): boolean {
+  const rules = policy.rules?.length
+    ? policy.rules
+    : [{ effect: "allow" as const, ...policy }];
+  if (rules.some((rule) => rule.effect === "deny" && matchesClause(rule, global, true))) {
+    return false;
+  }
+  return rules.some((rule) => rule.effect !== "deny" && matchesClause(rule, global));
 }
 
 /** Whether a resource belongs in this operator's navigation. */

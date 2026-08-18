@@ -688,6 +688,7 @@ async fn invoke_tool(
         state.payments.clone(),
         state.ai.clone(),
     )
+    .with_email_templates(state.email_templates.clone())
     .with_queue(state.queue.clone());
 
     tokio::task::spawn_blocking(move || {

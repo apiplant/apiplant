@@ -357,6 +357,7 @@ pub mod cabi;
 pub mod call;
 mod crud;
 pub mod email_auth;
+pub mod email_templates;
 mod emails;
 mod function_routes;
 pub mod functions;
@@ -899,6 +900,18 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         );
     }
 
+    // Compiled before the state is assembled, and fatally: a template that does
+    // not parse was written to be used, and an app that boots without it sends
+    // the built-in message instead, which looks exactly like the override
+    // working until somebody reads their mail.
+    let email_templates = Arc::new(email_templates::EmailTemplates::load(&app.root)?);
+    if !email_templates.names().is_empty() {
+        tracing::info!(
+            "  emails -> {}",
+            email_templates.names().join(", ")
+        );
+    }
+
     let telemetry =
         telemetry::TelemetryPolicy::build(&app.config.observability, &app.config.server.base_path);
     if telemetry.is_active() {
@@ -919,6 +932,7 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         auth: authr,
         functions: Arc::new(registry),
         mailer,
+        email_templates,
         cache,
         storage,
         payments,
@@ -948,6 +962,7 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
             queue: queue.clone(),
             functions: Arc::clone(&state.functions),
             mailer: state.mailer.clone(),
+            email_templates: state.email_templates.clone(),
             cache: state.cache.clone(),
             payments: state.payments.clone(),
             ai: state.ai.clone(),

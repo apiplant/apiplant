@@ -98,6 +98,7 @@ fn bridge(state: &State<AppState>, ready: &Ready) -> HostBridge {
         state.payments.clone(),
         state.ai.clone(),
     )
+    .with_email_templates(state.email_templates.clone())
     .with_queue(state.queue.clone())
 }
 

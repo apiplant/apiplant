@@ -103,6 +103,12 @@ lettre = { version = "0.11", default-features = false, features = [
     "webpki-roots",
 ] }
 
+# Liquid, for the email templates an app may drop into `emails/`. Chosen for
+# what it *cannot* do: no arbitrary code, no filesystem, no includes outside the
+# directory — a template is data, and these ones are edited in the studio by
+# whoever writes the app's copy rather than by whoever writes its Rust.
+liquid = { version = "0.26", default-features = false, features = ["stdlib"] }
+
 # AWS SigV4 request signing (SES)
 hmac = "0.12"
 sha2 = "0.10"

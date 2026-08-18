@@ -1077,15 +1077,252 @@ pub const ORG_CLASS_SUFFIX: &str = "@org_class=";
 /// somebody `[organization] org_class_editors` names.
 pub const ORG_CLASS_FIELD: &str = "org_class";
 
-/// Per-action permissions. Strings in TOML are parsed via [`Policy::parse`].
+/// What matching a rule does: the three answers a permission can give.
+///
+/// They are the outcomes the [decision model](crate::schema::PolicySet) already
+/// had — a plain yes, a yes narrowed to rows the caller owns, and a no — named
+/// so that a policy can hand different ones to different roles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    /// Yes, unrestricted.
+    Allow,
+    /// Yes, but only for rows the caller owns (see `owner`).
+    Own,
+    /// No. Checked before every `Allow`, so a `deny` is never out-voted.
+    Deny,
+}
+
+impl Effect {
+    /// The table key this effect is written under.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Effect::Allow => "allow",
+            Effect::Own => "own",
+            Effect::Deny => "deny",
+        }
+    }
+}
+
+/// One clause of a [`PolicySet`]: who it matches, and what that gets them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rule {
+    /// Who the clause is about, in the ordinary policy grammar.
+    pub policy: Policy,
+    /// What matching it means.
+    pub effect: Effect,
+}
+
+/// A whole action's permission: an ordered set of [`Rule`]s.
+///
+/// One action can now answer differently for different callers, which a single
+/// level cannot express — a `kid` who may edit only their own rows while a
+/// `parent` may edit everyone's is two answers to one question:
+///
+/// ```toml
+/// [permissions.update]
+/// allow = ["role:parent@org_class=family"]
+/// own   = ["role:kid@org_class=family"]
+/// ```
+///
+/// Two shorthands cover the ordinary cases, and both mean exactly a set:
+///
+/// ```toml
+/// update = "role:parent"                  # one allow rule — the old grammar
+/// update = ["role:manager", "role:worker"] # an allow list
+/// ```
+///
+/// **Anything unmatched is denied.** There is no implicit "everyone else", so
+/// naming who may act is the whole statement; `deny` exists only to carve an
+/// exception *out* of a broader `allow`, and wins wherever both match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicySet {
+    /// Every clause, in the order `allow`, `own`, `deny` are declared.
+    pub rules: Vec<Rule>,
+}
+
+impl PolicySet {
+    /// The clauses carrying one effect, in declaration order.
+    pub fn with_effect(&self, effect: Effect) -> impl Iterator<Item = &Policy> {
+        self.rules
+            .iter()
+            .filter(move |rule| rule.effect == effect)
+            .map(|rule| &rule.policy)
+    }
+
+    /// The single policy that best stands for the set, for the places that can
+    /// only show one: the OpenAPI description, an admin badge.
+    ///
+    /// The broadest positive clause, since that is the headline permission; a
+    /// set that only ever narrows to owners reads as `owner`, and one that
+    /// allows nobody reads as `private`.
+    pub fn primary(&self) -> Policy {
+        if let Some(policy) = self.with_effect(Effect::Allow).next() {
+            return policy.clone();
+        }
+        match self.with_effect(Effect::Own).next() {
+            Some(policy) => Policy {
+                level: Access::Owner,
+                org_class: policy.org_class.clone(),
+            },
+            None => Policy::from(Access::Private),
+        }
+    }
+
+    /// Whether the action is not exposed at all — the one case that is a `404`
+    /// rather than a `403`, and is omitted from the generated docs.
+    ///
+    /// Only the explicit `"private"` shorthand qualifies. A set that happens to
+    /// match nobody today is still a live endpoint refusing callers, because a
+    /// role granted tomorrow changes the answer without changing the config.
+    pub fn is_private(&self) -> bool {
+        self.rules.len() == 1 && self.rules[0].policy.level == Access::Private
+    }
+
+    /// The shorthand this set round-trips to, when it is one — a single `allow`
+    /// clause is written as a bare string, an all-`allow` set as an array.
+    /// A set using `own` or `deny` has no shorthand and returns `None`.
+    pub fn as_shorthand(&self) -> Option<Vec<String>> {
+        self.rules
+            .iter()
+            .map(|rule| (rule.effect == Effect::Allow).then(|| rule.policy.as_string()))
+            .collect()
+    }
+}
+
+impl From<Policy> for PolicySet {
+    fn from(policy: Policy) -> PolicySet {
+        PolicySet {
+            rules: vec![Rule {
+                policy,
+                effect: Effect::Allow,
+            }],
+        }
+    }
+}
+
+impl From<Access> for PolicySet {
+    fn from(level: Access) -> PolicySet {
+        PolicySet::from(Policy::from(level))
+    }
+}
+
+/// One clause's value: a single policy, or a list of them, so a clause naming
+/// one role need not be written as a one-element array.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl OneOrMany {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            OneOrMany::One(value) => vec![value],
+            OneOrMany::Many(values) => values,
+        }
+    }
+}
+
+/// Written by hand rather than derived from an untagged enum, for the sake of
+/// one error message: `deny_unknown_fields` inside `untagged` reports only that
+/// nothing matched, and a misspelled `alow` would otherwise land as an empty
+/// table — `private` — locking everyone out with no explanation.
+impl<'de> Deserialize<'de> for PolicySet {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<PolicySet, D::Error> {
+        struct SetVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SetVisitor {
+            type Value = PolicySet;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an access level, a list of them, or a table of `allow`/`own`/`deny`")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<PolicySet, E> {
+                Ok(PolicySet::from(Policy::parse(value)))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<PolicySet, A::Error> {
+                let mut rules = Vec::new();
+                while let Some(value) = seq.next_element::<String>()? {
+                    rules.push(Rule {
+                        policy: Policy::parse(&value),
+                        effect: Effect::Allow,
+                    });
+                }
+                Ok(PolicySet { rules })
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<PolicySet, A::Error> {
+                let mut clauses: Vec<(Effect, Vec<String>)> = Vec::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    let effect = match key.as_str() {
+                        "allow" => Effect::Allow,
+                        "own" => Effect::Own,
+                        "deny" => Effect::Deny,
+                        other => {
+                            return Err(serde::de::Error::custom(format!(
+                                "`{other}` is not a permission effect; expected `allow`, `own` or `deny`"
+                            )))
+                        }
+                    };
+                    clauses.push((effect, map.next_value::<OneOrMany>()?.into_vec()));
+                }
+                // Evaluation order is fixed — `deny` is consulted first
+                // whatever order the keys were written in — but the rules are
+                // stored grouped, so a set reads back the way it was declared.
+                let mut rules = Vec::new();
+                for effect in [Effect::Allow, Effect::Own, Effect::Deny] {
+                    for (_, values) in clauses.iter().filter(|(e, _)| *e == effect) {
+                        rules.extend(values.iter().map(|value| Rule {
+                            policy: Policy::parse(value),
+                            effect,
+                        }));
+                    }
+                }
+                // A table naming nobody has granted nothing, which is the same
+                // statement as `private` and must never read as "no restrictions".
+                if rules.is_empty() {
+                    return Ok(PolicySet::from(Access::Private));
+                }
+                Ok(PolicySet { rules })
+            }
+        }
+
+        deserializer.deserialize_any(SetVisitor)
+    }
+}
+
+/// Per-action permissions. Each action is parsed via [`PolicySet`].
 #[derive(Debug, Clone, Deserialize)]
 #[serde(from = "PermissionsRaw")]
 pub struct Permissions {
-    pub list: Policy,
-    pub read: Policy,
-    pub create: Policy,
-    pub update: Policy,
-    pub delete: Policy,
+    pub list: PolicySet,
+    pub read: PolicySet,
+    pub create: PolicySet,
+    pub update: PolicySet,
+    pub delete: PolicySet,
+}
+
+impl Permissions {
+    /// Every action's set, in [`CrudAction::ALL`] order — for the passes that
+    /// have to look at all five, like collecting the roles an app mentions.
+    pub fn all(&self) -> [&PolicySet; 5] {
+        [
+            &self.list,
+            &self.read,
+            &self.create,
+            &self.update,
+            &self.delete,
+        ]
+    }
 }
 
 impl Default for Permissions {
@@ -1105,22 +1342,22 @@ impl Default for Permissions {
 
 #[derive(Deserialize)]
 struct PermissionsRaw {
-    list: Option<String>,
-    read: Option<String>,
-    create: Option<String>,
-    update: Option<String>,
-    delete: Option<String>,
+    list: Option<PolicySet>,
+    read: Option<PolicySet>,
+    create: Option<PolicySet>,
+    update: Option<PolicySet>,
+    delete: Option<PolicySet>,
 }
 
 impl From<PermissionsRaw> for Permissions {
     fn from(r: PermissionsRaw) -> Self {
         let d = Permissions::default();
         Permissions {
-            list: r.list.map(|s| Policy::parse(&s)).unwrap_or(d.list),
-            read: r.read.map(|s| Policy::parse(&s)).unwrap_or(d.read),
-            create: r.create.map(|s| Policy::parse(&s)).unwrap_or(d.create),
-            update: r.update.map(|s| Policy::parse(&s)).unwrap_or(d.update),
-            delete: r.delete.map(|s| Policy::parse(&s)).unwrap_or(d.delete),
+            list: r.list.unwrap_or(d.list),
+            read: r.read.unwrap_or(d.read),
+            create: r.create.unwrap_or(d.create),
+            update: r.update.unwrap_or(d.update),
+            delete: r.delete.unwrap_or(d.delete),
         }
     }
 }
@@ -1867,6 +2104,103 @@ type = "string"
         assert_eq!(defaults.delete, Access::Member.into());
     }
 
+    /// Parse a `[permissions]` table and hand back the five sets.
+    fn permissions(toml: &str) -> Permissions {
+        toml::from_str::<Permissions>(toml).expect("permissions should parse")
+    }
+
+    #[test]
+    fn the_three_spellings_of_an_action_are_the_same_kind_of_thing() {
+        // A bare string is one `allow` clause…
+        let one = permissions(r#"update = "role:parent""#).update;
+        assert_eq!(one.rules.len(), 1);
+        assert_eq!(one.rules[0].effect, Effect::Allow);
+        assert_eq!(one.rules[0].policy, Policy::parse("role:parent"));
+
+        // …an array is several of them, and nothing else…
+        let many = permissions(r#"update = ["role:manager", "role:worker"]"#).update;
+        assert_eq!(
+            many.as_shorthand(),
+            Some(vec!["role:manager".to_string(), "role:worker".to_string()])
+        );
+        assert!(many.rules.iter().all(|r| r.effect == Effect::Allow));
+
+        // …and a table is the only way to say anything but `allow`.
+        let table = permissions(
+            r#"
+            [update]
+            allow = ["role:parent@org_class=family"]
+            own   = "role:kid@org_class=family"
+            deny  = "role:suspended"
+            "#,
+        )
+        .update;
+        assert_eq!(table.rules.len(), 3);
+        assert_eq!(
+            table.with_effect(Effect::Own).next(),
+            Some(&Policy::parse("role:kid@org_class=family"))
+        );
+        assert_eq!(
+            table.with_effect(Effect::Deny).next(),
+            Some(&Policy::parse("role:suspended"))
+        );
+        // A clause that uses more than `allow` has no shorthand to round-trip to.
+        assert_eq!(table.as_shorthand(), None);
+    }
+
+    #[test]
+    fn a_single_string_clause_need_not_be_written_as_an_array() {
+        let terse = permissions("[update]\nown = \"role:kid\"").update;
+        assert_eq!(terse.rules.len(), 1);
+        assert_eq!(terse.rules[0].effect, Effect::Own);
+    }
+
+    #[test]
+    fn a_set_naming_nobody_is_private_rather_than_unrestricted() {
+        // The direction a typo must take: an empty table has granted nothing,
+        // and reading it as "no restrictions" would open the action to the world.
+        let empty = permissions("[update]\n").update;
+        assert!(empty.is_private());
+        assert!(permissions(r#"update = "private""#).update.is_private());
+
+        // But a set that merely matches nobody *today* is a live endpoint that
+        // refuses callers, not a missing one — granting the role changes the
+        // answer without touching the config.
+        let unmatched = permissions(r#"update = ["role:nobody-has-this"]"#).update;
+        assert!(!unmatched.is_private());
+    }
+
+    #[test]
+    fn the_primary_clause_is_the_broadest_yes_the_set_offers() {
+        // What a badge or an OpenAPI line shows when it can show only one.
+        let mixed = permissions(
+            r#"
+            [update]
+            allow = ["role:parent"]
+            own   = ["role:kid"]
+            "#,
+        )
+        .update;
+        assert_eq!(mixed.primary(), Policy::parse("role:parent"));
+
+        // Narrowing only — so it reads as `owner`, keeping the class.
+        let owned = permissions("[update]\nown = [\"role:kid@org_class=family\"]").update;
+        assert_eq!(owned.primary(), Policy::parse("owner@org_class=family"));
+
+        // Nothing positive at all is `private`, whatever the denials say.
+        let denied = permissions("[update]\ndeny = [\"role:kid\"]").update;
+        assert_eq!(denied.primary(), Policy::from(Access::Private));
+    }
+
+    #[test]
+    fn an_unknown_key_in_a_permission_table_is_an_error_not_an_omission() {
+        // `alow = [...]` would otherwise parse as an empty table — private —
+        // and a typo that silently locks everyone out is only marginally better
+        // than one that lets everyone in. Say so instead.
+        let error = toml::from_str::<Permissions>("[update]\nalow = [\"role:parent\"]").unwrap_err();
+        assert!(error.to_string().contains("alow"), "unhelpful error: {error}");
+    }
+
     #[test]
     fn a_policy_may_be_narrowed_to_an_organisation_class() {
         let plain = Policy::parse("role:admin");
@@ -1928,7 +2262,7 @@ type = "string"
         .unwrap();
         assert_eq!(resource.permissions.list, Access::Member.into());
         assert_eq!(
-            resource.permissions.update.org_class.as_deref(),
+            resource.permissions.update.primary().org_class.as_deref(),
             Some("school")
         );
         // An unwritten action keeps the default, class-free.

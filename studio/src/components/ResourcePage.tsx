@@ -13,8 +13,11 @@ import {
   type AuthHookEvent,
   type Field,
   type FieldType,
+  type Effect,
   type HookEvent,
   type OnDelete,
+  type PermissionRule,
+  type PermissionSet,
   type Resource,
   type ResourceEntry,
   type Scope,
@@ -541,77 +544,135 @@ function PermissionsTab(props: {
   onEdit: (update: (draft: Resource) => void) => void;
   basePath: string;
 }) {
-  // A policy is `<level>` or `<level>@org_class=<name>`; the UI edits the two
+  // A clause is `<level>` or `<level>@org_class=<name>`; the UI edits the two
   // halves separately and writes them back as one string.
-  const bareOf = (value: string | undefined) => (value ?? "member").split(ORG_CLASS_SUFFIX)[0];
-  const levelOf = (value: string | undefined) => (bareOf(value).startsWith("role:") ? "role" : bareOf(value));
-  const roleOf = (value: string | undefined) =>
-    bareOf(value).startsWith("role:") ? bareOf(value).slice(5) : "";
-  const classOf = (value: string | undefined) => {
-    const at = (value ?? "").indexOf(ORG_CLASS_SUFFIX);
-    return at === -1 ? "" : (value ?? "").slice(at + ORG_CLASS_SUFFIX.length);
+  const bareOf = (policy: string) => policy.split(ORG_CLASS_SUFFIX)[0];
+  const levelOf = (policy: string) => (bareOf(policy).startsWith("role:") ? "role" : bareOf(policy));
+  const roleOf = (policy: string) => (bareOf(policy).startsWith("role:") ? bareOf(policy).slice(5) : "");
+  const classOf = (policy: string) => {
+    const at = policy.indexOf(ORG_CLASS_SUFFIX);
+    return at === -1 ? "" : policy.slice(at + ORG_CLASS_SUFFIX.length);
   };
   const compose = (bare: string, orgClass: string) => (orgClass ? `${bare}${ORG_CLASS_SUFFIX}${orgClass}` : bare);
+
+  const rulesOf = (action: Action): PermissionSet =>
+    props.resource.permissions[action] ?? [{ policy: "member", effect: "allow" }];
+
+  /** Rewrite one clause in place, leaving the rest of the set alone. */
+  const editRule = (action: Action, index: number, update: (rule: PermissionRule) => PermissionRule) =>
+    props.onEdit((draft) => {
+      const rules = [...rulesOf(action)];
+      rules[index] = update({ ...rules[index] });
+      draft.permissions[action] = rules;
+    });
+
+  const allRules = () => Object.values(props.resource.permissions).flatMap((set) => set ?? []);
+  const usesEffect = (effect: Effect) => allRules().some((rule) => rule.effect === effect);
 
   return (
     <Card>
       <CardHeader
         title="Access policy"
-        hint="Evaluated after authentication; omitted actions default to member of the active organisation."
+        hint="Evaluated after authentication; omitted actions default to member of the active organisation. Anyone no clause matches is refused."
       />
       <div class="divide-y divide-line">
         <For each={ACTIONS}>
-          {(action) => {
-            const current = () => props.resource.permissions[action];
-            return (
-              <div class="flex flex-wrap items-center gap-3 px-4 py-3">
-                <div class="w-40 shrink-0">
-                  <p class="text-[0.8125rem] font-medium capitalize text-ink">{action}</p>
-                  <p class="font-mono text-[0.6875rem] text-faint">
-                    {ACTION_ENDPOINT[action].replace("{res}", `${props.basePath}/${props.resource.name}`)}
-                  </p>
-                </div>
-                <Select
-                  class="max-w-sm flex-1"
-                  value={levelOf(current())}
-                  options={ACCESS_OPTIONS}
-                  onChange={(value) =>
-                    props.onEdit((draft) => {
-                      const bare = value === "role" ? `role:${roleOf(current()) || "admin"}` : value;
-                      draft.permissions[action] = compose(bare, classOf(current()));
-                    })
-                  }
-                />
-                <Show when={levelOf(current()) === "role"}>
-                  <TextInput
-                    mono
-                    class="max-w-[10rem]"
-                    value={roleOf(current())}
-                    placeholder="admin"
-                    onInput={(value) =>
-                      props.onEdit((draft) => {
-                        draft.permissions[action] = compose(`role:${value}`, classOf(current()));
-                      })
-                    }
-                  />
-                </Show>
-                <label class="flex items-center gap-2 text-[0.6875rem] text-faint">
-                  <span class="whitespace-nowrap">in org class</span>
-                  <TextInput
-                    mono
-                    class="max-w-[9rem]"
-                    value={classOf(current())}
-                    placeholder="any"
-                    onInput={(value) =>
-                      props.onEdit((draft) => {
-                        draft.permissions[action] = compose(bareOf(current()), value.trim());
-                      })
-                    }
-                  />
-                </label>
+          {(action) => (
+            <div class="flex flex-wrap items-start gap-3 px-4 py-3">
+              <div class="w-40 shrink-0 pt-1.5">
+                <p class="text-[0.8125rem] font-medium capitalize text-ink">{action}</p>
+                <p class="font-mono text-[0.6875rem] text-faint">
+                  {ACTION_ENDPOINT[action].replace("{res}", `${props.basePath}/${props.resource.name}`)}
+                </p>
               </div>
-            );
-          }}
+              <div class="flex min-w-[20rem] flex-1 flex-col gap-2">
+                <For each={rulesOf(action)}>
+                  {(rule, index) => (
+                    <div class="flex flex-wrap items-center gap-2">
+                      {/* One clause per row: what it grants, then who to. */}
+                      <Select
+                        class="max-w-[9rem]"
+                        value={rule.effect}
+                        options={EFFECT_OPTIONS}
+                        onChange={(value) =>
+                          editRule(action, index(), (draft) => ({ ...draft, effect: value as Effect }))
+                        }
+                      />
+                      <Select
+                        class="max-w-[11rem] flex-1"
+                        value={levelOf(rule.policy)}
+                        options={ACCESS_OPTIONS}
+                        onChange={(value) =>
+                          editRule(action, index(), (draft) => ({
+                            ...draft,
+                            policy: compose(
+                              value === "role" ? `role:${roleOf(rule.policy) || "admin"}` : value,
+                              classOf(rule.policy),
+                            ),
+                          }))
+                        }
+                      />
+                      <Show when={levelOf(rule.policy) === "role"}>
+                        <TextInput
+                          mono
+                          class="max-w-[9rem]"
+                          value={roleOf(rule.policy)}
+                          placeholder="admin"
+                          onInput={(value) =>
+                            editRule(action, index(), (draft) => ({
+                              ...draft,
+                              policy: compose(`role:${value}`, classOf(rule.policy)),
+                            }))
+                          }
+                        />
+                      </Show>
+                      <label class="flex items-center gap-2 text-[0.6875rem] text-faint">
+                        <span class="whitespace-nowrap">in org class</span>
+                        <TextInput
+                          mono
+                          class="max-w-[8rem]"
+                          value={classOf(rule.policy)}
+                          placeholder="any"
+                          onInput={(value) =>
+                            editRule(action, index(), (draft) => ({
+                              ...draft,
+                              policy: compose(bareOf(rule.policy), value.trim()),
+                            }))
+                          }
+                        />
+                      </label>
+                      {/* Never the last one: an action with no clause at all
+                          would silently become the default, not "nobody". */}
+                      <Show when={rulesOf(action).length > 1}>
+                        <Button
+                          variant="ghost"
+                          onClick={() =>
+                            props.onEdit((draft) => {
+                              draft.permissions[action] = rulesOf(action).filter((_, i) => i !== index());
+                            })
+                          }
+                        >
+                          Remove
+                        </Button>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+                <div>
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      props.onEdit((draft) => {
+                        draft.permissions[action] = [...rulesOf(action), { policy: "role:admin", effect: "allow" }];
+                      })
+                    }
+                  >
+                    Add rule
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </For>
       </div>
       <div class="border-t border-line px-4 py-3 text-[0.6875rem] leading-relaxed text-faint">
@@ -619,18 +680,29 @@ function PermissionsTab(props: {
           Rows are isolated per organisation before any of this runs, and <Mono>public</Mono> behaves as{" "}
           <Mono>member</Mono> here.{" "}
         </Show>
-        <Show when={Object.values(props.resource.permissions).some((value) => value?.includes(ORG_CLASS_SUFFIX))}>
-          A class narrows an action to organisations whose <Mono>org_class</Mono> matches — never widens it.
+        <Show when={allRules().some((rule) => rule.policy.includes(ORG_CLASS_SUFFIX))}>
+          A class narrows a clause to organisations whose <Mono>org_class</Mono> matches — never widens it.
           Leave it empty for every organisation.{" "}
         </Show>
-        <Show when={Object.values(props.resource.permissions).some((value) => bareOf(value) === "owner")}>
-          <Mono>owner</Mono> compares <Mono>{props.resource.owner_field}</Mono> to the caller and stamps it on
-          create.
+        <Show when={usesEffect("own") || allRules().some((rule) => bareOf(rule.policy) === "owner")}>
+          Ownership compares <Mono>{props.resource.owner_field}</Mono> to the caller and stamps it on create.{" "}
+        </Show>
+        <Show when={usesEffect("deny")}>
+          A <Mono>deny</Mono> outranks every <Mono>allow</Mono> the same caller matches, and matches only a role
+          somebody actually holds — never the blanket one an <Mono>admin</Mono> gets, which would lock the
+          organisation's own administrators out.
         </Show>
       </div>
     </Card>
   );
 }
+
+/** What a clause grants, in the order the server consults them. */
+const EFFECT_OPTIONS = [
+  { value: "allow", label: "Allow" },
+  { value: "own", label: "Only own" },
+  { value: "deny", label: "Deny" },
+];
 
 // ---- hooks ------------------------------------------------------------------
 

@@ -164,7 +164,7 @@ pub async fn create_invitation(
     let organization = organization_name(&state, org).await;
     let inviter = inviter_name(&state, principal.user_id).await;
     let message = emails::invitation(
-        &Links::from_app(&state.app),
+        &links(&state),
         &organization,
         inviter.as_deref(),
         &plaintext,
@@ -374,7 +374,7 @@ pub async fn send_verification(
     let ttl = state.app.config.auth.verification_ttl_secs;
     let plaintext = mint_token(state, user_id, KIND_VERIFICATION, ttl).await?;
     let message = emails::verification(
-        &Links::from_app(&state.app),
+        &links(state),
         &plaintext,
         &emails::humanise(ttl),
     );
@@ -412,7 +412,17 @@ pub async fn verify_email(state: State<AppState>, body: Json<Value>) -> HttpResp
     }
 
     match state.auth.issue_token(user_id) {
-        Ok(session) => HttpResponse::Ok().json(&json!({ "token": session, "verified": true })),
+        Ok(session) => {
+            let mut body = json!({ "token": session, "verified": true });
+            // Where the app wants people to land once the detour is over. Absent
+            // unless the deployment named somewhere, so a client can tell "go
+            // here" from "there is nowhere in particular to go".
+            let redirect = state.app.config.auth.verify_email_redirect.trim();
+            if !redirect.is_empty() {
+                body["redirect_to"] = Value::String(redirect.to_string());
+            }
+            HttpResponse::Ok().json(&body)
+        }
         Err(_) => error(500, "failed to issue token"),
     }
 }
@@ -466,7 +476,7 @@ pub async fn forgot_password(state: State<AppState>, body: Json<Value>) -> HttpR
             match mint_token(&state, user_id, KIND_RESET, ttl).await {
                 Ok(plaintext) => {
                     let message = emails::password_reset(
-                        &Links::from_app(&state.app),
+                        &links(&state),
                         &plaintext,
                         &emails::humanise(ttl),
                     );
@@ -557,6 +567,14 @@ pub async fn reset_password(state: State<AppState>, body: Json<Value>) -> HttpRe
 
 // --- shared machinery ------------------------------------------------------
 
+/// Where an outgoing message's links point, and what it is allowed to say.
+///
+/// One place, because all three flows want the same answer: the app's URLs, its
+/// mark, and its own templates when it wrote any.
+fn links(state: &AppState) -> Links {
+    Links::from_app(&state.app).with_templates(state.email_templates.clone())
+}
+
 /// Whether `principal` may add people to `org`.
 ///
 /// Read from the `membership` resource's `create` policy so that an app which has
@@ -579,21 +597,46 @@ fn may_invite(state: &AppState, principal: &apiplant_auth::Principal, org: Uuid)
 /// [`may_invite`] with the policy handed in, so the rule can be checked without
 /// a database behind it.
 fn invite_policy(
-    create: Option<&apiplant_core::Policy>,
+    create: Option<&apiplant_core::PolicySet>,
+    principal: &apiplant_auth::Principal,
+    org: Uuid,
+) -> bool {
+    use apiplant_core::Effect;
+    let Some(set) = create else {
+        return principal.is_admin_of(org);
+    };
+    // The same order the API itself uses: a `deny` the caller matches settles
+    // it, and either kind of yes will do — an `own` clause still creates rows,
+    // it only narrows which ones can later be edited.
+    if set
+        .with_effect(Effect::Deny)
+        .any(|policy| invite_clause(policy, principal, org))
+    {
+        return false;
+    }
+    [Effect::Allow, Effect::Own]
+        .into_iter()
+        .flat_map(|effect| set.with_effect(effect))
+        .any(|policy| invite_clause(policy, principal, org))
+}
+
+/// One clause of [`invite_policy`].
+fn invite_clause(
+    policy: &apiplant_core::Policy,
     principal: &apiplant_auth::Principal,
     org: Uuid,
 ) -> bool {
     use apiplant_core::Access;
     // A class-qualified policy is only satisfied inside an organisation of that
     // class, invitations included.
-    if let Some(class) = create.and_then(|p| p.org_class.as_deref()) {
+    if let Some(class) = policy.org_class.as_deref() {
         if principal.org_class_of(org) != Some(class) {
             return false;
         }
     }
-    match create.map(|p| &p.level) {
-        Some(Access::Role(role)) => principal.has_role_in(org, role),
-        Some(Access::Member | Access::Owner | Access::Authenticated) => principal.is_member(org),
+    match &policy.level {
+        Access::Role(role) => principal.has_role_in(org, role),
+        Access::Member | Access::Owner | Access::Authenticated => principal.is_member(org),
         _ => principal.is_admin_of(org),
     }
 }
@@ -984,7 +1027,7 @@ mod tests {
         let org = Uuid::new_v4();
 
         // The default: admins of the organisation, and nobody else in it.
-        let admins: apiplant_core::Policy = Access::Role("admin".into()).into();
+        let admins: apiplant_core::PolicySet = Access::Role("admin".into()).into();
         assert!(invite_policy(Some(&admins), &principal(org, "admin"), org));
         assert!(!invite_policy(
             Some(&admins),
@@ -994,7 +1037,7 @@ mod tests {
 
         // An app that lets any member add people gets invitations to match,
         // rather than a second, stricter answer to the same question.
-        let members: apiplant_core::Policy = Access::Member.into();
+        let members: apiplant_core::PolicySet = Access::Member.into();
         assert!(invite_policy(
             Some(&members),
             &principal(org, "member"),
@@ -1015,7 +1058,7 @@ mod tests {
         // Handing out membership of an organisation is not something to open
         // up because a permission happened to say `public`, and a resource with
         // no `membership` at all is not an invitation to improvise.
-        let public: apiplant_core::Policy = Access::Public.into();
+        let public: apiplant_core::PolicySet = Access::Public.into();
         for policy in [Some(&public), None] {
             assert!(!invite_policy(policy, &principal(org, "member"), org));
             assert!(invite_policy(policy, &principal(org, "admin"), org));

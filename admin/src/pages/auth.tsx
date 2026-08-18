@@ -53,11 +53,11 @@ export function signupResource(fields: FieldManifest[]): ResourceManifest {
     relations: [],
     children: [],
     permissions: {
-      list: { value: "public", role: null, org_class: null, note: "", requires_org: false },
-      read: { value: "public", role: null, org_class: null, note: "", requires_org: false },
-      create: { value: "public", role: null, org_class: null, note: "", requires_org: false },
-      update: { value: "public", role: null, org_class: null, note: "", requires_org: false },
-      delete: { value: "public", role: null, org_class: null, note: "", requires_org: false },
+      list: { value: "public", role: null, org_class: null, note: "", requires_org: false, rules: [] },
+      read: { value: "public", role: null, org_class: null, note: "", requires_org: false, rules: [] },
+      create: { value: "public", role: null, org_class: null, note: "", requires_org: false, rules: [] },
+      update: { value: "public", role: null, org_class: null, note: "", requires_org: false, rules: [] },
+      delete: { value: "public", role: null, org_class: null, note: "", requires_org: false, rules: [] },
     },
   };
 }

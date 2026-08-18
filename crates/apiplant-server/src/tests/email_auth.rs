@@ -717,3 +717,94 @@ async fn an_invitation_that_could_not_be_sent_is_not_left_pending() {
     db.cleanup().await;
     fs::remove_dir_all(root).unwrap();
 }
+
+/// Confirming an address is the end of a detour, and the app can say where it
+/// ends: `[auth] verify_email_redirect` comes back beside the session token.
+#[ntex::test]
+async fn a_confirmed_address_is_told_where_to_go_next() {
+    let db = TempDatabase::create("verifyredirect").await;
+    let root = temp_dir("verifyredirect");
+    write_files(
+        &root,
+        &[(
+            "main.toml",
+            &format!(
+                "{}\n[auth]\nverify_email_redirect = \"https://app.example.test/welcome\"\n",
+                main_toml(&db.url)
+            ),
+        )],
+    );
+
+    let state = load_state(&root).await;
+    let user_id = seed(
+        &state,
+        "user",
+        json!({ "email": "bo@example.test", "password_hash": "x" }),
+    )
+    .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    auth_token(&state, &user_id, "email_verification", "verify_bo").await;
+
+    let app = init_http_app!(state);
+    let body = read_json(
+        test::call_service(
+            &app,
+            req_json(
+                "POST",
+                "/api/auth/verify-email",
+                json!({ "token": "verify_bo" }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    // Signed in *and* pointed somewhere: the session has to be in place before
+    // the browser leaves, or the app is landed on signed out.
+    assert!(body["token"].is_string());
+    assert_eq!(body["redirect_to"], "https://app.example.test/welcome");
+
+    db.cleanup().await;
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Unset, there is no redirect at all — absent rather than empty, so a client
+/// can tell "go here" from "nowhere in particular".
+#[ntex::test]
+async fn without_the_setting_a_confirmation_points_nowhere() {
+    let db = TempDatabase::create("noredirect").await;
+    let root = temp_dir("noredirect");
+    write_files(&root, &[("main.toml", &main_toml(&db.url))]);
+
+    let state = load_state(&root).await;
+    let user_id = seed(
+        &state,
+        "user",
+        json!({ "email": "cy@example.test", "password_hash": "x" }),
+    )
+    .await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    auth_token(&state, &user_id, "email_verification", "verify_cy").await;
+
+    let app = init_http_app!(state);
+    let body = read_json(
+        test::call_service(
+            &app,
+            req_json(
+                "POST",
+                "/api/auth/verify-email",
+                json!({ "token": "verify_cy" }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert!(body["token"].is_string());
+    assert!(body.get("redirect_to").is_none());
+
+    db.cleanup().await;
+    fs::remove_dir_all(root).unwrap();
+}

@@ -598,6 +598,15 @@ const SECTIONS: ConfigSection[] = [
         hint: "Whether anybody may create an account for themselves.",
       },
       {
+        section: "auth",
+        key: "verify_email_redirect",
+        label: "verified redirect",
+        group: "Authentication",
+        placeholder: "nowhere — stay on the confirmation screen",
+        kind: "text" as const,
+        hint: "Where somebody lands once they confirm their address. An absolute URL or a path on this origin. Confirming signs them in first, so the app is reached already authenticated.",
+      },
+      {
         section: "admin",
         key: "gravatar",
         label: "gravatar avatars",

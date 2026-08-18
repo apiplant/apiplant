@@ -193,6 +193,8 @@ my-app/
 │   ├── user.toml        #   an administrator who can sign in
 │   └── product.csv      #   …in TOML or CSV, whichever suits the table
 ├── storage/             # uploaded files, when [storage] backend is `local`
+├── emails/              # optional: your wording for the mail apiplant sends
+│   └── verification.liquid
 └── functions/           # function sources, their config, and the built libraries
     ├── greet.rs         # you write this…
     ├── greet.toml       #   …plus optional config

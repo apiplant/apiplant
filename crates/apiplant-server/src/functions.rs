@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use abi_stable::library::{lib_header_from_raw_library, RawLibrary};
 use abi_stable::sabi_trait::TD_Opaque;
@@ -334,6 +335,10 @@ pub struct HostBridge {
     /// The app's configured mailer, when it has one. Built once at boot and
     /// shared, so a function sending mail reuses pooled connections.
     mailer: Option<Mailer>,
+    /// The app's own email templates, from its `emails/` directory. Lets a
+    /// function send one by name instead of composing a message itself, so the
+    /// copy an app mails lives in one place whoever sends it.
+    email_templates: Option<Arc<crate::email_templates::EmailTemplates>>,
     /// The app's configured cache, when it has one.
     cache: Option<Cache>,
     /// The app's configured payment provider, when it has one.
@@ -368,6 +373,7 @@ impl HostBridge {
             db,
             handle,
             mailer: None,
+            email_templates: None,
             cache: None,
             payments: None,
             ai: None,
@@ -377,6 +383,16 @@ impl HostBridge {
             principal_id,
             hook_json: String::new(),
         }
+    }
+
+    /// Lend the function the app's email templates, so `send_email` can name
+    /// one instead of spelling out a subject and a body.
+    pub fn with_email_templates(
+        mut self,
+        templates: Arc<crate::email_templates::EmailTemplates>,
+    ) -> Self {
+        self.email_templates = Some(templates);
+        self
     }
 
     /// Lend the function the app's email provider, cache, payments and AI
@@ -501,10 +517,32 @@ impl HostApi for HostBridge {
                     .into(),
             );
         };
-        let message: apiplant_email::Message = match serde_json::from_str(request.as_str()) {
+        let mut message: apiplant_email::Message = match serde_json::from_str(request.as_str()) {
             Ok(m) => m,
             Err(e) => return RResult::RErr(format!("invalid email: {e}").into()),
         };
+
+        // A request may name a template from the app's `emails/` directory
+        // instead of carrying a body — the point of the directory being that
+        // the copy lives in one place whoever sends it. A subject spelled out
+        // beside the template still wins, so one template can serve several
+        // messages that differ only in their subject line.
+        if let Some(name) = template_name(request.as_str()) {
+            let Some(templates) = &self.email_templates else {
+                return RResult::RErr(
+                    format!("no email template `{name}`: this app has no emails/ directory").into(),
+                );
+            };
+            let vars = template_vars(request.as_str());
+            match templates.render(&name, &vars, &message.subject) {
+                Ok(rendered) => {
+                    message.subject = rendered.subject;
+                    message.text = rendered.text;
+                    message.html = rendered.html;
+                }
+                Err(e) => return RResult::RErr(format!("{e:#}").into()),
+            }
+        }
         match self.handle.block_on(mailer.send(&message)) {
             Ok(sent) => RResult::ROk(
                 serde_json::to_string(&sent)
@@ -632,5 +670,35 @@ impl HostApi for HostBridge {
 
     fn hook(&self) -> RString {
         self.hook_json.clone().into()
+    }
+}
+
+/// The `template` a `send_email` request names, if it names one.
+///
+/// Read off the raw JSON rather than off [`apiplant_email::Message`], because a
+/// template is a property of the *request* — how the body is to be produced —
+/// and not of the message that comes out of it.
+fn template_name(request: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(request)
+        .ok()?
+        .get("template")?
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
+/// The `vars` object a `send_email` request carries, as Liquid values.
+///
+/// Absent or malformed means no variables, not an error: a template that names
+/// none is perfectly ordinary, and one that names a variable it was not given
+/// renders it as empty, which is Liquid's own answer.
+fn template_vars(request: &str) -> liquid::Object {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(request) else {
+        return liquid::Object::new();
+    };
+    match value.get("vars") {
+        Some(vars) => liquid::model::to_object(vars).unwrap_or_default(),
+        None => liquid::Object::new(),
     }
 }

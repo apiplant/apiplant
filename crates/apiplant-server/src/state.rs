@@ -30,6 +30,10 @@ pub struct AppState {
     /// The app's email provider, when `[email]` names one. Functions reach it
     /// through `send_email`; nothing else in the server sends mail.
     pub mailer: Option<Mailer>,
+    /// The app's own wording for the messages the framework sends, compiled at
+    /// boot from its `emails/` directory. Empty in the app that has none, which
+    /// is the ordinary case — the built-in messages are used then.
+    pub email_templates: Arc<crate::email_templates::EmailTemplates>,
     /// The app's Redis cache, when `[cache]` names one. Functions reach it
     /// through `cache`; no framework path caches through it.
     pub cache: Option<Cache>,

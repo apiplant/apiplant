@@ -145,6 +145,7 @@ apiplant targets **PostgreSQL**, using `to_jsonb`, `gen_random_uuid()`,
 | `invite_ttl_secs` | `604800` (7d) | How long an invitation link stays valid. |
 | `verification_ttl_secs` | `86400` (24h) | How long a confirmation link stays valid. |
 | `password_reset_ttl_secs` | `3600` (1h) | How long a reset link stays valid. Deliberately short, since it is a live credential sitting in a mailbox. |
+| `verify_email_redirect` | unset | Where somebody lands once they confirm their address. An absolute URL or a path on this origin; unset means they stay on the confirmation screen. |
 
 The three "follows `[email]`" flags are the only defaults here that are not
 constant. Configuring a provider enables all three; configuring none leaves them

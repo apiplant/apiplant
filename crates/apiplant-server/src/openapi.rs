@@ -12,7 +12,7 @@
 //! requires authentication; public operations carry no security requirement.
 
 use apiplant_abi::{FunctionAccess, HttpMethod};
-use apiplant_core::schema::{Access, Field, FieldType, Policy};
+use apiplant_core::schema::{Access, Effect, Field, FieldType, Policy, PolicySet};
 use apiplant_core::{Agent, App, Resource, Scope};
 use serde_json::{json, Map, Value};
 
@@ -65,7 +65,7 @@ pub fn build(app: &App, functions: &FunctionRegistry, email_enabled: bool) -> Va
             // child's `list` policy — and a private one has no endpoint here
             // any more than it does at `/{child}`. Documenting it would promise
             // a route that answers 404.
-            if related.is_empty() || child.permissions.list.level == Access::Private {
+            if related.is_empty() || child.permissions.list.is_private() {
                 continue;
             }
             paths.insert(
@@ -300,6 +300,29 @@ fn access_note(policy: &Policy) -> String {
     }
 }
 
+/// The description of a whole rule set.
+///
+/// A set answers differently for different callers, and the documentation has
+/// to say so — describing only the widest clause would tell a kid they may edit
+/// nothing when in fact they may edit their own. One sentence per clause, in
+/// the order they are evaluated, so the denials read as the exceptions they are.
+fn set_note(set: &PolicySet) -> String {
+    if set.rules.len() == 1 {
+        return access_note(&set.rules[0].policy);
+    }
+    let mut notes: Vec<String> = Vec::new();
+    for (effect, prefix) in [
+        (Effect::Allow, ""),
+        (Effect::Own, "Scoped to records you own: "),
+        (Effect::Deny, "Never permitted: "),
+    ] {
+        for policy in set.with_effect(effect) {
+            notes.push(format!("{prefix}{}", access_note(policy)));
+        }
+    }
+    notes.join(" ")
+}
+
 fn access_level_note(access: &Access) -> String {
     match access {
         Access::Public => "Public — no authentication required.".into(),
@@ -360,13 +383,13 @@ fn collection_path(r: &Resource) -> Value {
     let input_ref = input_schema_name(r);
     let mut path = Map::new();
 
-    if r.permissions.list.level != Access::Private {
+    if !r.permissions.list.is_private() {
         let op = with_security(
             json!({
                 "tags": [name],
                 "operationId": format!("list_{name}"),
                 "summary": format!("List {name}"),
-                "description": access_note(&r.permissions.list),
+                "description": set_note(&r.permissions.list),
                 "parameters": list_parameters(r),
                 "responses": {
                     "200": {
@@ -377,18 +400,18 @@ fn collection_path(r: &Resource) -> Value {
                     }
                 }
             }),
-            &r.permissions.list,
+            &r.permissions.list.primary(),
         );
         path.insert("get".into(), op);
     }
 
-    if r.permissions.create.level != Access::Private {
+    if !r.permissions.create.is_private() {
         let op = with_security(
             json!({
                 "tags": [name],
                 "operationId": format!("create_{name}"),
                 "summary": format!("Create {name}"),
-                "description": access_note(&r.permissions.create),
+                "description": set_note(&r.permissions.create),
                 "requestBody": json_body(ref_to(&input_ref)),
                 "responses": {
                     "201": { "description": "Created", "content": { "application/json": { "schema": ref_to(&read_ref) } } },
@@ -396,7 +419,7 @@ fn collection_path(r: &Resource) -> Value {
                     "401": { "description": "Authentication required" },
                 }
             }),
-            &r.permissions.create,
+            &r.permissions.create.primary(),
         );
         path.insert("post".into(), op);
     }
@@ -415,7 +438,7 @@ fn item_path(r: &Resource) -> Value {
     let mut path = Map::new();
     path.insert("parameters".into(), id_param);
 
-    if r.permissions.read.level != Access::Private {
+    if !r.permissions.read.is_private() {
         path.insert(
             "get".into(),
             with_security(
@@ -423,38 +446,38 @@ fn item_path(r: &Resource) -> Value {
                     "tags": [name],
                     "operationId": format!("get_{name}"),
                     "summary": format!("Fetch a {name} by id"),
-                    "description": access_note(&r.permissions.read),
+                    "description": set_note(&r.permissions.read),
                     "parameters": [expand_parameter(r)],
                     "responses": {
                         "200": { "description": "The record", "content": { "application/json": { "schema": ref_to(&read_ref) } } },
                         "404": { "description": "Not found" },
                     }
                 }),
-                &r.permissions.read,
+                &r.permissions.read.primary(),
             ),
         );
     }
 
-    if r.permissions.update.level != Access::Private {
+    if !r.permissions.update.is_private() {
         let update_op = with_security(
             json!({
                 "tags": [name],
                 "operationId": format!("update_{name}"),
                 "summary": format!("Update a {name}"),
-                "description": access_note(&r.permissions.update),
+                "description": set_note(&r.permissions.update),
                 "requestBody": json_body(ref_to(&input_ref)),
                 "responses": {
                     "200": { "description": "Updated", "content": { "application/json": { "schema": ref_to(&read_ref) } } },
                     "404": { "description": "Not found" },
                 }
             }),
-            &r.permissions.update,
+            &r.permissions.update.primary(),
         );
         path.insert("patch".into(), update_op.clone());
         path.insert("put".into(), update_op);
     }
 
-    if r.permissions.delete.level != Access::Private {
+    if !r.permissions.delete.is_private() {
         path.insert(
             "delete".into(),
             with_security(
@@ -462,13 +485,13 @@ fn item_path(r: &Resource) -> Value {
                     "tags": [name],
                     "operationId": format!("delete_{name}"),
                     "summary": format!("Delete a {name}"),
-                    "description": access_note(&r.permissions.delete),
+                    "description": set_note(&r.permissions.delete),
                     "responses": {
                         "204": { "description": "Deleted" },
                         "404": { "description": "Not found" },
                     }
                 }),
-                &r.permissions.delete,
+                &r.permissions.delete.primary(),
             ),
         );
     }
@@ -602,7 +625,7 @@ fn nested_path(parent: &Resource, child: &Resource, related: &[apiplant_core::Re
             "tags": [child_name],
             "operationId": format!("list_{child_name}_by_{parent_name}"),
             "summary": format!("List {child_name} belonging to a {parent_name}"),
-            "description": format!("{}{}", access_note(&child.permissions.list), via_note),
+            "description": format!("{}{}", set_note(&child.permissions.list), via_note),
             "parameters": [
                 { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
                 { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 500 } },
@@ -616,7 +639,7 @@ fn nested_path(parent: &Resource, child: &Resource, related: &[apiplant_core::Re
                 }
             }
         }),
-        &child.permissions.list,
+        &child.permissions.list.primary(),
     );
     json!({ "get": op })
 }

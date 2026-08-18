@@ -1421,3 +1421,200 @@ async fn a_default_class_is_stamped_on_every_new_organisation() {
     .await;
     assert_eq!(created["org_class"], "customer");
 }
+
+/// One action, three answers — the whole point of a rule set.
+///
+/// A family's chores: a parent edits everyone's, a kid edits only their own,
+/// and a grounded member edits none. None of that is expressible as a single
+/// level, and all of it has to hold at once.
+#[ntex::test]
+async fn one_action_can_answer_differently_for_each_role() {
+    let db = TempDatabase::create("ruleset").await;
+    let root = temp_dir("ruleset");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    "[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n\n\
+                     [organization]\ndefault_org_class = \"family\"\n",
+                    db.url
+                ),
+            ),
+            (
+                "resources/chore.toml",
+                r#"
+[resource]
+name = "chore"
+scope = "organization"
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "member"
+delete = "role:parent"
+
+[permissions.update]
+allow = "role:parent@org_class=family"
+own   = "role:kid@org_class=family"
+deny  = "role:grounded"
+
+[fields.title]
+type = "string"
+
+[fields.owner_id]
+type = "uuid"
+"#,
+            ),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let register = |email: &'static str| {
+        req_json(
+            "POST",
+            "/api/auth/register",
+            json!({ "email": email, "password": "pw" }),
+        )
+    };
+    let parent = read_json(test::call_service(&app, register("parent@example.com")).await).await;
+    let parent_token = parent["token"].as_str().unwrap().to_string();
+    let kid = read_json(test::call_service(&app, register("kid@example.com")).await).await;
+    let kid_token = kid["token"].as_str().unwrap().to_string();
+    let teen = read_json(test::call_service(&app, register("teen@example.com")).await).await;
+    let teen_token = teen["token"].as_str().unwrap().to_string();
+
+    let org = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::post()
+                    .uri("/api/organization")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({ "name": "Family" }).to_string()),
+                &parent_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    let org_id = org["id"].as_str().unwrap().to_string();
+    // `default_org_class` classes it, which is what the `@org_class=family`
+    // half of every clause is answered against.
+    assert_eq!(org["org_class"], "family");
+
+    let as_parent = |req: test::TestRequest| {
+        bearer(req.header("x-organization", org_id.clone()), &parent_token).to_request()
+    };
+    let as_kid = |req: test::TestRequest| {
+        bearer(req.header("x-organization", org_id.clone()), &kid_token).to_request()
+    };
+    let as_teen = |req: test::TestRequest| {
+        bearer(req.header("x-organization", org_id.clone()), &teen_token).to_request()
+    };
+
+    for (email, role) in [("kid@example.com", "kid"), ("teen@example.com", "kid")] {
+        let added = test::call_service(
+            &app,
+            as_parent(
+                test::TestRequest::post()
+                    .uri("/api/membership")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({ "email": email, "role": role }).to_string()),
+            ),
+        )
+        .await;
+        assert_eq!(added.status().as_u16(), 201);
+    }
+
+    let chore = |req: test::TestRequest, title: &str| {
+        req.uri("/api/chore")
+            .header(CONTENT_TYPE, "application/json")
+            .set_payload(json!({ "title": title }).to_string())
+    };
+    let kids_chore = read_json(
+        test::call_service(&app, as_kid(chore(test::TestRequest::post(), "dishes"))).await,
+    )
+    .await;
+    let kids_chore_id = kids_chore["id"].as_str().unwrap().to_string();
+    let teens_chore = read_json(
+        test::call_service(&app, as_teen(chore(test::TestRequest::post(), "lawn"))).await,
+    )
+    .await;
+    let teens_chore_id = teens_chore["id"].as_str().unwrap().to_string();
+
+    let rename = |id: &str, to: &str| {
+        test::TestRequest::patch()
+            .uri(&format!("/api/chore/{id}"))
+            .header(CONTENT_TYPE, "application/json")
+            .set_payload(json!({ "title": to }).to_string())
+    };
+
+    // The `own` clause: a kid's own row, yes.
+    let mine = test::call_service(&app, as_kid(rename(&kids_chore_id, "washing up"))).await;
+    assert_eq!(mine.status().as_u16(), 200);
+
+    // …and somebody else's, no. Filtered out rather than refused, which is what
+    // ownership scoping has always done: it is indistinguishable from missing.
+    let theirs = test::call_service(&app, as_kid(rename(&teens_chore_id, "mow"))).await;
+    assert_eq!(theirs.status().as_u16(), 404);
+
+    // The `allow` clause is the wider answer to the same question.
+    let parental = test::call_service(&app, as_parent(rename(&teens_chore_id, "mow the lawn"))).await;
+    assert_eq!(parental.status().as_u16(), 200);
+
+    // A second role that is denied outranks the one that allows: the teen still
+    // holds `kid`, and would otherwise still be editing their own row.
+    let membership = read_json(
+        test::call_service(
+            &app,
+            as_parent(test::TestRequest::get().uri("/api/membership?role=kid")),
+        )
+        .await,
+    )
+    .await;
+    let teen_membership = membership
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["email"] == "teen@example.com" || row["user_id"] == teen["user"]["id"])
+        .expect("the teen's membership")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let grounded = test::call_service(
+        &app,
+        as_parent(
+            test::TestRequest::post()
+                .uri("/api/membership_role")
+                .header(CONTENT_TYPE, "application/json")
+                .set_payload(
+                    json!({ "membership_id": teen_membership, "role": "grounded" }).to_string(),
+                ),
+        ),
+    )
+    .await;
+    assert_eq!(grounded.status().as_u16(), 201);
+
+    let refused = test::call_service(&app, as_teen(rename(&teens_chore_id, "nothing"))).await;
+    assert_eq!(refused.status().as_u16(), 403);
+
+    // The parent administers the organisation, so they hold `grounded` the way
+    // an admin holds every role — and a denial must not read it that way, or
+    // adding the role would have locked the family's own admin out.
+    let still_allowed =
+        test::call_service(&app, as_parent(rename(&teens_chore_id, "mow the lawn again"))).await;
+    assert_eq!(still_allowed.status().as_u16(), 200);
+
+    // Nothing in the set mentions an action's other verbs, so they keep the
+    // levels they were given.
+    let listed = read_json(
+        test::call_service(&app, as_kid(test::TestRequest::get().uri("/api/chore"))).await,
+    )
+    .await;
+    assert_eq!(listed.as_array().unwrap().len(), 2);
+}

@@ -50,6 +50,8 @@ pub struct Subscriber {
     pub queue: Queue,
     pub functions: Arc<FunctionRegistry>,
     pub mailer: Option<Mailer>,
+    /// The app's email templates, so a queued handler can send one by name.
+    pub email_templates: std::sync::Arc<crate::email_templates::EmailTemplates>,
     pub cache: Option<Cache>,
     pub payments: Option<Payments>,
     pub ai: Option<Ai>,
@@ -228,6 +230,7 @@ async fn invoke(subscriber: &Subscriber, delivery: &Delivery) -> Result<String, 
         subscriber.payments.clone(),
         subscriber.ai.clone(),
     )
+    .with_email_templates(subscriber.email_templates.clone())
     // A handler may publish in turn — a chain of steps, each queued — so the
     // queue goes across too.
     .with_queue(subscriber.queue.clone())

@@ -218,6 +218,18 @@ pub struct AuthConfig {
     /// How long a password-reset link stays valid (default 1 hour). Short on
     /// purpose: it is a live credential sitting in a mailbox.
     pub password_reset_ttl_secs: u64,
+
+    /// Where to send somebody once they have confirmed their address.
+    ///
+    /// Confirming an address is the end of the sign-up detour, and the place to
+    /// land is the app — not the dashboard screen that happened to spend the
+    /// token. `POST /auth/verify-email` returns this as `redirect_to` beside
+    /// the session token, and the dashboard sends the browser there.
+    ///
+    /// An absolute URL (`https://app.example.com/welcome`) or a path on this
+    /// origin (`/welcome`). Unset — the default — means no redirect, and the
+    /// confirmation screen says so itself.
+    pub verify_email_redirect: String,
 }
 
 impl Default for AuthConfig {
@@ -232,6 +244,7 @@ impl Default for AuthConfig {
             invite_ttl_secs: 60 * 60 * 24 * 7,
             verification_ttl_secs: 60 * 60 * 24,
             password_reset_ttl_secs: 60 * 60,
+            verify_email_redirect: String::new(),
         }
     }
 }

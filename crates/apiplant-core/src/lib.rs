@@ -23,7 +23,8 @@ pub use config::{
 pub use env::{expand_document, load_dotenv, parse_toml};
 pub use error::{Error, Result};
 pub use schema::{
-    relation_name, Access, AuthEvent, CrudAction, Field, FieldType, HookEvent, Hooks, OnDelete,
-    Permissions, Policy, Publishes, RateLimitRule, RateLimits, Reference, Resource, Scope,
+    relation_name, Access, AuthEvent, CrudAction, Effect, Field, FieldType, HookEvent, Hooks,
+    OnDelete, Permissions, Policy, PolicySet, Publishes, RateLimitRule, RateLimits, Reference,
+    Resource, Rule, Scope,
     TextCase, ORG_CLASS_FIELD, ORG_CLASS_SUFFIX,
 };

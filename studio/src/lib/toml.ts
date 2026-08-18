@@ -14,6 +14,7 @@ import {
   CONTENT_FORMATS,
   FIELD_TYPES,
   HOOK_EVENTS,
+  EFFECTS,
   ON_DELETE,
   SCOPES,
   type Action,
@@ -22,7 +23,10 @@ import {
   type Field,
   type FieldType,
   type HookEvent,
+  type Effect,
   type OnDelete,
+  type PermissionRule,
+  type PermissionSet,
   type Resource,
   type Scope,
   type TomlTable,
@@ -117,6 +121,54 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
   return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
+/**
+ * Read one action's permission, in any of the three shapes it may be written.
+ *
+ * A bare string and an array are both `allow` — the array is only shorthand for
+ * several of them — and the table form is the one that can say anything else.
+ * Returns null for an absent or unreadable value, leaving the server's default.
+ */
+function parsePermissionSet(value: TomlValue | undefined): PermissionSet | null {
+  const clause = (raw: TomlValue | undefined, effect: Effect): PermissionRule[] => {
+    if (typeof raw === "string") return [{ policy: raw, effect }];
+    if (Array.isArray(raw)) {
+      return raw.filter((item): item is string => typeof item === "string").map((policy) => ({ policy, effect }));
+    }
+    return [];
+  };
+
+  if (typeof value === "string" || Array.isArray(value)) {
+    const rules = clause(value, "allow");
+    return rules.length ? rules : null;
+  }
+  if (isTable(value)) {
+    // Stored grouped, in evaluation order, however the keys were written.
+    const rules = [...clause(value.allow, "allow"), ...clause(value.own, "own"), ...clause(value.deny, "deny")];
+    // A table naming nobody has granted nothing, which is what `private` says.
+    return rules.length ? rules : [{ policy: "private", effect: "allow" }];
+  }
+  return null;
+}
+
+/**
+ * Write one action's permission back in the tersest shape that says it.
+ *
+ * A set that only ever allows round-trips to the string or array it was
+ * probably written as; the table form appears exactly when it has to.
+ */
+export function emitPermissionSet(set: PermissionSet): TomlValue {
+  if (set.every((rule) => rule.effect === "allow")) {
+    return set.length === 1 ? set[0].policy : set.map((rule) => rule.policy);
+  }
+  const table: TomlTable = {};
+  for (const effect of EFFECTS) {
+    const policies = set.filter((rule) => rule.effect === effect).map((rule) => rule.policy);
+    if (policies.length === 1) table[effect] = policies[0];
+    else if (policies.length > 1) table[effect] = policies;
+  }
+  return table;
+}
+
 /** Parse one `resources/*.toml` into the studio's resource. Throws on invalid TOML. */
 export function parseResource(text: string): Resource {
   const table = parseTable(text);
@@ -124,11 +176,11 @@ export function parseResource(text: string): Resource {
   const name = asString(meta.name, "");
   if (!name) throw new Error("[resource] name is required");
 
-  const permissions: Partial<Record<Action, string>> = {};
+  const permissions: Partial<Record<Action, PermissionSet>> = {};
   const rawPermissions = isTable(table.permissions) ? table.permissions : {};
   for (const action of ACTIONS) {
-    const value = rawPermissions[action];
-    if (typeof value === "string") permissions[action] = value;
+    const set = parsePermissionSet(rawPermissions[action]);
+    if (set) permissions[action] = set;
   }
 
   const fields: Field[] = [];
@@ -218,7 +270,7 @@ export function emitResource(resource: Resource): string {
   const permissions: TomlTable = {};
   for (const action of ACTIONS) {
     const value = resource.permissions[action];
-    if (value) permissions[action] = value;
+    if (value?.length) permissions[action] = emitPermissionSet(value);
   }
   if (Object.keys(permissions).length) out.permissions = permissions;
 

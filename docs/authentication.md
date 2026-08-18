@@ -257,6 +257,25 @@ can exclude these attempts.
 confirmed and returns a session token, since requiring a separate sign-in
 immediately after proving mailbox access adds nothing.
 
+Confirming is the end of the sign-up detour, and the place to land afterwards is
+usually the app rather than the screen that spent the token. `[auth]
+verify_email_redirect` names it:
+
+```toml
+[auth]
+verify_email_redirect = "https://app.example.com/welcome"   # or "/welcome"
+```
+
+The response then carries it beside the token:
+
+```json
+{ "token": "…", "verified": true, "redirect_to": "https://app.example.com/welcome" }
+```
+
+The dashboard signs the user in and then sends the browser there, so the app is
+reached already authenticated. Unset, the key is **absent** from the response
+rather than empty, so a client can tell "go here" from "nowhere in particular".
+
 `POST <base>/auth/verify-email/resend` always returns `202`.
 
 ### Resetting a password

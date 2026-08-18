@@ -13,6 +13,7 @@ apiplant-core.workspace = true
 apiplant-db.workspace = true
 apiplant-auth.workspace = true
 apiplant-email.workspace = true
+liquid.workspace = true
 apiplant-payments.workspace = true
 apiplant-oauth.workspace = true
 apiplant-ai.workspace = true
