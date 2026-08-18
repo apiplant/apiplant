@@ -128,7 +128,7 @@ checksum = "d301b3b94cb4b2f23d7917810addbbaff90738e0ca2be692bd027e70d7e0330c"
 
 [[package]]
 name = "apiplant"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "apiplant-abi",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-abi"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "abi_stable",
  "serde_json",
@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-ai"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-core",
  "futures-util",
@@ -173,11 +173,11 @@ dependencies = [
 
 [[package]]
 name = "apiplant-assets"
-version = "0.8.2"
+version = "0.9.0"
 
 [[package]]
 name = "apiplant-auth"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-core",
  "argon2",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-cache"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-core",
  "redis",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-core"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-db"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-auth",
  "apiplant-core",
@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-email"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-core",
  "chrono",
@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-function"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "abi_stable",
  "apiplant-abi",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-js"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "abi_stable",
  "apiplant-abi",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-oauth"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-core",
  "base64",
@@ -304,7 +304,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-payments"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-core",
  "async-stripe",
@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-queue"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-core",
  "apiplant-db",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-server"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "abi_stable",
  "anyhow",
@@ -389,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "apiplant-storage"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "apiplant-core",
  "chrono",
