@@ -49,5 +49,14 @@ if [ -d "$APP/functions" ]; then
   "$BIN" build "$APP"
 fi
 
+# The test suite wants an empty database — an app that arrived pre-populated
+# would prove nothing about the operations under test. The screenshot run wants
+# the opposite: an app with its `seed/` loaded, because an empty dashboard
+# documents nothing. APP_SEED=1 is that choice, made by the caller.
+if [ "${APP_SEED:-0}" = "1" ] && [ -d "$APP/seed" ]; then
+  echo "e2e: starting $APP_DIR (seeded)"
+  exec "$BIN" run --seed "$APP"
+fi
+
 echo "e2e: starting $APP_DIR"
 exec "$BIN" run "$APP"

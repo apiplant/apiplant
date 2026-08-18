@@ -17,6 +17,9 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 /** Where a relative link that leaves `docs/` (`../examples/…`) should point. */
 const REPO_BLOB = "https://github.com/apiplant/apiplant/blob/master/";
 
+/** Where `build/docs-images.ts` publishes `docs/images/`. The two must agree. */
+const DOCS_IMAGE_BASE = "/docs-images/";
+
 /** Raw markdown, keyed by path, loaded lazily so a doc is its own chunk. */
 const SOURCES = import.meta.glob("@docs/*.md", {
   query: "?raw",
@@ -89,6 +92,7 @@ const SECTIONS: { group: string; docs: [slug: string, title: string, summary: st
     group: "Operate",
     docs: [
       ["admin", "Admin dashboard", "The built-in operator UI and its [admin] config"],
+      ["studio", "The studio", "The local editor: building an app directory in a browser"],
       ["cli", "The console", "apiplant cli: the dashboard's functionality in a terminal"],
       ["security", "Security model", "What the server enforces, and what you must configure"],
       ["api-reference", "API reference", "Every endpoint, query parameter and status code"],
@@ -174,7 +178,9 @@ const DOC_CLASSES: Record<string, string> = {
   strong: "font-semibold text-ink",
   em: "italic",
   hr: "my-8 border-0 border-t border-line",
-  img: "max-w-full rounded-lg",
+  // The screenshots are of a light-background application, so they need a
+  // border of their own to keep an edge against the page in either theme.
+  img: "my-5 max-w-full rounded-lg border border-line",
   // Not `whitespace-nowrap`: a long path or symbol in prose would otherwise
   // push the whole page wider than a phone screen.
   code_inline:
@@ -403,7 +409,14 @@ function markdown(): Promise<MarkdownIt> {
 
     const defaultImage = md.renderer.rules.image!;
     md.renderer.rules.image = (tokens, index, options, env, self) => {
-      tokens[index].attrJoin("class", DOC_CLASSES.img);
+      const token = tokens[index];
+      token.attrJoin("class", DOC_CLASSES.img);
+      const src = token.attrGet("src");
+      if (src) token.attrSet("src", rewriteImageSrc(src));
+      // The guides are read on a phone as often as at a desk, and a screenshot
+      // is never above the fold — so none of them is worth blocking paint.
+      token.attrSet("loading", "lazy");
+      token.attrSet("decoding", "async");
       return defaultImage(tokens, index, options, env, self);
     };
 
@@ -435,6 +448,20 @@ function markdown(): Promise<MarkdownIt> {
   })();
 
   return renderer;
+}
+
+/**
+ * `images/admin-home.png` → `/docs-images/admin-home.png`.
+ *
+ * A guide writes the path GitHub needs — relative to the file, since that is
+ * where the picture is read from there. This site's routes are `/docs/admin`
+ * and `/docs`, so the same relative path would resolve to two different URLs;
+ * the images are published under one absolute prefix instead, by
+ * `build/docs-images.ts`.
+ */
+export function rewriteImageSrc(src: string): string {
+  if (/^(https?:|data:|\/)/.test(src)) return src;
+  return DOCS_IMAGE_BASE + src.replace(/^(\.\/)?images\//, "");
 }
 
 /** `resources.md#fields` → `/docs/resources#fields`; `../examples/x` → GitHub. */

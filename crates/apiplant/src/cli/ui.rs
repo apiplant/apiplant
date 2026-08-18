@@ -19,9 +19,12 @@ use super::state::{
     SignIn, Team, PAGE,
 };
 
-const ACCENT: Color = Color::Cyan;
+const ACCENT: Color = Color::Blue;
 const FAINT: Color = Color::DarkGray;
 const BAD: Color = Color::Red;
+/// The dashboard's `warn` palette, which is what it draws the impersonation
+/// banner in: this is a state to stay aware of, not a failure.
+const WARN: Color = Color::Yellow;
 const GOOD: Color = Color::Green;
 
 pub fn draw(frame: &mut Frame, cli: &Cli) {
@@ -144,7 +147,7 @@ fn draw_header(frame: &mut Frame, cli: &Cli, area: Rect) {
     } else {
         cli.manifest.app_name.clone()
     };
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             format!(" {title} "),
             Style::default().fg(Color::Black).bg(ACCENT).bold(),
@@ -153,8 +156,18 @@ fn draw_header(frame: &mut Frame, cli: &Cli, area: Rect) {
         Span::styled(cli.client.origin.clone(), Style::default().fg(FAINT)),
         Span::styled("  ·  ", Style::default().fg(FAINT)),
         Span::styled(cli.identity_label(), Style::default().fg(FAINT)),
-    ]);
-    frame.render_widget(Paragraph::new(line), area);
+    ];
+    // Nothing else on screen says that these records, these roles and this
+    // sidebar are somebody else's — so this does, on every frame, in the one
+    // place that is always visible.
+    if let Some(acting) = &cli.acting {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!(" acting as {} — you are {} ", acting.subject, acting.actor),
+            Style::default().fg(Color::Black).bg(WARN).bold(),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_status(frame: &mut Frame, cli: &Cli, area: Rect) {
@@ -720,11 +733,14 @@ fn draw_team(frame: &mut Frame, cli: &Cli, team: &Team, area: Rect, focused: boo
         &mut state,
     );
 
-    let hint = if team.manage {
-        "  n  add someone      d  remove them      g  give a role      t  take one away      r  reload"
+    let mut hint = if team.manage {
+        "  n  add someone      d  remove them      g  give a role      t  take one away      r  reload".to_string()
     } else {
-        "  n  add someone      d  remove them      r  reload      (roles are not yours to change here)"
+        "  n  add someone      d  remove them      r  reload      (roles are not yours to change here)".to_string()
     };
+    if cli.impersonation_offered() && cli.acting.is_none() {
+        hint.push_str("      I  act as them");
+    }
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(""),
@@ -793,6 +809,26 @@ fn draw_session(frame: &mut Frame, cli: &Cli, area: Rect, focused: bool) {
         ),
     ];
 
+    // Whose session this is, when it is not simply the operator's. The pin is
+    // worth a line of its own: it is why the organization above cannot be
+    // switched, which otherwise looks like the picker being broken.
+    if let Some(acting) = &cli.acting {
+        lines.push(row(
+            "Acting as",
+            &match acting.subject == acting.subject_id {
+                true => acting.subject.clone(),
+                false => format!("{} ({})", acting.subject, acting.subject_id),
+            },
+        ));
+        lines.push(row("Really", &acting.actor));
+        if acting.pinned.is_some() {
+            lines.push(row(
+                "Pinned",
+                "to this organization — a borrowed session cannot move between them",
+            ));
+        }
+    }
+
     // Billing, only where there is any. The `billing_*` tables are ordinary
     // resources and are already in the sidebar; what no resource can say is
     // whether the deployment around them actually works — which is one line,
@@ -819,8 +855,14 @@ fn draw_session(frame: &mut Frame, cli: &Cli, area: Rect, focused: bool) {
         }
     }
 
+    lines.push(Line::from(""));
+    if cli.acting.is_some() {
+        lines.push(Line::from(Span::styled(
+            "  I  stop acting as somebody else",
+            Style::default().fg(WARN),
+        )));
+    }
     lines.extend([
-        Line::from(""),
         Line::from(Span::styled(
             "  g  name and issue an API key",
             Style::default().fg(FAINT),
@@ -1024,6 +1066,7 @@ fn help_text() -> Text<'static> {
         key("n", "new record"),
         key("e", "edit"),
         key("d", "delete"),
+        key("I", "act as this account (on the user table)"),
         key("c", "records belonging to this one (on a record)"),
         key("/", "search"),
         key("[ ]", format!("previous / next page of {PAGE}").as_str()),
@@ -1042,11 +1085,13 @@ fn help_text() -> Text<'static> {
         key("d", "remove them from it"),
         key("g", "give the highlighted member a role"),
         key("t", "take one of their roles away"),
+        key("I", "act as the highlighted member"),
         key("r", "reload"),
         Line::from(""),
         section("Session screen"),
         key("g", "name and issue an API key"),
         key("N", "start another organization"),
+        key("I", "stop acting as somebody else"),
         key("x", "sign out"),
     ])
 }

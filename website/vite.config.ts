@@ -4,6 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { searchIndexPlugin } from "./build/search-index.ts";
+import { docsImagesPlugin } from "./build/docs-images.ts";
 
 /* The download links name a release asset, and every asset name carries the
    version — so the site has to know it. Read from the workspace manifest, the
@@ -19,7 +20,7 @@ function workspaceVersion(): string {
 }
 
 export default defineConfig({
-  plugins: [solid(), tailwindcss(), searchIndexPlugin()],
+  plugins: [solid(), tailwindcss(), searchIndexPlugin(), docsImagesPlugin()],
   define: { __APIPLANT_VERSION__: JSON.stringify(workspaceVersion()) },
   // The guides are the repository's own docs/, one directory up. The alias is
   // what `import.meta.glob("@docs/*.md")` resolves against.

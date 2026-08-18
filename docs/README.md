@@ -27,6 +27,7 @@ lifecycle hooks, introducing one concept at a time.
 | [Payments](payments.md) | one `[payments]` provider: catalogue, subscriptions, checkout, tax |
 | [AI](ai.md) | one `[ai]` provider: a streaming chat endpoint, configured `agents/`, `ctx.chat`, streaming functions, live admin action output |
 | [Admin dashboard](admin.md) | the built-in operator UI, `[admin]` config, action forms |
+| [The studio](studio.md) | the local editor: making resources, permissions and functions in a browser |
 | [The console](cli.md) | `apiplant cli`: the dashboard's functionality in a terminal |
 | [Security model](security.md) | what the server enforces, and what you must configure before exposing it |
 | [API reference](api-reference.md) | every endpoint, query parameter and status code |

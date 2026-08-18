@@ -136,6 +136,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Payments](docs/payments.md) | one `[payments]` provider — catalogue, subscriptions, checkout, tax |
 | [AI](docs/ai.md) | one `[ai]` provider — a streaming chat endpoint, `ctx.chat`, streaming functions |
 | [Admin dashboard](docs/admin.md) | the built-in operator UI, `[admin]` config, action forms |
+| [The studio](docs/studio.md) | the local editor: making resources, permissions and functions in a browser |
 | [Security model](docs/security.md) | what the server enforces, and what you must configure before exposing it |
 | [API reference](docs/api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](docs/openapi.md) | the generated spec and interactive docs |
@@ -1089,7 +1090,8 @@ apiplant studio          # http://127.0.0.1:5273
 Serves the visual editor out of the same binary — no `pnpm`, no checkout. It is
 local-first: the browser opens your app directory directly and reads and writes
 it in place, so nothing is uploaded and this command is only a file server. It
-binds loopback by default.
+binds loopback by default. Making a resource, its permissions and a function in
+it, with pictures, is [docs/studio.md](docs/studio.md).
 
 ### The dashboard, in more detail
 

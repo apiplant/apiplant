@@ -10,7 +10,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{json, Map, Value};
 use tokio::sync::oneshot;
 
-use super::api::{self, AgentManifest, Client, FunctionManifest, Manifest, ResourceManifest};
+use super::api::{
+    self, AgentManifest, Client, Credentials, FunctionManifest, Manifest, ResourceManifest,
+};
 use super::link::{self, Handoff};
 use super::store::{Saved, Store};
 
@@ -759,6 +761,9 @@ pub struct Detail {
 #[derive(Debug, Clone)]
 pub struct Member {
     pub membership_id: String,
+    /// The account behind the membership — what impersonating one needs, and
+    /// empty on an app that will not show the column.
+    pub user_id: String,
     pub name: String,
     /// The primary role, the one the membership itself carries.
     pub primary: Option<String>,
@@ -897,6 +902,11 @@ pub enum ConfirmAction {
         function: usize,
         body: Value,
     },
+    /// Taking a session that acts as somebody else.
+    Impersonate {
+        user_id: String,
+        name: String,
+    },
     SignOut,
 }
 
@@ -904,6 +914,28 @@ pub enum ConfirmAction {
 pub struct Confirm {
     pub prompt: String,
     pub action: ConfirmAction,
+}
+
+/// A borrowed session, and everything needed to give it back.
+///
+/// The way back is kept here rather than fetched: the console holds a saved API
+/// key that identifies the operator, and putting it back is both cheaper and
+/// surer than trusting a second round trip to return them to themselves. The
+/// endpoint is still called — it is what writes the line in the server's log
+/// that says the borrowing ended — but its token is only used when there was no
+/// key to come back to.
+#[derive(Debug, Clone)]
+pub struct Acting {
+    /// The account being acted as, and what to call it.
+    pub subject_id: String,
+    pub subject: String,
+    /// What the operator was called before they borrowed it.
+    pub actor: String,
+    /// The organisation the borrowed session is pinned to, when it is one.
+    pub pinned: Option<String>,
+    /// The credentials and organisation to restore on the way out.
+    restore: Credentials,
+    restore_organization: Option<String>,
 }
 
 /// The sign-in screen, which owns the whole display until it succeeds.
@@ -987,6 +1019,10 @@ pub struct Cli {
     pub identity_id: Option<String>,
     /// Why the account could not be named, when it could not be.
     pub identity_note: Option<String>,
+    /// Set while this console is acting as somebody else. Everything on screen
+    /// is then *their* view of the app, which is the point and also the reason
+    /// it is drawn across the top of every screen.
+    pub acting: Option<Acting>,
     /// Every role the caller holds in the active organisation, primary first.
     pub roles: Vec<String>,
     /// Whether that list is a fact. False when the app will not tell us —
@@ -1020,6 +1056,7 @@ impl Cli {
             identity: None,
             identity_id: None,
             identity_note: None,
+            acting: None,
             roles: Vec::new(),
             roles_known: false,
             status: String::new(),
@@ -1041,12 +1078,8 @@ impl Cli {
     /// Everything that has to happen once we hold credentials.
     async fn after_sign_in(&mut self) {
         self.sign_in = None;
-        self.load_identity().await;
-        self.load_organizations().await;
-        self.load_roles().await;
-        self.rebuild_nav();
+        self.refresh_session().await;
         self.status = format!("Connected to {}", self.client.origin);
-        self.open_selected().await;
     }
 
     /// Poll anything happening off to the side. Called between frames.
@@ -1298,7 +1331,7 @@ impl Cli {
         if self.client.organization.is_none() || !self.listable("membership") {
             return;
         }
-        let query = [("user_id", me), ("limit", "1".into())];
+        let query = [("user_id", me.clone()), ("limit", "1".into())];
         let Ok(rows) = self.client.list("membership", &query).await else {
             return;
         };
@@ -1318,6 +1351,7 @@ impl Cli {
         };
         let member = Member {
             membership_id: id.clone(),
+            user_id: me,
             name: String::new(),
             primary: role_of(row),
             grants,
@@ -1403,6 +1437,7 @@ impl Cli {
                         .collect(),
                     primary: role_of(row),
                     membership_id,
+                    user_id,
                 })
             })
             .collect())
@@ -1557,6 +1592,19 @@ impl Cli {
         }
         let roles = self.known_roles();
         self.main = Main::Form(Form::add_member(&self.manifest, &roles));
+    }
+
+    /// The highlighted member of the team, as `(user id, name)`.
+    fn selected_member(&self) -> Option<(String, String)> {
+        let Main::Team(team) = &self.main else {
+            return None;
+        };
+        let member = team.members.get(team.index)?;
+        let name = match member.name.trim() {
+            "" => member.user_id.clone(),
+            name => name.to_string(),
+        };
+        Some((member.user_id.clone(), name))
     }
 
     fn ask_remove_member(&mut self) {
@@ -2603,7 +2651,161 @@ impl Cli {
         self.error = None;
     }
 
+    // --- acting as somebody else -------------------------------------------
+
+    /// Whether this server has the route at all.
+    ///
+    /// Two settings open it and either is enough: an app that lets an
+    /// organisation's admins borrow a member, or one that names a back office.
+    /// A console built against a server older than the manifest field sees
+    /// neither and offers nothing, which is the safe way round.
+    pub fn impersonation_offered(&self) -> bool {
+        let back_office = &self.manifest.organization.global_admin_role;
+        // An empty policy is a server that did not send one, not one that
+        // allows everybody: unlike a resource's permission — where the doubt is
+        // resolved by offering the key and letting the server refuse — the
+        // question here is whether the route exists, and a console that guesses
+        // wrong offers a 404.
+        self.manifest.auth.allow_impersonation
+            || (!back_office.value.is_empty() && back_office.possible())
+    }
+
+    /// Ask before borrowing an account.
+    ///
+    /// Whether *this* caller may is the server's decision — an admin over their
+    /// own organisation, the back office over anybody — so the console asks and
+    /// reports the refusal rather than deciding for itself. What it does settle
+    /// is the two cases that are never a request worth making.
+    fn ask_impersonate(&mut self, user_id: String, name: String) {
+        if !self.impersonation_offered() {
+            return self.say("This app does not allow acting as somebody else.");
+        }
+        if let Some(acting) = &self.acting {
+            return self.say(format!(
+                "You are already acting as {}. Press I on the Session screen to stop.",
+                acting.subject
+            ));
+        }
+        if user_id.trim().is_empty() {
+            return self.say("There is no account id on that row to act as.");
+        }
+        if self.identity_id.as_deref() == Some(user_id.as_str()) {
+            return self.say("That is you.");
+        }
+        self.confirm = Some(Confirm {
+            prompt: format!(
+                "Act as {name}? Everything you do until you stop will be done as them, and the server records that it was you."
+            ),
+            action: ConfirmAction::Impersonate { user_id, name },
+        });
+    }
+
+    /// Take the borrowed session and show the app as they see it.
+    async fn impersonate(&mut self, user_id: String, name: String) {
+        self.status = format!("Asking to act as {name}…");
+        let borrowed = match self.client.impersonate(&user_id).await {
+            Ok(borrowed) => borrowed,
+            Err(error) => return self.fail(error),
+        };
+
+        let acting = Acting {
+            subject_id: if borrowed.user_id.is_empty() {
+                user_id
+            } else {
+                borrowed.user_id
+            },
+            subject: name.clone(),
+            // Normally we already know what to call ourselves; where we do not
+            // — a console signed in with a key on an app that will not let it
+            // read its own row — the token says who the server thinks we are,
+            // which is better than a banner reading "acting as X, you are
+            // unknown".
+            actor: match self.identity_id.is_some() {
+                true => self.identity_label(),
+                false => borrowed
+                    .impersonator
+                    .clone()
+                    .unwrap_or_else(|| self.identity_label()),
+            },
+            pinned: borrowed.organization.clone(),
+            restore: self.client.credentials.clone(),
+            restore_organization: self.client.organization.clone(),
+        };
+
+        // The key is put away rather than kept alongside the token: a request
+        // carrying both is answered as whoever the server prefers, and the
+        // whole point of this screen is that there is no doubt about which
+        // account is acting.
+        self.client.credentials = Credentials {
+            api_key: None,
+            token: Some(borrowed.token),
+        };
+        // A pinned session ignores `X-Organization`, so sending the one we were
+        // in would only make the header disagree with the session.
+        if let Some(pinned) = borrowed.organization {
+            self.client.organization = Some(pinned);
+        }
+        self.acting = Some(acting);
+
+        self.refresh_session().await;
+        self.say(format!(
+            "Acting as {name}. Press I on the Session screen to stop."
+        ));
+    }
+
+    /// Give the session back.
+    ///
+    /// The endpoint is called for its record of the fact, and its answer is the
+    /// way back only when there was no saved key to return to — a console
+    /// signed in with a password holds nothing else.
+    async fn stop_impersonating(&mut self) {
+        let Some(acting) = self.acting.take() else {
+            return self.say("You are not acting as anybody else.");
+        };
+        let handed_back = self.client.stop_impersonating().await;
+
+        self.client.credentials = if acting.restore.is_empty() {
+            match &handed_back {
+                Ok(borrowed) => Credentials {
+                    api_key: None,
+                    token: Some(borrowed.token.clone()),
+                },
+                Err(_) => Credentials::default(),
+            }
+        } else {
+            acting.restore
+        };
+        self.client.organization = acting.restore_organization;
+
+        // A failure here is worth saying — the borrowing is over either way,
+        // because the credential that carried it has been put down.
+        if let Err(error) = handed_back {
+            self.fail(format!("the server was not told it ended: {error}"));
+        }
+
+        let signed_out = self.client.credentials.is_empty();
+        if signed_out {
+            self.sign_out();
+            return self.say("Stopped, and there was no credential to go back to.");
+        }
+        self.refresh_session().await;
+        self.say(format!("You are {} again.", acting.actor));
+    }
+
+    /// Read who we are now and rebuild everything that depends on it.
+    ///
+    /// The same work signing in does, minus writing anything down: a borrowed
+    /// session must never reach the file the next run reads.
+    async fn refresh_session(&mut self) {
+        self.load_identity().await;
+        self.load_organizations().await;
+        self.load_roles().await;
+        self.rebuild_nav();
+        self.open_selected().await;
+    }
+
     fn sign_out(&mut self) {
+        self.acting = None;
         self.client.credentials = Default::default();
         let origin = self.client.origin.clone();
         let _ = self.store.forget(&origin);
@@ -2813,6 +3015,7 @@ impl Cli {
                     Err(error) => self.fail(error),
                 }
             }
+            ConfirmAction::Impersonate { user_id, name } => self.impersonate(user_id, name).await,
             ConfirmAction::SignOut => self.sign_out(),
         }
     }
@@ -3149,9 +3352,32 @@ impl Cli {
             KeyCode::Char('n') => self.start_create(),
             KeyCode::Char('e') => self.start_edit(),
             KeyCode::Char('d') => self.ask_delete(),
+            // The other door onto impersonation, and the only one that reaches
+            // outside the active organisation: the Team screen lists a tenant's
+            // members, the user table lists whoever this caller may see.
+            KeyCode::Char('I') => self.ask_impersonate_row(),
             KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => self.focus = Focus::Nav,
             _ => {}
         }
+    }
+
+    /// Act as the account on the highlighted row of the `user` table.
+    fn ask_impersonate_row(&mut self) {
+        let Some((_, resource)) = self.current_resource() else {
+            return;
+        };
+        if resource.name != "user" {
+            return;
+        }
+        let Some(record) = self.current_record() else {
+            return;
+        };
+        let id = record.get("id").map(api::scalar).unwrap_or_default();
+        let name = match resource.title_of(&record) {
+            name if name.is_empty() => id.clone(),
+            name => name,
+        };
+        self.ask_impersonate(id, name);
     }
 
     async fn detail_key(&mut self, key: KeyEvent) {
@@ -3434,6 +3660,11 @@ impl Cli {
             // one. What they make and remove is a person's access.
             KeyCode::Char('n') => self.start_add_member(),
             KeyCode::Char('d') => self.ask_remove_member(),
+            KeyCode::Char('I') => {
+                if let Some((user_id, name)) = self.selected_member() {
+                    self.ask_impersonate(user_id, name);
+                }
+            }
             KeyCode::Char('r') => self.load_team().await,
             KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => self.focus = Focus::Nav,
             _ => {}
@@ -3444,7 +3675,13 @@ impl Cli {
         match key.code {
             // Named, like the dashboard's: an unnamed key is one nobody dares
             // revoke a year later.
+            // A key minted now would belong to the borrowed account and outlive
+            // the borrowing, which is not something to do by pressing one key.
+            KeyCode::Char('g') if self.acting.is_some() => {
+                self.say("Stop acting as somebody else before issuing a key — it would be theirs.")
+            }
             KeyCode::Char('g') => self.main = Main::Form(Form::new_api_key()),
+            KeyCode::Char('I') if self.acting.is_some() => self.stop_impersonating().await,
             // Another workspace alongside the personal one every account is
             // given. An app that provisions tenants itself has narrowed
             // `create`, and a `role:` policy is answered by the usual refusal
@@ -3858,6 +4095,7 @@ mod tests {
     fn member(name: &str, primary: Option<&str>, grants: &[&str], is_me: bool) -> Member {
         Member {
             membership_id: format!("m-{name}"),
+            user_id: format!("u-{name}"),
             name: name.into(),
             primary: primary.map(str::to_string),
             grants: grants
@@ -4405,6 +4643,119 @@ mod tests {
             ..Default::default()
         }]);
         assert!(!private.nav.iter().any(|item| item.kind == NavKind::Team));
+    }
+
+    /// A team screen, with us first and one other person.
+    fn team_of_two(cli: &mut Cli) {
+        cli.identity_id = Some("u-me".into());
+        cli.main = Main::Team(Team {
+            members: vec![
+                member("me", Some("admin"), &[], true),
+                member("sam", Some("member"), &[], false),
+            ],
+            index: 1,
+            manage: true,
+        });
+    }
+
+    #[test]
+    fn acting_as_somebody_else_is_offered_only_where_the_server_has_the_route() {
+        let mut cli = console(membership_resources("role:admin"));
+        team_of_two(&mut cli);
+
+        // Neither setting: the endpoint is not mounted, so the key says so
+        // rather than producing a request that would 404.
+        assert!(!cli.impersonation_offered());
+        cli.ask_impersonate("u-sam".into(), "sam".into());
+        assert!(cli.confirm.is_none());
+        assert!(cli.status.contains("does not allow"));
+
+        // An app whose admins may borrow a member.
+        cli.manifest.auth.allow_impersonation = true;
+        assert!(cli.impersonation_offered());
+
+        // Or one that names a back office, which reaches further and is enough
+        // on its own.
+        cli.manifest.auth.allow_impersonation = false;
+        cli.manifest.organization.global_admin_role = api::ActionPermission {
+            value: "role:staff".into(),
+            role: Some("staff".into()),
+            ..Default::default()
+        };
+        assert!(cli.impersonation_offered());
+    }
+
+    #[test]
+    fn borrowing_an_account_is_confirmed_and_says_that_it_is_recorded() {
+        let mut cli = console(membership_resources("role:admin"));
+        cli.manifest.auth.allow_impersonation = true;
+        team_of_two(&mut cli);
+
+        cli.ask_impersonate("u-sam".into(), "sam".into());
+        let confirm = cli.confirm.take().expect("a confirmation");
+        assert!(confirm.prompt.contains("Act as sam?"));
+        // Somebody about to do this should know that it is not anonymous.
+        assert!(confirm.prompt.contains("it was you"));
+        assert!(matches!(
+            confirm.action,
+            ConfirmAction::Impersonate { user_id, .. } if user_id == "u-sam"
+        ));
+    }
+
+    #[test]
+    fn the_two_requests_that_are_never_worth_making_are_refused_here() {
+        let mut cli = console(membership_resources("role:admin"));
+        cli.manifest.auth.allow_impersonation = true;
+        team_of_two(&mut cli);
+
+        // Yourself: the server calls this 400, and so does the console.
+        cli.ask_impersonate("u-me".into(), "me".into());
+        assert!(cli.confirm.is_none());
+        assert_eq!(cli.status, "That is you.");
+
+        // Nesting: a borrowed session may not borrow again, and being told
+        // where the way out is beats being told 409.
+        cli.acting = Some(Acting {
+            subject_id: "u-sam".into(),
+            subject: "sam".into(),
+            actor: "me".into(),
+            pinned: Some("org-1".into()),
+            restore: Credentials::default(),
+            restore_organization: None,
+        });
+        cli.ask_impersonate("u-kim".into(), "kim".into());
+        assert!(cli.confirm.is_none());
+        assert!(cli.status.contains("already acting as sam"));
+    }
+
+    #[test]
+    fn a_borrowed_session_never_reaches_the_saved_key() {
+        let mut cli = console(membership_resources("role:admin"));
+        // What impersonating does to the credentials: the key is put away and
+        // a token takes its place, and `save_credentials` — which runs on every
+        // sign-in path — has nothing to write while it is.
+        cli.client.credentials = Credentials {
+            api_key: None,
+            token: Some("borrowed".into()),
+        };
+        cli.acting = Some(Acting {
+            subject_id: "u-sam".into(),
+            subject: "sam".into(),
+            actor: "me".into(),
+            pinned: None,
+            restore: Credentials {
+                api_key: Some("apik_mine".into()),
+                token: None,
+            },
+            restore_organization: Some("org-1".into()),
+        });
+        cli.save_credentials();
+        assert!(cli.store.server(&cli.client.origin).is_none());
+
+        // And signing out from under a borrowed session leaves nothing behind.
+        cli.sign_out();
+        assert!(cli.acting.is_none());
+        assert!(cli.client.credentials.is_empty());
     }
 
     #[tokio::test]

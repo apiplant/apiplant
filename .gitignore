@@ -50,3 +50,8 @@ typescript/apiplant.js
 typescript/apiplant.d.ts
 
 .env
+
+# The console screenshots are rendered from these recordings; the pictures in
+# docs/images/ are the artefact, the raw terminal streams are scratch.
+e2e/.cli-shots/
+__pycache__/

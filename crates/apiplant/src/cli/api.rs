@@ -36,6 +36,20 @@ pub struct Manifest {
     /// which currency, and whether anything is actually being recorded.
     #[serde(default)]
     pub billing: Option<BillingManifest>,
+    /// The tenancy settings that belong to no single resource — chiefly who,
+    /// if anybody, this deployment treats as its back office.
+    pub organization: OrganizationManifest,
+}
+
+/// What an app's `[organization]` section amounts to, as the server reports it.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct OrganizationManifest {
+    /// `[organization] global_admin_role`, as a permission so it can be asked
+    /// the same questions as any other. `private` — the default — means this
+    /// deployment has no back office.
+    pub global_admin_role: ActionPermission,
+    pub known_classes: Vec<String>,
 }
 
 /// What an app's `[payments]` section amounts to, as the server reports it.
@@ -70,6 +84,11 @@ pub struct AuthManifest {
     pub invitations_enabled: bool,
     /// `/auth/password/forgot` exists.
     pub password_reset_enabled: bool,
+    /// Whether an organisation's admins may act as one of its members. A
+    /// deployment with a back office can impersonate whatever this says — see
+    /// [`OrganizationManifest::global_admin_role`] — so it is only half the
+    /// answer to whether the route is there at all.
+    pub allow_impersonation: bool,
     /// What the register form collects besides the identity and a password.
     pub signup_fields: Vec<FieldManifest>,
     /// What someone may change about themselves on the account screen.
@@ -93,6 +112,7 @@ impl Default for AuthManifest {
             require_email_verification: false,
             invitations_enabled: false,
             password_reset_enabled: false,
+            allow_impersonation: false,
             signup_fields: Vec::new(),
             profile_fields: Vec::new(),
             known_roles: Vec::new(),
@@ -323,6 +343,39 @@ pub struct Credentials {
 impl Credentials {
     pub fn is_empty(&self) -> bool {
         self.api_key.is_none() && self.token.is_none()
+    }
+}
+
+/// What `/auth/impersonate` and its `stop` hand back: a session, and enough
+/// about it to say whose account it is.
+#[derive(Debug, Clone)]
+pub struct Borrowed {
+    pub token: String,
+    /// The account the token now acts as.
+    pub user_id: String,
+    /// Who is really behind it. `None` on the way back out.
+    pub impersonator: Option<String>,
+    /// The organisation the token is pinned to, when it is one. A pinned
+    /// session ignores `X-Organization` entirely, which is what stops an
+    /// admin from following a borrowed account into somebody else's tenant.
+    pub organization: Option<String>,
+}
+
+impl Borrowed {
+    fn parse(response: &Value) -> Result<Borrowed> {
+        let text = |key: &str| {
+            response
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .filter(|value| !value.is_empty())
+        };
+        Ok(Borrowed {
+            token: text("token").ok_or_else(|| anyhow!("the server did not return a session"))?,
+            user_id: text("user_id").unwrap_or_default(),
+            impersonator: text("impersonator"),
+            organization: text("organization_id"),
+        })
     }
 }
 
@@ -656,6 +709,30 @@ impl Client {
             .ok_or_else(|| anyhow!("the server did not return a session token"))
     }
 
+    /// Take a session that acts as `user_id`.
+    ///
+    /// Who may is the server's business — an organisation's admin over one of
+    /// its members, or the back office over anybody — and a refusal comes back
+    /// saying which rule was missed, so the console asks rather than guessing.
+    pub async fn impersonate(&self, user_id: &str) -> Result<Borrowed> {
+        let response = self
+            .request(
+                reqwest::Method::POST,
+                "/auth/impersonate",
+                Some(json!({ "user_id": user_id })),
+            )
+            .await?;
+        Borrowed::parse(&response)
+    }
+
+    /// Hand back a borrowed session and get one for whoever borrowed it.
+    pub async fn stop_impersonating(&self) -> Result<Borrowed> {
+        let response = self
+            .request(reqwest::Method::POST, "/auth/impersonate/stop", None)
+            .await?;
+        Borrowed::parse(&response)
+    }
+
     /// Mint a long-lived key for whoever the current credentials identify.
     ///
     /// Signing in gives us a token that expires; trading it for a key once is
@@ -804,6 +881,37 @@ pub fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_borrowed_session_carries_the_pin_and_the_actor() {
+        let borrowed = Borrowed::parse(&json!({
+            "token": "jwt",
+            "user_id": "u-sam",
+            "impersonator": "u-me",
+            "organization_id": "org-1",
+        }))
+        .expect("a session");
+        assert_eq!(borrowed.token, "jwt");
+        assert_eq!(borrowed.user_id, "u-sam");
+        assert_eq!(borrowed.impersonator.as_deref(), Some("u-me"));
+        assert_eq!(borrowed.organization.as_deref(), Some("org-1"));
+
+        // An unpinned session — the back office's — reports `null` for the pin,
+        // and stopping reports one for the actor. Both mean the same thing as
+        // an absent key, and neither is a string to carry around.
+        let unpinned = Borrowed::parse(&json!({
+            "token": "jwt",
+            "user_id": "u-me",
+            "impersonator": Value::Null,
+            "organization_id": Value::Null,
+        }))
+        .expect("a session");
+        assert!(unpinned.impersonator.is_none());
+        assert!(unpinned.organization.is_none());
+
+        // No token is no session, whatever else came back.
+        assert!(Borrowed::parse(&json!({ "user_id": "u-sam" })).is_err());
+    }
 
     #[test]
     fn paths_normalise_to_one_spelling() {

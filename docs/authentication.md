@@ -386,7 +386,9 @@ appears on the team screen beside each member an admin may borrow — and, for a
 global admin, on every row of the `user` list as well as on the record, since
 they may reach people they share no organisation with whichever organisation
 they are standing in. A strip across the top of every screen says whose account is
-in use and holds the way out.
+in use and holds the way out. The [console](cli.md#acting-as-somebody-else) has
+the same two doors on `I`, from the Team screen and from the `user` table, with
+a banner in the header and the way out on the Session screen.
 
 ## Signing in with somebody else's account
 
