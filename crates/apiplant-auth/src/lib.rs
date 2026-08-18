@@ -100,10 +100,37 @@ pub struct Principal {
     pub user_id: Uuid,
     /// Organisations the caller belongs to (loaded per request). Drives all
     /// org-scoped access and `role:` checks.
+    ///
+    /// Under an organisation-locked impersonation this holds *only* the locked
+    /// organisation, even when the impersonated account belongs to others: the
+    /// admin borrowing the account is entitled to what it can do in their
+    /// organisation, and to nothing it can do elsewhere.
     pub organizations: Vec<OrgMembership>,
+    /// Who is impersonating this account, when somebody is. `None` for an
+    /// ordinary caller acting as themselves.
+    pub impersonator: Option<Uuid>,
+    /// The single organisation this session may act in, when its token pins it
+    /// to one. Overrides the `X-Organization` header rather than being checked
+    /// against it.
+    pub org_lock: Option<Uuid>,
 }
 
 impl Principal {
+    /// An ordinary caller acting as themselves.
+    pub fn new(user_id: Uuid, organizations: Vec<OrgMembership>) -> Principal {
+        Principal {
+            user_id,
+            organizations,
+            impersonator: None,
+            org_lock: None,
+        }
+    }
+
+    /// Whether this request is somebody acting as somebody else.
+    pub fn is_impersonating(&self) -> bool {
+        self.impersonator.is_some()
+    }
+
     /// Membership in a specific organisation, if any.
     pub fn membership(&self, org: Uuid) -> Option<&OrgMembership> {
         self.organizations.iter().find(|m| m.org_id == org)
@@ -186,6 +213,48 @@ struct Claims {
     sub: String,
     /// Expiry (unix seconds).
     exp: i64,
+    /// The *actor*: whoever is impersonating `sub`, when somebody is.
+    ///
+    /// Named for the same claim in [RFC 8693]'s delegation model, and it means
+    /// the same thing — the request is `sub`'s, made by `act`. Absent on an
+    /// ordinary token, which is what makes "am I impersonating" a question the
+    /// token itself answers rather than one the server has to remember.
+    ///
+    /// [RFC 8693]: https://www.rfc-editor.org/rfc/rfc8693#name-act-actor-claim
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    act: Option<String>,
+    /// The one organisation this token may act in, when it is locked to one.
+    ///
+    /// An organisation's own admin impersonates *inside* their organisation, so
+    /// the token they get is pinned to it: no `X-Organization` header can move
+    /// it, and no other membership of the impersonated account is visible
+    /// through it. A deployment-wide impersonator gets no lock, because moving
+    /// between organisations is the whole point of theirs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    org: Option<String>,
+}
+
+/// What a verified session token says: who the request is for, and — when it is
+/// an impersonation — who is really making it and where they may make it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Session {
+    /// The account the request acts as.
+    pub user_id: Uuid,
+    /// Whoever is impersonating [`user_id`](Self::user_id), if anybody.
+    pub impersonator: Option<Uuid>,
+    /// The only organisation this token may act in, if it is pinned to one.
+    pub org_lock: Option<Uuid>,
+}
+
+impl Session {
+    /// A plain, unimpersonated session.
+    pub fn plain(user_id: Uuid) -> Session {
+        Session {
+            user_id,
+            impersonator: None,
+            org_lock: None,
+        }
+    }
 }
 
 /// Issues and verifies credentials for one running server.
@@ -242,11 +311,24 @@ impl Authenticator {
 
     /// Mint a signed session JWT for a user id.
     pub fn issue_token(&self, user_id: Uuid) -> Result<String, Error> {
+        self.issue_session(Session::plain(user_id))
+    }
+
+    /// Mint a token for a session that may carry an actor and an organisation
+    /// lock — the token an impersonation is done with.
+    ///
+    /// Both facts live in the token rather than in a table because the token is
+    /// the only thing the next request brings: a server that had to look an
+    /// impersonation up could not tell a stolen ordinary token from this one,
+    /// and every request would pay for the lookup.
+    pub fn issue_session(&self, session: Session) -> Result<String, Error> {
         use jsonwebtoken::{encode, EncodingKey, Header};
         let exp = chrono::Utc::now().timestamp() + self.session_ttl_secs;
         let claims = Claims {
-            sub: user_id.to_string(),
+            sub: session.user_id.to_string(),
             exp,
+            act: session.impersonator.map(|id| id.to_string()),
+            org: session.org_lock.map(|id| id.to_string()),
         };
         encode(
             &Header::default(),
@@ -258,6 +340,16 @@ impl Authenticator {
 
     /// Verify a session JWT and recover the user id it was issued for.
     pub fn verify_token(&self, token: &str) -> Result<Uuid, Error> {
+        self.verify_session(token).map(|session| session.user_id)
+    }
+
+    /// Verify a session JWT and recover everything it says, impersonation
+    /// included.
+    ///
+    /// An unparseable `act` or `org` fails the whole token rather than being
+    /// dropped: a lock that quietly vanished would widen the session it was
+    /// minted to narrow.
+    pub fn verify_session(&self, token: &str) -> Result<Session, Error> {
         use jsonwebtoken::{decode, DecodingKey, Validation};
         let data = decode::<Claims>(
             token,
@@ -265,7 +357,15 @@ impl Authenticator {
             &Validation::default(),
         )
         .map_err(|_| Error::Token)?;
-        Uuid::parse_str(&data.claims.sub).map_err(|_| Error::Token)
+        let parse = |value: Option<String>| match value {
+            None => Ok(None),
+            Some(raw) => Uuid::parse_str(&raw).map(Some).map_err(|_| Error::Token),
+        };
+        Ok(Session {
+            user_id: Uuid::parse_str(&data.claims.sub).map_err(|_| Error::Token)?,
+            impersonator: parse(data.claims.act)?,
+            org_lock: parse(data.claims.org)?,
+        })
     }
 
     // --- API keys ---------------------------------------------------------
@@ -366,6 +466,8 @@ mod tests {
         let p = Principal {
             user_id: Uuid::new_v4(),
             organizations: vec![OrgMembership::new(org, Some("support".into()), [])],
+            impersonator: None,
+            org_lock: None,
         };
         assert!(p.is_member(org));
         assert_eq!(p.role_in(org), Some("support"));
@@ -384,6 +486,8 @@ mod tests {
                 Some("support".into()),
                 ["billing".to_string()],
             )],
+            impersonator: None,
+            org_lock: None,
         };
 
         // The primary role is one of the set, not a separate kind of thing.
@@ -407,6 +511,8 @@ mod tests {
                 OrgMembership::new(org, Some("admin".into()), []),
                 OrgMembership::new(other, Some("support".into()), []),
             ],
+            impersonator: None,
+            org_lock: None,
         };
 
         assert!(p.is_admin_of(org));
@@ -450,6 +556,8 @@ mod tests {
                 OrgMembership::new(staff, Some("admin".into()), []).in_class(Some("staff".into())),
                 OrgMembership::new(unclassed, Some("admin".into()), []),
             ],
+            impersonator: None,
+            org_lock: None,
         };
 
         assert_eq!(p.org_class_of(school), Some("school"));
@@ -483,5 +591,35 @@ mod tests {
         assert!(membership.roles.is_empty());
         assert!(!membership.is_admin());
         assert!(!membership.has_role("member"));
+    }
+
+    #[test]
+    fn a_session_token_round_trips_its_actor_and_its_pin() {
+        let auth = Authenticator::new(b"secret".to_vec(), 60);
+        let subject = Uuid::new_v4();
+        let actor = Uuid::new_v4();
+        let org = Uuid::new_v4();
+
+        let session = Session {
+            user_id: subject,
+            impersonator: Some(actor),
+            org_lock: Some(org),
+        };
+        let token = auth.issue_session(session).unwrap();
+        assert_eq!(auth.verify_session(&token).unwrap(), session);
+        // The old question still has the old answer, so nothing that only
+        // wanted the user id had to learn about any of this.
+        assert_eq!(auth.verify_token(&token).unwrap(), subject);
+
+        // An ordinary token carries neither claim.
+        let plain = auth.issue_token(subject).unwrap();
+        assert_eq!(
+            auth.verify_session(&plain).unwrap(),
+            Session::plain(subject)
+        );
+
+        // …and neither survives a different secret.
+        let other = Authenticator::new(b"different".to_vec(), 60);
+        assert!(other.verify_session(&token).is_err());
     }
 }

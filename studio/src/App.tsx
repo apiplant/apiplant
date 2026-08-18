@@ -6,14 +6,16 @@ import { ConfigPage } from "./components/ConfigPage";
 import { ResourcePage } from "./components/ResourcePage";
 import { FunctionPage } from "./components/FunctionPage";
 import { AgentPage } from "./components/AgentPage";
+import { EmailPage } from "./components/EmailPage";
 import { ChangesPage } from "./components/ChangesPage";
-import { NewAgentDialog, NewFunctionDialog, NewResourceDialog } from "./components/Dialogs";
+import { NewAgentDialog, NewEmailDialog, NewFunctionDialog, NewResourceDialog } from "./components/Dialogs";
 import { Badge, Button, EmptyState, HeadMark, Modal, ThemeToggle } from "./components/ui";
 import { droppedDirectoryHandle, permissionState } from "./lib/fs";
 import { setView, syncViewFromLocation, view } from "./lib/nav";
 import {
   type AppCandidate,
   agentEntry,
+  emailEntry,
   closeProject,
   dismissToast,
   functionEntry,
@@ -33,6 +35,7 @@ export function App() {
   const [newResource, setNewResource] = createSignal(false);
   const [newFunction, setNewFunction] = createSignal(false);
   const [newAgent, setNewAgent] = createSignal(false);
+  const [newEmail, setNewEmail] = createSignal(false);
   const [navOpen, setNavOpen] = createSignal(false);
   const [dropActive, setDropActive] = createSignal(false);
   const [switchRequest, setSwitchRequest] = createSignal<DirectorySelection | null>(null);
@@ -57,6 +60,10 @@ export function App() {
   const agentName = createMemo(() => {
     const current = view();
     return current.kind === "agent" ? current.name : null;
+  });
+  const emailName = createMemo(() => {
+    const current = view();
+    return current.kind === "email" ? current.name : null;
   });
 
   // Cmd/Ctrl+S saves; the browser's own save dialog is never what you want here.
@@ -376,6 +383,10 @@ export function App() {
                     setNavOpen(false);
                     setNewAgent(true);
                   }}
+                  onNewEmail={() => {
+                    setNavOpen(false);
+                    setNewEmail(true);
+                  }}
                   onNavigate={() => setNavOpen(false)}
                 />
               </aside>
@@ -387,6 +398,7 @@ export function App() {
                     onNewResource={() => setNewResource(true)}
                     onNewFunction={() => setNewFunction(true)}
                     onNewAgent={() => setNewAgent(true)}
+                    onNewEmail={() => setNewEmail(true)}
                   />
                 </Show>
 
@@ -452,6 +464,24 @@ export function App() {
                     </Show>
                   )}
                 </Show>
+
+                <Show when={emailName()} keyed>
+                  {(name) => (
+                    <Show
+                      when={emailEntry(name)}
+                      fallback={
+                        <div class="mx-auto max-w-3xl px-6 py-16">
+                          <EmptyState
+                            title="That email template is gone"
+                            description="It was deleted. Pick another from the sidebar."
+                          />
+                        </div>
+                      }
+                    >
+                      {(found) => <EmailPage entry={found()} />}
+                    </Show>
+                  )}
+                </Show>
               </main>
             </div>
 
@@ -463,6 +493,9 @@ export function App() {
             </Show>
             <Show when={newAgent()}>
               <NewAgentDialog onClose={() => setNewAgent(false)} />
+            </Show>
+            <Show when={newEmail()}>
+              <NewEmailDialog onClose={() => setNewEmail(false)} />
             </Show>
           </div>
         )}

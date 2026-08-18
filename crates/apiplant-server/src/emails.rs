@@ -208,7 +208,10 @@ pub fn invitation(
     let subject = format!("You're invited to join {organization}");
     // The two facts only this message has, on top of the common ones.
     let mut vars = links.vars(&url, expires_in);
-    vars.insert("organization".into(), liquid::model::Value::scalar(organization.to_string()));
+    vars.insert(
+        "organization".into(),
+        liquid::model::Value::scalar(organization.to_string()),
+    );
     vars.insert(
         "inviter".into(),
         liquid::model::Value::scalar(inviter.unwrap_or_default().to_string()),
@@ -233,7 +236,8 @@ pub fn verification(links: &Links, token: &str, expires_in: &str) -> Composed {
     );
     let note = format!("The link stops working in {expires_in}.");
     let subject = format!("Confirm your email for {}", links.app_name);
-    if let Some(composed) = links.rendered("verification", &links.vars(&url, expires_in), &subject) {
+    if let Some(composed) = links.rendered("verification", &links.vars(&url, expires_in), &subject)
+    {
         return composed;
     }
     Composed {
@@ -258,7 +262,8 @@ pub fn password_reset(links: &Links, token: &str, expires_in: &str) -> Composed 
          message — your password has not changed."
     );
     let subject = format!("Reset your {} password", links.app_name);
-    if let Some(composed) = links.rendered("password_reset", &links.vars(&url, expires_in), &subject)
+    if let Some(composed) =
+        links.rendered("password_reset", &links.vars(&url, expires_in), &subject)
     {
         return composed;
     }

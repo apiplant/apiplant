@@ -17,17 +17,20 @@ enabled = true
 path = "/docs"
 title = "04 · Multitenancy"
 
-# Who may write `organization.org_class`.
+# Who administers the deployment itself.
 #
 # The class decides what a `@org_class=` permission lets people do, so an
 # organisation that could set its own class could grant itself access. The
 # column is therefore server-owned — stripped from every request body — except
 # for the callers named here, in the same grammar `[permissions]` uses.
 #
-# Unset, this is `private`: nobody, and classes come only from seed data. Here
-# it is the Operations organisation, whose own class is `admin`.
+# They are the back office, and it is one grant rather than five: they class any
+# organisation, list every organisation and every user, and read and write data
+# in all of them, because role checks and organisation checks do not apply to
+# them. `private` still does. Unset, this is `private` for everybody: nobody
+# administers anything, and classes come only from seed data.
 [organization]
-org_class_editors = "member@org_class=admin"
+global_admin_role = "role:admin@org_class=admin"
 
 # What a new organisation starts as. Every tenant here is a customer until the
 # back office says otherwise, so a permission written for `org_class=customer`

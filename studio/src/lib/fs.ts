@@ -21,6 +21,8 @@ const TEXT_EXTENSIONS = new Set([
   "sum",
   "md",
   "txt",
+  "liquid",
+  "html",
   "json",
   "lock",
   "yaml",

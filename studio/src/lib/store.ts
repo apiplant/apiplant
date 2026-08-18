@@ -40,6 +40,15 @@ import {
   builtinResource,
   type BuiltinName,
 } from "./builtins";
+import {
+  BUILTIN_EMAILS,
+  detectEmails,
+  emailPath,
+  emailTextPath,
+  scaffoldEmail,
+  scaffoldEmailText,
+  type EmailEntry,
+} from "./emails";
 import { detectFunctions, extractExports } from "./functions";
 import { emitResource, emitTable, parseResource, parseTable } from "./toml";
 import { scaffoldFunction, scaffoldMainToml, type TemplateKind } from "./templates";
@@ -66,6 +75,8 @@ export interface Project {
   resources: ResourceEntry[];
   functions: FunctionEntry[];
   agents: AgentEntry[];
+  /** `emails/*.liquid` — the app's own wording for the messages it sends. */
+  emails: EmailEntry[];
   /** `functions/*.toml` we could not tie to a library. */
   orphanConfigs: string[];
   config: TomlTable;
@@ -339,6 +350,8 @@ async function buildProject(handle: FileSystemDirectoryHandle): Promise<Project>
   problems.push(...configProblems);
   problems.push(...resourceProblems);
   const { entries, orphanConfigs } = detectFunctions(scanned);
+  const emails = detectEmails(scanned);
+  problems.push(...emails.problems);
 
   return {
     handle,
@@ -347,6 +360,7 @@ async function buildProject(handle: FileSystemDirectoryHandle): Promise<Project>
     resources,
     functions: entries,
     agents: builtAgents.agents,
+    emails: emails.entries,
     orphanConfigs,
     config,
     pendingDirDeletes: [],
@@ -522,11 +536,18 @@ export async function saveAll(): Promise<void> {
  * the copy is what gets written *and* what gets emitted. Solid 2 commits store
  * writes on the next microtask, so reading the config back here to serialise it
  * would serialise the version from before the edit.
+ *
+ * The copy has to be a real clone: `snapshot` hands back the very object the
+ * store wraps, so mutating it would edit the store behind its back and the
+ * assignment below would then be a no-op — nothing reading the config would
+ * ever re-render. That is invisible for a text box, which already shows what
+ * was typed, but not for a form whose *fields* depend on a value, like the
+ * mailer's provider.
  */
 function mutateConfig(mutate: (config: TomlTable) => void): TomlTable | undefined {
   const project = state.project;
   if (!project) return undefined;
-  const config = snapshot(project.config) as TomlTable;
+  const config = structuredClone(snapshot(project.config)) as TomlTable;
   mutate(config);
   setState((s) => {
     s.project!.config = config;
@@ -821,10 +842,13 @@ export function updateResource(name: string, update: (resource: Resource) => voi
   const index = project.resources.findIndex((entry) => entry.name === name);
   if (index < 0) return;
 
-  // The edit is applied to a plain copy first: the store commits on the next
+  // The edit is applied to a clone first: the store commits on the next
   // microtask, so the entry read back here would still be the one from before.
+  // A clone rather than the `snapshot` itself, which is the store's own object
+  // — editing that in place would change the store without telling anything
+  // that reads it.
   const before = project.resources[index];
-  const resource = snapshot(before.resource) as Resource;
+  const resource = structuredClone(snapshot(before.resource)) as Resource;
   update(resource);
 
   const renamed = before.name !== resource.name;
@@ -1042,6 +1066,82 @@ export function addFunctionFile(entryName: string, fileName: string, text: strin
   });
 }
 
+// ---- email templates --------------------------------------------------------
+
+export function emailEntry(name: string): EmailEntry | undefined {
+  return state.project?.emails.find((entry) => entry.name === name);
+}
+
+/**
+ * Write `emails/<name>.liquid`, seeded with the framework's own layout.
+ *
+ * A file named after one of the built-in messages replaces it; any other name
+ * is a new template, which nothing sends until a function asks for it.
+ */
+export function addEmailTemplate(name: string): boolean {
+  const project = state.project;
+  if (!project || project.emails.some((entry) => entry.name === name)) return false;
+
+  const path = emailPath(name);
+  setFileText(path, scaffoldEmail(name));
+  setState((s) => {
+    const emails: EmailEntry[] = s.project!.emails;
+    emails.push({ name, path, textPath: null, builtin: BUILTIN_EMAIL_NAMES.has(name) });
+    emails.sort((a, b) => a.name.localeCompare(b.name));
+  });
+  setView({ kind: "email", name });
+  return true;
+}
+
+/** Add the written plain-text half, in place of the one derived from the HTML. */
+export function addEmailTextHalf(name: string) {
+  const project = state.project;
+  if (!project) return;
+  const index = project.emails.findIndex((entry) => entry.name === name);
+  if (index < 0 || project.emails[index].textPath) return;
+
+  const path = emailTextPath(name);
+  setFileText(path, scaffoldEmailText(name));
+  setState((s) => {
+    s.project!.emails[index].textPath = path;
+  });
+}
+
+export function deleteEmailTextHalf(name: string) {
+  const project = state.project;
+  if (!project) return;
+  const index = project.emails.findIndex((entry) => entry.name === name);
+  const path = index < 0 ? null : project.emails[index].textPath;
+  if (!path) return;
+
+  markDeleted(path);
+  setState((s) => {
+    s.project!.emails[index].textPath = null;
+  });
+}
+
+/**
+ * Remove a template. For an override that means the message goes back to the
+ * built-in one — the flow keeps working either way, which is the point of the
+ * built-ins being there.
+ */
+export function deleteEmailTemplate(name: string) {
+  const project = state.project;
+  if (!project) return;
+  const entry = project.emails.find((email) => email.name === name);
+  if (!entry) return;
+
+  markDeleted(entry.path);
+  if (entry.textPath) markDeleted(entry.textPath);
+  setState((s) => {
+    s.project!.emails = s.project!.emails.filter((email) => email.name !== name);
+  });
+  setView({ kind: "overview" });
+  toast(`Deleted email template ${name}`);
+}
+
+const BUILTIN_EMAIL_NAMES = new Set(BUILTIN_EMAILS.map((entry) => entry.name));
+
 // ---- agents -----------------------------------------------------------------
 
 export function addAgent(name: string, storageEnabled: boolean): string | null {
@@ -1073,7 +1173,7 @@ export function updateAgent(name: string, update: (agent: AgentEntry) => void) {
 
   // Edited on a plain copy, for the same reason as `updateResource`: a read of
   // the store here would still hold the values from before the write.
-  const updated = snapshot(before) as AgentEntry;
+  const updated = structuredClone(snapshot(before)) as AgentEntry;
   update(updated);
 
   const nextPath = `agents/${updated.name}.toml`;

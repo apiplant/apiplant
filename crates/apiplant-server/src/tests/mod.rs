@@ -399,6 +399,7 @@ mod billing;
 mod email_auth;
 mod functions;
 mod hooks;
+mod impersonation;
 mod oauth;
 mod permissions;
 mod queues;

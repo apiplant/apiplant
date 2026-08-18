@@ -1,0 +1,44 @@
+[app]
+name = "27 · Back office"
+
+[server]
+port = 8106
+base_path = "/api"
+
+[database]
+url = "postgres://postgres@127.0.0.1:5432/apiplant_back_office"
+auto_migrate = true
+
+[auth]
+jwt_secret = "example-secret-change-me"
+
+# An organisation's own admins may sign in as one of its members. The session
+# they get is pinned to that organisation, so it reaches nothing the member has
+# anywhere else — which is what makes this safe to leave on. Off would leave
+# only the back-office door below.
+allow_impersonation = true
+
+[docs]
+enabled = true
+path = "/docs"
+title = "27 · Back office"
+
+# The deployment's own administrators, and the whole of what makes somebody one.
+#
+# `role:admin@org_class=support` means: an admin of an organisation whose class
+# is `support`. There is exactly one of those here — Vantage Support, in
+# `seed/organization.toml` — so being the back office is a membership, granted
+# and revoked like any other, rather than a flag on an account.
+#
+# It is one grant that does five things: they class any organisation, list every
+# organisation and every user, read and write data in all of them (role checks
+# and organisation checks do not apply to them), and act as anybody, anywhere.
+# What it does not lift is `private`, which says a thing is not on the API at
+# all rather than that they lack a permission for it.
+[organization]
+global_admin_role = "role:admin@org_class=support"
+
+# Every organisation somebody creates is a customer until the back office says
+# otherwise — including the personal organisation each account gets at
+# registration. Nobody can class their own way into the back office.
+default_org_class = "customer"

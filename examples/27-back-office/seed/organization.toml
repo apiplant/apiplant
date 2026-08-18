@@ -1,0 +1,39 @@
+# One deployment, four organisations, three classes: the back office and three
+# customers.
+#
+# `id = "vantage"` is an alias rather than a UUID: seeding hashes it into a
+# stable id, so every file that writes `organization_id = "vantage"` means this
+# row and running the seed twice inserts it once.
+#
+# `org_class` is what the permissions in `resources/` are narrowed by, and it is
+# server-owned: no API request writes it unless `[organization]
+# global_admin_role` names the caller. That is why it is set here, beside the
+# row it belongs to — and why an organisation cannot class itself into the back
+# office.
+
+[[row]]
+id = "vantage"
+name = "Vantage Support"
+slug = "vantage"
+org_class = "support"        # the back office, above the tenants
+
+[[row]]
+id = "northwind"
+name = "Northwind Traders"
+slug = "northwind"
+org_class = "customer"
+
+[[row]]
+id = "umbra"
+name = "Umbra Logistics"
+slug = "umbra"
+org_class = "customer"
+
+# A customer on trial. Nothing here treats `trial` differently yet — it is the
+# class to write a permission against when something should: `role:admin` is
+# every customer's admin, `role:admin@org_class=customer` is fewer of them.
+[[row]]
+id = "lumen"
+name = "Lumen Health"
+slug = "lumen"
+org_class = "trial"

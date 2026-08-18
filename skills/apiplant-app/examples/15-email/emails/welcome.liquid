@@ -1,0 +1,42 @@
+---
+subject = "Welcome to {{ app_name }}, {{ name }}"
+---
+{% comment %}
+  A template of this app's own: nothing sends it by itself, `welcome_email` in
+  functions/mail.rs asks for it by name and hands it `name` and `sign_in_url`.
+
+  Tables and inline styles, because a mail client is not a browser — Outlook
+  lays out with tables and Gmail drops <style> blocks.
+{% endcomment %}
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ app_name }}</title></head>
+<body style="margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1c1f;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f4f5f7;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:100%;max-width:600px;background:#ffffff;border-radius:14px;border:1px solid #e3e6ea;overflow:hidden;">
+
+<tr><td style="padding:22px 32px;background:#14161a;">
+{% if logo_url != '' %}<img src="{{ logo_url }}" alt="{{ app_name }}" height="28" style="display:block;border:0;height:28px;width:auto;">
+{% else %}<span style="font-size:18px;font-weight:700;color:#ffffff;">{{ app_name }}</span>{% endif %}
+</td></tr>
+
+<tr><td style="padding:32px 32px 8px;font-size:16px;line-height:1.6;">
+Hello {{ name }} — your account is ready.
+</td></tr>
+
+<tr><td style="padding:20px 32px 8px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-radius:8px;background:#14161a;">
+<a href="{{ sign_in_url }}" style="display:inline-block;padding:13px 26px;border-radius:8px;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;line-height:1;">Sign in</a>
+</td></tr></table>
+</td></tr>
+
+<tr><td style="padding:16px 32px 28px;font-size:13px;line-height:1.6;color:#6b7280;">
+Or paste this into your browser: <a href="{{ sign_in_url }}" style="color:#4b5563;">{{ sign_in_url }}</a>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>

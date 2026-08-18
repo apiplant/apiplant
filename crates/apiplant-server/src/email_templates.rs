@@ -117,7 +117,8 @@ impl EmailTemplates {
         // Two passes, because the text half is a property of a template rather
         // than a template of its own, and the directory is in no useful order.
         let mut sources: BTreeMap<String, (Option<String>, Option<String>)> = BTreeMap::new();
-        for entry in std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))?
+        for entry in
+            std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))?
         {
             let path = entry?.path();
             if path.extension().and_then(|e| e.to_str()) != Some("liquid") {
@@ -202,9 +203,9 @@ impl EmailTemplates {
             .render(vars)
             .with_context(|| format!("rendering {TEMPLATE_DIR}/{name}.liquid"))?;
         let subject = match &template.subject {
-            Some(subject) => subject
-                .render(vars)
-                .with_context(|| format!("rendering the subject of {TEMPLATE_DIR}/{name}.liquid"))?,
+            Some(subject) => subject.render(vars).with_context(|| {
+                format!("rendering the subject of {TEMPLATE_DIR}/{name}.liquid")
+            })?,
             None => fallback_subject.to_string(),
         };
         let text = match &template.text {
@@ -232,7 +233,9 @@ fn compile(parser: &Parser, source: &str, what: &str) -> Result<liquid::Template
 /// Only at the very beginning, and only with the fence on its own line, so a
 /// `---` inside the markup — a horizontal rule, an em-dash line — is body.
 fn split_front_matter(source: &str) -> (Option<String>, &str) {
-    let body = source.strip_prefix("---\n").or_else(|| source.strip_prefix("---\r\n"));
+    let body = source
+        .strip_prefix("---\n")
+        .or_else(|| source.strip_prefix("---\r\n"));
     let Some(body) = body else {
         return (None, source);
     };
@@ -274,6 +277,18 @@ fn text_from_html(html: &str) -> String {
         let Some(close) = tail.find('>') else { break };
         let tag = &tail[1..close];
         let lower = tag.to_ascii_lowercase();
+        // Elements whose content is machinery rather than words. A template
+        // that is a whole document — which the ones the studio scaffolds are —
+        // otherwise puts its stylesheet in the plain-text part of the message.
+        if let Some(name) = element_to_skip(&lower) {
+            let after = &tail[close + 1..];
+            let end = after
+                .to_ascii_lowercase()
+                .find(&format!("</{name}"))
+                .unwrap_or(after.len());
+            rest = &after[end..];
+            continue;
+        }
         // A link's destination is the one thing that cannot survive as text on
         // its own, so it is written out beside the words.
         if let Some(href) = lower.strip_prefix("a ").and_then(|_| attr(tag, "href")) {
@@ -308,6 +323,18 @@ fn text_from_html(html: &str) -> String {
         .trim()
         .to_string()
         + "\n"
+}
+
+/// The name of an element whose *content* is not text a person should read.
+///
+/// `head` is not among them: a document keeps `<title>` out of the text this
+/// way, and everything else in a head is skipped for its own sake — an element
+/// list is easier to be sure of than tracking where the head ends.
+fn element_to_skip(lower: &str) -> Option<&'static str> {
+    let name = lower.trim_end_matches('/').trim().split(' ').next()?;
+    ["style", "script", "title"]
+        .into_iter()
+        .find(|candidate| *candidate == name)
 }
 
 /// The value of one attribute in a tag's source, unquoted.
@@ -359,7 +386,10 @@ mod tests {
 
         assert_eq!(rendered.subject, "Confirm for Acme");
         assert!(rendered.html.contains("https://x.test/go"));
-        assert!(!rendered.html.contains("subject ="), "front matter leaked into the body");
+        assert!(
+            !rendered.html.contains("subject ="),
+            "front matter leaked into the body"
+        );
         // No text half was written, so one is derived — and the link survives
         // it, which is the only part of an HTML message that cannot.
         assert!(rendered.text.contains("confirm"));
@@ -374,7 +404,11 @@ mod tests {
         write(&root, "password_reset.liquid", "<p>Reset it.</p>\n");
         let templates = EmailTemplates::load(&root).unwrap();
         let rendered = templates
-            .render("password_reset", &liquid::object!({}), "Reset your password")
+            .render(
+                "password_reset",
+                &liquid::object!({}),
+                "Reset your password",
+            )
             .unwrap();
         assert_eq!(rendered.subject, "Reset your password");
         assert_eq!(rendered.html.trim(), "<p>Reset it.</p>");
@@ -394,13 +428,39 @@ mod tests {
     }
 
     #[test]
+    fn a_derived_text_half_carries_no_stylesheet() {
+        // A template written as a whole document — which is what a mail client
+        // needs, and what the studio scaffolds — has a head full of things that
+        // are not words. None of them belong in the plain-text part.
+        let root = temp("document");
+        write(
+            &root,
+            "welcome.liquid",
+            "<!doctype html><html><head><title>Acme</title>\
+             <style>.ap-pad { padding:20px; }</style></head>\
+             <body><p>Hello {{ name }}</p></body></html>",
+        );
+        let templates = EmailTemplates::load(&root).unwrap();
+        let rendered = templates
+            .render("welcome", &liquid::object!({ "name": "Bo" }), "Welcome")
+            .unwrap();
+
+        assert_eq!(rendered.text.trim(), "Hello Bo");
+        // The HTML half keeps all of it — only the text derivation drops them.
+        assert!(rendered.html.contains("padding:20px"));
+    }
+
+    #[test]
     fn a_template_that_does_not_parse_stops_the_app() {
         // Rather than surfacing hours later as a password reset that never
         // arrived, which is where a lazy compile would put it.
         let root = temp("broken");
         write(&root, "verification.liquid", "{% if %}");
         let error = EmailTemplates::load(&root).unwrap_err().to_string();
-        assert!(error.contains("verification.liquid"), "unhelpful error: {error}");
+        assert!(
+            error.contains("verification.liquid"),
+            "unhelpful error: {error}"
+        );
     }
 
     #[test]
@@ -422,3 +482,4 @@ mod tests {
         assert!(error.contains("nope"), "unhelpful error: {error}");
     }
 }
+

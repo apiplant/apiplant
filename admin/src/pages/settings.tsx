@@ -36,6 +36,8 @@ import {
   emailOf,
   hasRole,
   canPermission,
+  impersonate,
+  mayImpersonate,
   manifest,
   notify,
   oauthAvailable,
@@ -44,6 +46,7 @@ import {
   reportError,
   refreshRole,
   resourceByName,
+  navigate,
   session,
   setActiveOrganization,
 } from "../store";
@@ -395,6 +398,25 @@ export function TeamPage() {
     }
   };
 
+  /**
+   * Borrow a member's account and land on the dashboard as them.
+   *
+   * The session that comes back is pinned to this organisation, so what an
+   * admin sees through it is what that member sees *here* — never what they
+   * have anywhere else. The banner at the top of the shell is what gets them
+   * out again.
+   */
+  const actAs = async (member: ApiRecord) => {
+    const userId = String(member.user_id ?? "");
+    try {
+      await impersonate(userId);
+      notify("success", `You are now working as ${memberName(member)}.`);
+      navigate({ kind: "dashboard" });
+    } catch (error) {
+      reportError(error);
+    }
+  };
+
   /** Revoke a pending invitation — the emailed link stops working at once. */
   const revokeInvitation = async (invitation: ApiRecord) => {
     try {
@@ -558,6 +580,24 @@ export function TeamPage() {
                             </Button>
                           </Show>
                         </div>
+                      </Show>
+                      {/* Outside the `mayManage` branch on purpose. Borrowing
+                          an account is not managing a membership: an app whose
+                          `membership.create` policy names somebody narrower
+                          than its admins still lets those admins act as their
+                          own members, and a global admin may do it in an
+                          organisation they administer nothing in. Whether the
+                          server would allow it is exactly what
+                          `mayImpersonate` asks. */}
+                      <Show when={mayImpersonate(String(member.user_id ?? ""))}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title={`See the dashboard as ${memberName(member)} sees it`}
+                          onClick={() => void actAs(member)}
+                        >
+                          Act as
+                        </Button>
                       </Show>
                     </li>
                   )}
@@ -765,10 +805,10 @@ export function OrganizationPage() {
 
   // The class is not an ordinary column: it decides which `@org_class=`
   // permissions apply inside this organisation, so the server strips it from
-  // any body but an authorised one's. `[organization] org_class_editors` says
+  // any body but an authorised one's. `[organization] global_admin_role` says
   // who that is, and the manifest carries the same policy so the field is an
   // input for them and a plain reading for everyone else.
-  const classPolicy = () => manifest()?.organization?.org_class_editors ?? null;
+  const classPolicy = () => manifest()?.organization?.global_admin_role ?? null;
   const mayEditClass = createMemo(() => {
     const policy = classPolicy();
     return policy ? canPermission(policy, true) : false;
@@ -784,7 +824,7 @@ export function OrganizationPage() {
   // edit classes, in which case it is every one, because you cannot class an
   // organisation you cannot find.
   //
-  // `org: true` is what makes them one: `org_class_editors` is answered against
+  // `org: true` is what makes them one: `global_admin_role` is answered against
   // the organisation *selected*, so without the header the same account is
   // nobody in particular and the list comes back narrow.
   const allOrganizationsResource = createMemo(async () =>
@@ -920,7 +960,7 @@ export function OrganizationPage() {
                 help={
                   mayEditClass()
                     ? "What kind of organization this is. Permissions can be narrowed to a class, so this decides what people may do here."
-                    : "What kind of organization this is. Permissions can be narrowed to a class; only the operators named by `org_class_editors` can change it."
+                    : "What kind of organization this is. Permissions can be narrowed to a class; only the operators named by `global_admin_role` can change it."
                 }
               >
                 <Show

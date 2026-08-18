@@ -1,0 +1,38 @@
+# One list for the whole deployment — `scope = "global"`, so no tenant column —
+# guarded by the *class* of the organisation the caller has selected.
+#
+# `member@org_class=support` is an ordinary level with a qualifier on it: any
+# member will do, provided they are standing in an organisation of class
+# `support`. There is nothing to filter on a global table, so the qualifier is
+# a gate rather than a filter, and the answer depends on the `X-Organization`
+# header: Ash Agent may post an incident from Vantage Support and the identical
+# request fails from anywhere else.
+#
+# Note who that includes and who it does not. It includes every member of the
+# support organisation, agents as well as its admin — publishing a status page
+# is not a thing you should have to be the deployment's administrator to do.
+# It does not include a customer's admin, however senior, because the class of
+# the organisation they are standing in is `customer`.
+
+[resource]
+name = "service_status"
+scope = "global"
+timestamps = true
+
+[permissions]
+list   = "public"                    # a status page is for everyone
+read   = "public"
+create = "member@org_class=support"
+update = "member@org_class=support"
+delete = "member@org_class=support"
+
+[fields.component]
+type     = "string"
+required = true
+
+[fields.state]
+type    = "string"
+default = "operational"
+
+[fields.note]
+type = "text"

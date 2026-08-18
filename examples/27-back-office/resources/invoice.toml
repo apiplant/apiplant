@@ -1,0 +1,35 @@
+# What a customer may look at but not touch.
+#
+# Org-scoped, so every row belongs to one tenant and a member only ever sees
+# their own tenant's — that filtering happens before any policy is consulted.
+# On top of it: members read, their own admin corrects a reference, and nobody
+# creates or deletes one over the API.
+#
+# Two things follow that are easy to miss. A support agent standing in Vantage
+# Support is *not* a member of Northwind, so this resource is invisible to them
+# — unless they are the back office, for whom the organisation check does not
+# apply at all. And `create = "private"` stays shut even for the back office:
+# `private` is "not on the API", not "you lack a permission", so it answers 404
+# for everybody. Invoices arrive from the billing system, i.e. from the seed.
+
+[resource]
+name = "invoice"
+timestamps = true
+
+[permissions]
+list   = "member"
+read   = "member"
+create = "private"
+update = "role:admin"
+delete = "private"
+
+[fields.reference]
+type     = "string"
+required = true
+
+[fields.amount_cents]
+type = "integer"
+
+[fields.paid]
+type    = "boolean"
+default = false

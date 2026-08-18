@@ -1,0 +1,20 @@
+# Roles are a set, not a slot. These rows are the second and third role a
+# membership holds, beside the primary one on the membership itself.
+
+# Ugo is still an ordinary member of Umbra — he just cannot write anything.
+# `deny = ["role:suspended"]` on `ticket` is what reads this, and a deny beats
+# every allow the same caller matches.
+[[row]]
+id = "ugo-suspended"
+organization_id = "umbra"
+membership_id = "ugo-at-umbra"
+role = "suspended"
+
+# Liam handles Lumen's queue as well as his own tickets, without being made an
+# admin of anything: `role:manager` is the whole grant, and it sits beside the
+# `member` on his membership rather than replacing it.
+[[row]]
+id = "liam-manager"
+organization_id = "lumen"
+membership_id = "liam-at-lumen"
+role = "manager"

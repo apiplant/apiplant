@@ -257,6 +257,25 @@ can exclude these attempts.
 confirmed and returns a session token, since requiring a separate sign-in
 immediately after proving mailbox access adds nothing.
 
+Confirming is the end of the sign-up detour, and the place to land afterwards is
+usually the app rather than the screen that spent the token. `[auth]
+verify_email_redirect` names it:
+
+```toml
+[auth]
+verify_email_redirect = "https://app.example.com/welcome"   # or "/welcome"
+```
+
+The response then carries it beside the token:
+
+```json
+{ "token": "…", "verified": true, "redirect_to": "https://app.example.com/welcome" }
+```
+
+The dashboard signs the user in and then sends the browser there, so the app is
+reached already authenticated. Unset, the key is **absent** from the response
+rather than empty, so a client can tell "go here" from "nowhere in particular".
+
 `POST <base>/auth/verify-email/resend` always returns `202`.
 
 ### Resetting a password
@@ -311,6 +330,63 @@ that user can do.
 Roles are per-organisation. The built-in `membership` resource carries a
 member's `role`, so `role:admin` means **admin of the active organisation**.
 Create or update memberships through the API to assign roles.
+
+## Acting as somebody else
+
+Support work needs somebody's screen, not their password. Two doors lead to it,
+deliberately different sizes:
+
+```toml
+# main.toml
+[auth]
+allow_impersonation = true                            # on by default
+
+[organization]
+global_admin_role = "role:admin@org_class=staff"      # nobody, unless named
+```
+
+**An organisation's admin** may act as one of its members. The session they get
+back is **pinned** to that organisation: the `X-Organization` header cannot move
+it, and none of the borrowed account's other memberships are loaded at all — so
+somebody who belongs to two organisations cannot have one admin see the other.
+That property is what makes this safe to leave on by default.
+
+**The back office** — whoever `[organization] global_admin_role` names, which is
+nobody unless an app says so — may act as anyone in any organisation, and
+their session is not pinned, because moving around the account's organisations
+is what support access is for.
+
+```http
+POST /api/auth/impersonate        (an admin of the active organisation,
+{ "user_id": "…" }                 or a global admin)
+
+POST /api/auth/impersonate/stop   (a session that is acting as somebody)
+```
+
+Both answer with a session: `{ "token", "user_id", "impersonator",
+"organization_id" }`, where `organization_id` is the pin and is `null` for an
+unpinned one. `GET /auth/me` reports the same three facts, so a page that has
+been reloaded still knows whose account it is holding.
+
+Some things that follow, none of them optional:
+
+* **Impersonation does not nest.** A borrowed session cannot borrow again
+  (`409`), so the actor named in a token is always a real person.
+* **Stopping needs no stored credential.** The way back is minted from the
+  borrowed token's own actor claim.
+* **A borrowed session is never a back office.** `global_admin_role` is
+  answered `false` while impersonating, whoever is behind it — otherwise somebody could wear another name and keep their own
+  powers, which is the one arrangement no audit trail can untangle.
+* **Nothing else changes.** Every permission is then answered against the
+  borrowed account exactly as it would be for its owner.
+
+Neither endpoint is mounted when both doors are shut, so an app that wants
+none of this has none of it to probe. In the [dashboard](admin.md), **Act as**
+appears on the team screen beside each member an admin may borrow — and, for a
+global admin, on every row of the `user` list as well as on the record, since
+they may reach people they share no organisation with whichever organisation
+they are standing in. A strip across the top of every screen says whose account is
+in use and holds the way out.
 
 ## Signing in with somebody else's account
 

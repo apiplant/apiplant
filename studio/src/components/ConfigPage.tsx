@@ -18,6 +18,12 @@ import {
 import type { ConfigEntry, Subscription } from "../lib/store";
 import { setView, view } from "../lib/nav";
 import {
+  formatPolicy,
+  parsePolicy,
+  policyVocabulary,
+  type Subject,
+} from "../lib/permissions";
+import {
   Badge,
   Button,
   Card,
@@ -34,7 +40,8 @@ import {
 
 /** A section id, or the raw-file tab that always sits last. */
 type TabId = string;
-type FieldKind = "text" | "number" | "select" | "textarea" | "boolean" | "list";
+type FieldKind =
+  "text" | "number" | "select" | "textarea" | "boolean" | "list" | "policy";
 
 interface ConfigField {
   key: string;
@@ -100,7 +107,13 @@ const SMTP_ENCRYPTION = ["starttls", "tls", "none"] as const;
 const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
   none: [],
   smtp: [
-    { section: "email.smtp", key: "host", label: "host", placeholder: "smtp.example.com", kind: "text" as const },
+    {
+      section: "email.smtp",
+      key: "host",
+      label: "host",
+      placeholder: "smtp.example.com",
+      kind: "text" as const,
+    },
     {
       section: "email.smtp",
       key: "port",
@@ -109,8 +122,20 @@ const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
       kind: "number" as const,
       hint: "0 picks the usual port for the encryption.",
     },
-    { section: "email.smtp", key: "username", label: "username", placeholder: "mailer", kind: "text" as const },
-    { section: "email.smtp", key: "password", label: "password", placeholder: "app password", kind: "text" as const },
+    {
+      section: "email.smtp",
+      key: "username",
+      label: "username",
+      placeholder: "mailer",
+      kind: "text" as const,
+    },
+    {
+      section: "email.smtp",
+      key: "password",
+      label: "password",
+      placeholder: "app password",
+      kind: "text" as const,
+    },
     {
       section: "email.smtp",
       key: "encryption",
@@ -121,8 +146,18 @@ const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
     },
   ],
   ses: [
-    { key: "api_key", label: "access key id", placeholder: "$AWS_ACCESS_KEY_ID", kind: "text" as const },
-    { key: "api_secret", label: "secret access key", placeholder: "$AWS_SECRET_ACCESS_KEY", kind: "text" as const },
+    {
+      key: "api_key",
+      label: "access key id",
+      placeholder: "$AWS_ACCESS_KEY_ID",
+      kind: "text" as const,
+    },
+    {
+      key: "api_secret",
+      label: "secret access key",
+      placeholder: "$AWS_SECRET_ACCESS_KEY",
+      kind: "text" as const,
+    },
     {
       key: "region",
       label: "region",
@@ -131,10 +166,30 @@ const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
       hint: "Picks the endpoint: email.<region>.amazonaws.com.",
     },
   ],
-  sendgrid: [{ key: "api_key", label: "api key", placeholder: "$SENDGRID_API_KEY", kind: "text" as const }],
-  brevo: [{ key: "api_key", label: "api key", placeholder: "$BREVO_API_KEY", kind: "text" as const }],
+  sendgrid: [
+    {
+      key: "api_key",
+      label: "api key",
+      placeholder: "$SENDGRID_API_KEY",
+      kind: "text" as const,
+    },
+  ],
+  brevo: [
+    {
+      key: "api_key",
+      label: "api key",
+      placeholder: "$BREVO_API_KEY",
+      kind: "text" as const,
+    },
+  ],
   mailjet: [
-    { key: "api_key", label: "api key", placeholder: "$MAILJET_API_KEY", kind: "text" as const, hint: "The public key." },
+    {
+      key: "api_key",
+      label: "api key",
+      placeholder: "$MAILJET_API_KEY",
+      kind: "text" as const,
+      hint: "The public key.",
+    },
     {
       key: "api_secret",
       label: "api secret",
@@ -144,7 +199,12 @@ const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
     },
   ],
   mailgun: [
-    { key: "api_key", label: "api key", placeholder: "$MAILGUN_API_KEY", kind: "text" as const },
+    {
+      key: "api_key",
+      label: "api key",
+      placeholder: "$MAILGUN_API_KEY",
+      kind: "text" as const,
+    },
     {
       key: "domain",
       label: "sending domain",
@@ -153,8 +213,22 @@ const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
       hint: "The domain the messages are posted to.",
     },
   ],
-  postmark: [{ key: "api_key", label: "server token", placeholder: "$POSTMARK_SERVER_TOKEN", kind: "text" as const }],
-  resend: [{ key: "api_key", label: "api key", placeholder: "$RESEND_API_KEY", kind: "text" as const }],
+  postmark: [
+    {
+      key: "api_key",
+      label: "server token",
+      placeholder: "$POSTMARK_SERVER_TOKEN",
+      kind: "text" as const,
+    },
+  ],
+  resend: [
+    {
+      key: "api_key",
+      label: "api key",
+      placeholder: "$RESEND_API_KEY",
+      kind: "text" as const,
+    },
+  ],
 };
 
 const PAYMENT_PROVIDERS = [
@@ -198,11 +272,15 @@ function accessLevelOf(
   value: string | number | boolean | undefined,
   fallback = "authenticated",
 ) {
-  return typeof value === "string" && value.startsWith("role:") ? "role" : String(value ?? fallback);
+  return typeof value === "string" && value.startsWith("role:")
+    ? "role"
+    : String(value ?? fallback);
 }
 
 function accessRoleOf(value: string | number | boolean | undefined) {
-  return typeof value === "string" && value.startsWith("role:") ? value.slice(5) : "";
+  return typeof value === "string" && value.startsWith("role:")
+    ? value.slice(5)
+    : "";
 }
 
 function aiFields(): ConfigField[] {
@@ -262,7 +340,8 @@ function aiFields(): ConfigField[] {
       label: "system prompt",
       group: "Generation defaults",
       kind: "textarea" as const,
-      placeholder: "Standing instructions for conversations that do not provide their own system prompt.",
+      placeholder:
+        "Standing instructions for conversations that do not provide their own system prompt.",
       hint: "Applied when the request and message list do not carry a more specific system prompt.",
     },
     {
@@ -614,7 +693,13 @@ const SECTIONS: ConfigSection[] = [
         kind: "boolean" as const,
         hint: "Off by default. When on, an account with no avatar_url is drawn with its Gravatar, which means a request to gravatar.com for every face. Initials are the fallback either way.",
       },
-      { section: "docs", key: "enabled", label: "swagger ui enabled", group: "API documentation", kind: "boolean" as const },
+      {
+        section: "docs",
+        key: "enabled",
+        label: "swagger ui enabled",
+        group: "API documentation",
+        kind: "boolean" as const,
+      },
       {
         section: "docs",
         key: "path",
@@ -647,12 +732,48 @@ const SECTIONS: ConfigSection[] = [
         kind: "text" as const,
         hint: "Full connection URL; leave empty to assemble from the parts below.",
       },
-      { key: "host", label: "host", group: "Connection parts", placeholder: "localhost", kind: "text" as const },
-      { key: "port", label: "port", group: "Connection parts", placeholder: "5432", kind: "number" as const },
-      { key: "name", label: "database", group: "Connection parts", placeholder: "apiplant", kind: "text" as const },
-      { key: "user", label: "user", group: "Connection parts", placeholder: "postgres", kind: "text" as const },
-      { key: "password", label: "password", group: "Connection parts", placeholder: "postgres", kind: "text" as const },
-      { key: "max_connections", label: "pool size", group: "Pool & schema", placeholder: "16", kind: "number" as const },
+      {
+        key: "host",
+        label: "host",
+        group: "Connection parts",
+        placeholder: "localhost",
+        kind: "text" as const,
+      },
+      {
+        key: "port",
+        label: "port",
+        group: "Connection parts",
+        placeholder: "5432",
+        kind: "number" as const,
+      },
+      {
+        key: "name",
+        label: "database",
+        group: "Connection parts",
+        placeholder: "apiplant",
+        kind: "text" as const,
+      },
+      {
+        key: "user",
+        label: "user",
+        group: "Connection parts",
+        placeholder: "postgres",
+        kind: "text" as const,
+      },
+      {
+        key: "password",
+        label: "password",
+        group: "Connection parts",
+        placeholder: "postgres",
+        kind: "text" as const,
+      },
+      {
+        key: "max_connections",
+        label: "pool size",
+        group: "Pool & schema",
+        placeholder: "16",
+        kind: "number" as const,
+      },
       {
         key: "auto_migrate",
         label: "auto migrate",
@@ -665,15 +786,15 @@ const SECTIONS: ConfigSection[] = [
   {
     id: "organization",
     title: "Organizations",
-    hint: "The tenant itself. An organisation's `org_class` decides which `@org_class=` permissions apply inside it, so who may write that column is a deployment decision rather than a row-level one.",
+    hint: "The tenant itself. An organisation's `org_class` decides which `@org_class=` permissions apply inside it, so who may write that column — and who administers the deployment as a whole — is a deployment decision rather than a row-level one.",
     fields: [
       {
-        key: "org_class_editors",
-        label: "org class editors",
-        group: "Classes",
+        key: "global_admin_role",
+        label: "global admin role",
+        group: "Back office",
         placeholder: "private",
-        kind: "text" as const,
-        hint: "Who may set an organisation's `org_class`, in the `[permissions]` grammar — typically a class of its own, e.g. `member@org_class=staff`. Unset means nobody: the column is server-owned and classes come from seed data or SQL.",
+        kind: "policy" as const,
+        hint: "The deployment's own administrators — typically a role in a class of its own, e.g. `role:admin` in class `staff`. They write any organisation's `org_class`, list every organisation and every user, and read and write data in all of them: role checks and organisation checks do not apply to them. `private` does — anything marked private is no more reachable for them than for anyone else. `private` means there is no back office.",
       },
       {
         key: "default_org_class",
@@ -683,6 +804,15 @@ const SECTIONS: ConfigSection[] = [
         kind: "text" as const,
         hint: "The class every new organisation starts with, personal ones included. Unset leaves them unclassed, which no `@org_class=` permission matches. A class editor naming one on create is not overridden.",
       },
+      {
+        section: "auth",
+        key: "allow_impersonation",
+        label: "allow impersonation",
+        group: "Acting as somebody else",
+        defaultOn: true,
+        kind: "boolean" as const,
+        hint: "On by default. An organisation's admins may sign in as one of its members; the session they get is pinned to that organisation, so it reaches nothing the member has anywhere else. The back office above may act as anyone, anywhere, whatever this says.",
+      },
     ],
   },
   {
@@ -691,7 +821,8 @@ const SECTIONS: ConfigSection[] = [
     hint: "Outbound mail for functions and auth flows that need a mailbox.",
     fields: () => {
       const provider = String(configValue("email", "provider") ?? "none");
-      const credentialsGroup = provider === "smtp" ? "SMTP server" : "Credentials";
+      const credentialsGroup =
+        provider === "smtp" ? "SMTP server" : "Credentials";
       const specific = (EMAIL_PROVIDER_FIELDS[provider] ?? []).map((field) => ({
         ...field,
         group: field.group ?? credentialsGroup,
@@ -715,10 +846,28 @@ const SECTIONS: ConfigSection[] = [
           kind: "text" as const,
           hint: "Envelope sender. Required once a provider is named.",
         },
-        { key: "from_name", label: "from name", group: "Sender identity", placeholder: "Acme Logistics", kind: "text" as const },
-        { key: "reply_to", label: "reply to", group: "Sender identity", placeholder: "support@example.com", kind: "text" as const },
+        {
+          key: "from_name",
+          label: "from name",
+          group: "Sender identity",
+          placeholder: "Acme Logistics",
+          kind: "text" as const,
+        },
+        {
+          key: "reply_to",
+          label: "reply to",
+          group: "Sender identity",
+          placeholder: "support@example.com",
+          kind: "text" as const,
+        },
         ...specific,
-        { key: "timeout_secs", label: "timeout (s)", group: "Delivery", placeholder: "15", kind: "number" as const },
+        {
+          key: "timeout_secs",
+          label: "timeout (s)",
+          group: "Delivery",
+          placeholder: "15",
+          kind: "number" as const,
+        },
       ];
     },
   },
@@ -742,7 +891,13 @@ const SECTIONS: ConfigSection[] = [
         kind: "boolean" as const,
         hint: "Keeps the cache off without deleting its settings.",
       },
-      { key: "prefix", label: "prefix", group: "Keys & expiry", placeholder: "my-app:", kind: "text" as const },
+      {
+        key: "prefix",
+        label: "prefix",
+        group: "Keys & expiry",
+        placeholder: "my-app:",
+        kind: "text" as const,
+      },
       {
         key: "default_ttl_secs",
         label: "default ttl (s)",
@@ -750,7 +905,13 @@ const SECTIONS: ConfigSection[] = [
         placeholder: "0",
         kind: "number" as const,
       },
-      { key: "timeout_secs", label: "timeout (s)", group: "Limits", placeholder: "5", kind: "number" as const },
+      {
+        key: "timeout_secs",
+        label: "timeout (s)",
+        group: "Limits",
+        placeholder: "5",
+        kind: "number" as const,
+      },
     ],
   },
   {
@@ -900,7 +1061,13 @@ const SECTIONS: ConfigSection[] = [
         placeholder: "https://example.com/pricing",
         kind: "text" as const,
       },
-      { key: "timeout_secs", label: "timeout (s)", group: "Limits", placeholder: "20", kind: "number" as const },
+      {
+        key: "timeout_secs",
+        label: "timeout (s)",
+        group: "Limits",
+        placeholder: "20",
+        kind: "number" as const,
+      },
       {
         key: "automatic_tax",
         label: "automatic tax",
@@ -930,17 +1097,25 @@ const SECTIONS: ConfigSection[] = [
  * the docs title falls back to the app's name — so both can be shown rather
  * than described.
  */
-function fallbackPlaceholder(sectionId: string, field: ConfigField): string | undefined {
+function fallbackPlaceholder(
+  sectionId: string,
+  field: ConfigField,
+): string | undefined {
   const directory = studio.project?.name;
-  const appName = (configValue("app", "name") as string | undefined)?.trim() || directory;
+  const appName =
+    (configValue("app", "name") as string | undefined)?.trim() || directory;
   const table = field.section ?? sectionId;
-  if (table === "app" && field.key === "name") return directory ?? field.placeholder;
-  if (table === "docs" && field.key === "title") return appName ?? field.placeholder;
+  if (table === "app" && field.key === "name")
+    return directory ?? field.placeholder;
+  if (table === "docs" && field.key === "title")
+    return appName ?? field.placeholder;
   return field.placeholder;
 }
 
 function sectionFields(section: ConfigSection): ConfigField[] {
-  return typeof section.fields === "function" ? section.fields() : section.fields;
+  return typeof section.fields === "function"
+    ? section.fields()
+    : section.fields;
 }
 
 /**
@@ -958,7 +1133,8 @@ function groupedFields(section: ConfigSection): FieldGroup[] {
     else groups.push({ title, fields: [field] });
   }
   const ungrouped = groups.find((group) => group.title === null);
-  if (ungrouped) return [ungrouped, ...groups.filter((group) => group !== ungrouped)];
+  if (ungrouped)
+    return [ungrouped, ...groups.filter((group) => group !== ungrouped)];
   return groups;
 }
 
@@ -985,14 +1161,26 @@ function hasSelectOption(field: ConfigField, value: string): boolean {
   return selectOptionsList(field).some((option) => option.value === value);
 }
 
-function selectOptionsList(field: ConfigField): { value: string; label: string }[] {
-  return (field.options ?? []).map((option) => (typeof option === "string" ? { value: option, label: option } : option));
+function selectOptionsList(
+  field: ConfigField,
+): { value: string; label: string }[] {
+  return (field.options ?? []).map((option) =>
+    typeof option === "string" ? { value: option, label: option } : option,
+  );
 }
 
 function selectOptions(sectionId: string, field: ConfigField) {
   const current = configValue(sectionId, field.key);
-  if (typeof current !== "string" || current === "" || hasSelectOption(field, current)) return selectOptionsList(field);
-  return [{ value: current, label: `${current} (current)` }, ...selectOptionsList(field)];
+  if (
+    typeof current !== "string" ||
+    current === "" ||
+    hasSelectOption(field, current)
+  )
+    return selectOptionsList(field);
+  return [
+    { value: current, label: `${current} (current)` },
+    ...selectOptionsList(field),
+  ];
 }
 
 /**
@@ -1021,7 +1209,9 @@ function AccessField(props: {
           setConfigValue(
             props.table,
             props.field,
-            value === "role" ? `role:${accessRoleOf(current()) || "admin"}` : value,
+            value === "role"
+              ? `role:${accessRoleOf(current()) || "admin"}`
+              : value,
           )
         }
       />
@@ -1031,9 +1221,120 @@ function AccessField(props: {
           class="max-w-[10rem]"
           value={accessRoleOf(current())}
           placeholder="admin"
-          onInput={(value) => setConfigValue(props.table, props.field, `role:${value}`)}
+          onInput={(value) =>
+            setConfigValue(props.table, props.field, `role:${value}`)
+          }
         />
       </Show>
+    </div>
+  );
+}
+
+/** What a `[permissions]` policy may name, when it names a person. */
+const POLICY_LEVELS = [
+  { value: "private", label: "nobody" },
+  { value: "role", label: "role" },
+  { value: "member", label: "any member" },
+  { value: "authenticated", label: "anybody signed in" },
+] as const;
+
+/**
+ * A whole policy string — level, role, and the class it is narrowed to — as one
+ * form, the same three controls the resource permissions table uses.
+ *
+ * A setting like `global_admin_role` is a policy, not a sentence: typed by hand
+ * `role:admn@org_class=staff` parses, saves, and silently names nobody. The
+ * role and the class are still free text, because neither is declared anywhere
+ * — they are membership and organisation data — but what the project already
+ * spells somewhere is offered as completions, which is the only check there is.
+ */
+function PolicyField(props: { table: string; field: string }) {
+  const current = () =>
+    String(configValue(props.table, props.field) ?? "private");
+  const subject = createMemo(() => parsePolicy(current() || "private"));
+  const vocabulary = createMemo(() => policyVocabulary());
+  const roleList = `config-policy-roles-${props.table}-${props.field}`;
+  const classList = `config-policy-classes-${props.table}-${props.field}`;
+
+  const edit = (update: (subject: Subject) => Subject) =>
+    setConfigValue(props.table, props.field, formatPolicy(update(subject())));
+
+  return (
+    <div class="space-y-1.5">
+      <div class="flex gap-2">
+        <Select
+          class="flex-1"
+          value={subject().level}
+          options={[...POLICY_LEVELS]}
+          onChange={(value) =>
+            edit((current) => ({
+              ...current,
+              level: value,
+              role: value === "role" ? current.role || "admin" : "",
+            }))
+          }
+        />
+        <Show when={subject().level === "role"}>
+          <TextInput
+            mono
+            lowercase
+            list={roleList}
+            class="max-w-[10rem]"
+            placeholder="admin"
+            value={subject().role}
+            onInput={(value) =>
+              edit((current) => ({ ...current, role: value }))
+            }
+          />
+        </Show>
+      </div>
+
+      {/* The class is a narrowing most policies never use, so it stays one
+          quiet line rather than a field competing with who the caller is. */}
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="text-[0.6875rem] text-faint">in organisation with</span>
+        <Show
+          when={vocabulary().classes.length}
+          fallback={
+            <TextInput
+              mono
+              lowercase
+              list={classList}
+              class="max-w-[10rem]"
+              placeholder="any"
+              value={subject().orgClass}
+              onInput={(value) =>
+                edit((current) => ({ ...current, orgClass: value.trim() }))
+              }
+            />
+          }
+        >
+          <Select
+            class="max-w-[12rem] py-0.5 text-[0.6875rem]"
+            value={subject().orgClass}
+            options={[
+              { value: "", label: "any" },
+              ...vocabulary().classes.map((name) => ({
+                value: name,
+                label: name,
+              })),
+            ]}
+            onChange={(value) =>
+              edit((current) => ({ ...current, orgClass: value }))
+            }
+          />
+        </Show>
+        <span class="text-[0.6875rem] text-faint">class</span>
+      </div>
+
+      <datalist id={roleList}>
+        <For each={vocabulary().roles}>{(role) => <option value={role} />}</For>
+      </datalist>
+      <datalist id={classList}>
+        <For each={vocabulary().classes}>
+          {(name) => <option value={name} />}
+        </For>
+      </datalist>
     </div>
   );
 }
@@ -1050,12 +1351,29 @@ function AccessField(props: {
  * it. It is written through on each edit all the same, so nothing waits for a
  * blur to be saved.
  */
-function ListField(props: { table: string; field: string; placeholder?: string }) {
-  const saved = createMemo(() => configList(props.table, props.field).join(", "));
+function ListField(props: {
+  table: string;
+  field: string;
+  placeholder?: string;
+}) {
+  const saved = createMemo(() =>
+    configList(props.table, props.field).join(", "),
+  );
   const [typed, setTyped] = createSignal<string | null>(null);
+  // What the box holds, as the file would store it: a half-typed `a, ` is the
+  // one-item list `a`, and seeing that come back must not end the edit — the
+  // separator being typed would be swallowed on every keystroke.
+  const normalize = (text: string) =>
+    text
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join(", ");
   // Anything that changes the list elsewhere — the TOML tab, a project reload —
-  // ends the local edit, so the box never disagrees with the file.
-  createEffect(saved, () => {
+  // does end it, so the box never disagrees with the file.
+  createEffect(saved, (value) => {
+    const local = typed();
+    if (local !== null && normalize(local) === value) return;
     setTyped(null);
   });
 
@@ -1093,7 +1411,10 @@ function SubscriptionsCard() {
   const known = createMemo(() => allFunctionNames());
 
   const edit = (update: (draft: Subscription[]) => void) => {
-    const draft = entries().map((entry) => ({ topic: entry.topic, functions: [...entry.functions] }));
+    const draft = entries().map((entry) => ({
+      topic: entry.topic,
+      functions: [...entry.functions],
+    }));
     update(draft);
     setSubscriptions(draft);
   };
@@ -1117,7 +1438,9 @@ function SubscriptionsCard() {
       edit((draft) => draft.push(next));
       return;
     }
-    setPending((current) => current.map((row, i) => (i === index - saved ? next : row)));
+    setPending((current) =>
+      current.map((row, i) => (i === index - saved ? next : row)),
+    );
   };
 
   const remove = (index: number) => {
@@ -1127,7 +1450,9 @@ function SubscriptionsCard() {
   };
 
   const unknown = createMemo(() =>
-    rows().flatMap((row) => row.functions.filter((name) => name && !known().includes(name))),
+    rows().flatMap((row) =>
+      row.functions.filter((name) => name && !known().includes(name)),
+    ),
   );
 
   return (
@@ -1145,34 +1470,40 @@ function SubscriptionsCard() {
           when={rows().length > 0}
           fallback={
             <p class="text-xs leading-relaxed text-muted">
-              Nothing subscribes yet. A message published to a topic with no subscriber is still recorded in{" "}
-              <Mono>queue_message</Mono> — so it is never lost — but no function runs.
+              Nothing subscribes yet. A message published to a topic with no
+              subscriber is still recorded in <Mono>queue_message</Mono> — so it
+              is never lost — but no function runs.
             </p>
           }
         >
-          <For each={rows()}>
+          <For each={rows()} keyed={false}>
             {(row, index) => (
               <div class="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-                <Labelled label="topic" hint={index() === 0 ? "letters, digits, . _ - :" : undefined}>
+                <Labelled
+                  label="topic"
+                  hint={index === 0 ? "letters, digits, . _ - :" : undefined}
+                >
                   <TextInput
                     mono
-                    value={row.topic}
+                    value={row().topic}
                     placeholder="order.paid"
-                    onInput={(value) => commit(index(), { ...row, topic: value })}
+                    onInput={(value) =>
+                      commit(index, { ...row(), topic: value })
+                    }
                   />
                 </Labelled>
                 <Labelled
                   label="functions"
-                  hint={index() === 0 ? "comma-separated for several" : undefined}
+                  hint={index === 0 ? "comma-separated for several" : undefined}
                 >
                   <TextInput
                     mono
                     list="queue-function-names"
-                    value={row.functions.join(", ")}
+                    value={row().functions.join(", ")}
                     placeholder="fulfilOrder"
                     onInput={(value) =>
-                      commit(index(), {
-                        ...row,
+                      commit(index, {
+                        ...row(),
                         functions: value
                           .split(",")
                           .map((name) => name.trim())
@@ -1181,7 +1512,7 @@ function SubscriptionsCard() {
                     }
                   />
                 </Labelled>
-                <Button variant="ghost" size="sm" onClick={() => remove(index())}>
+                <Button variant="ghost" size="sm" onClick={() => remove(index)}>
                   Remove
                 </Button>
               </div>
@@ -1192,7 +1523,9 @@ function SubscriptionsCard() {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => setPending((current) => [...current, { topic: "", functions: [] }])}
+          onClick={() =>
+            setPending((current) => [...current, { topic: "", functions: [] }])
+          }
         >
           Add topic
         </Button>
@@ -1200,8 +1533,9 @@ function SubscriptionsCard() {
 
       <Show when={unknown().length > 0}>
         <div class="border-t border-line px-4 py-3 text-xs leading-relaxed text-warn">
-          <Mono>{unknown().join(", ")}</Mono> — no library in <Mono>functions/</Mono> exports that. Messages on
-          its topic will retry and then land in the dead-letter until it is built and dropped in.
+          <Mono>{unknown().join(", ")}</Mono> — no library in{" "}
+          <Mono>functions/</Mono> exports that. Messages on its topic will retry
+          and then land in the dead-letter until it is built and dropped in.
         </div>
       </Show>
     </Card>
@@ -1240,7 +1574,11 @@ function EntriesCard(props: {
       // Renaming a row to nothing would silently drop it; keep it pending.
       if (!next.key.trim()) {
         setPending((current) => [...current, next]);
-        setConfigEntries(props.table, props.field, draft.filter((_, i) => i !== index));
+        setConfigEntries(
+          props.table,
+          props.field,
+          draft.filter((_, i) => i !== index),
+        );
         return;
       }
       setConfigEntries(props.table, props.field, draft);
@@ -1257,7 +1595,12 @@ function EntriesCard(props: {
 
   const remove = (index: number) => {
     const count = saved().length;
-    if (index < count) setConfigEntries(props.table, props.field, saved().filter((_, i) => i !== index));
+    if (index < count)
+      setConfigEntries(
+        props.table,
+        props.field,
+        saved().filter((_, i) => i !== index),
+      );
     else setPending((current) => current.filter((_, i) => i !== index - count));
   };
 
@@ -1267,28 +1610,33 @@ function EntriesCard(props: {
       <div class="space-y-3 px-4 py-4">
         <Show
           when={rows().length > 0}
-          fallback={<p class="text-xs leading-relaxed text-muted">{props.empty}</p>}
+          fallback={
+            <p class="text-xs leading-relaxed text-muted">{props.empty}</p>
+          }
         >
-          <For each={rows()}>
+          <For each={rows()} keyed={false}>
             {(row, index) => (
               <div class="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
                 <Labelled label="key">
                   <TextInput
                     mono
-                    value={row.key}
+                    value={row().key}
                     placeholder={props.keyPlaceholder}
-                    onInput={(value) => commit(index(), { ...row, key: value })}
+                    onInput={(value) => commit(index, { ...row(), key: value })}
                   />
                 </Labelled>
-                <Labelled label="value" hint={index() === 0 ? "$VAR reads the environment" : undefined}>
+                <Labelled
+                  label="value"
+                  hint={index === 0 ? "$VAR reads the environment" : undefined}
+                >
                   <TextInput
                     mono
-                    value={row.value}
+                    value={row().value}
                     placeholder={props.valuePlaceholder}
-                    onInput={(value) => commit(index(), { ...row, value })}
+                    onInput={(value) => commit(index, { ...row(), value })}
                   />
                 </Labelled>
-                <Button variant="ghost" size="sm" onClick={() => remove(index())}>
+                <Button variant="ghost" size="sm" onClick={() => remove(index)}>
                   Remove
                 </Button>
               </div>
@@ -1299,7 +1647,9 @@ function EntriesCard(props: {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => setPending((current) => [...current, { key: "", value: "" }])}
+          onClick={() =>
+            setPending((current) => [...current, { key: "", value: "" }])
+          }
         >
           {props.addLabel}
         </Button>
@@ -1328,7 +1678,10 @@ export function ConfigPage() {
   const url = createMemo(() => {
     const host = configValue("server", "host") ?? "0.0.0.0";
     const port = configValue("server", "port") ?? 8080;
-    const base = String(configValue("server", "base_path") ?? "").replace(/\/$/, "");
+    const base = String(configValue("server", "base_path") ?? "").replace(
+      /\/$/,
+      "",
+    );
     const scheme = studio.project?.hasTls ? "https" : "http";
     return `${scheme}://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}${base}`;
   });
@@ -1336,7 +1689,9 @@ export function ConfigPage() {
   const selectedSectionId = createMemo(() => {
     const current = view();
     if (current.kind !== "config" || !current.section) return null;
-    return SECTIONS.some((section) => section.id === current.section) ? current.section : null;
+    return SECTIONS.some((section) => section.id === current.section)
+      ? current.section
+      : null;
   });
 
   /**
@@ -1344,7 +1699,9 @@ export function ConfigPage() {
    * route so links keep working; the TOML tab is a view of the same file and
    * lives only here.
    */
-  const [tab, setTab] = createSignal<TabId>(selectedSectionId() ?? DEFAULT_SECTION_ID);
+  const [tab, setTab] = createSignal<TabId>(
+    selectedSectionId() ?? DEFAULT_SECTION_ID,
+  );
   createEffect(selectedSectionId, (id) => {
     if (id) setTab(id);
   });
@@ -1354,8 +1711,8 @@ export function ConfigPage() {
     if (id !== TOML_TAB_ID) setView({ kind: "config", section: id });
   };
 
-  const currentSection = createMemo(() =>
-    SECTIONS.find((section) => section.id === tab()) ?? null,
+  const currentSection = createMemo(
+    () => SECTIONS.find((section) => section.id === tab()) ?? null,
   );
 
   return (
@@ -1369,8 +1726,8 @@ export function ConfigPage() {
           </Show>
         </div>
         <p class="mt-2 max-w-3xl text-xs leading-relaxed text-muted">
-          Every key is optional; anything left blank keeps the framework's default. With these settings the API
-          answers at <Mono>{url()}</Mono>.
+          Every key is optional; anything left blank keeps the framework's
+          default. With these settings the API answers at <Mono>{url()}</Mono>.
         </p>
       </header>
 
@@ -1380,10 +1737,16 @@ export function ConfigPage() {
           <Card class="px-4 py-8 text-center">
             <p class="text-sm text-ink">This app has no main.toml.</p>
             <p class="mx-auto mt-1 max-w-md text-xs leading-relaxed text-muted">
-              That is a valid app — the server fills in every default. Create one to pin the port, database,
-              mailer, cache, AI provider, payments and JWT secret.
+              That is a valid app — the server fills in every default. Create
+              one to pin the port, database, mailer, cache, AI provider,
+              payments and JWT secret.
             </p>
-            <Button class="mx-auto mt-4" variant="primary" size="sm" onClick={ensureMainToml}>
+            <Button
+              class="mx-auto mt-4"
+              variant="primary"
+              size="sm"
+              onClick={ensureMainToml}
+            >
               Create main.toml
             </Button>
           </Card>
@@ -1394,7 +1757,10 @@ export function ConfigPage() {
             active={tab()}
             onChange={chooseTab}
             tabs={[
-              ...SECTIONS.map((section) => ({ id: section.id, label: section.title })),
+              ...SECTIONS.map((section) => ({
+                id: section.id,
+                label: section.title,
+              })),
               { id: TOML_TAB_ID, label: "TOML" },
             ]}
           />
@@ -1403,180 +1769,298 @@ export function ConfigPage() {
         <Show when={currentSection()}>
           {(section) => (
             <div class="space-y-4">
-            <Card>
-              <CardHeader title={section().title} hint={section().hint} />
-              <div class="grid gap-4 px-4 py-4 sm:grid-cols-2">
-                <For each={groupedFields(section())}>
-                  {(group, groupIndex) => (
-                    <>
-                      <Show when={group.title}>
-                        <h3
-                          class={`sm:col-span-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-faint ${
-                            groupIndex() === 0 ? "" : "mt-2 border-t border-surface-3 pt-4"
-                          }`}
-                        >
-                          {group.title}
-                        </h3>
-                      </Show>
-                      <For each={group.fields}>
-                        {(field) => (
-                          <Show
-                            when={field.kind !== "boolean"}
-                            fallback={
-                              <div class="sm:col-span-2">
-                                <Switch
-                                  checked={switchIsOn(fieldSection(section(), field), field)}
-                                  label={field.label}
-                                  onChange={(value) =>
-                                    setConfigValue(
-                                      fieldSection(section(), field),
-                                      field.key,
-                                      // Back to the server's own default writes
-                                      // nothing, so the file only records what
-                                      // this app actually changed.
-                                      field.defaultOn && value ? undefined : value,
-                                    )
-                                  }
-                                />
-                                <Show when={field.hint}>
-                                  <p class="mt-1 text-[0.6875rem] leading-relaxed text-faint">{field.hint}</p>
-                                </Show>
-                              </div>
-                            }
-                          >
-                            <Labelled label={field.label} hint={field.hint}>
-                              <Show
-                                when={field.kind === "list"}
-                                fallback={
-                              <Show
-                                when={
-                                  (section().id === "ai" && field.key === "access") ||
-                                  (section().id === "queues" && field.key === "publish")
-                                }
-                                fallback={
-                                  <Show
-                                    when={field.kind === "select"}
-                                    fallback={
-                                      <Show
-                                        when={field.kind === "textarea"}
-                                        fallback={
-                                          <TextInput
-                                            mono
-                                            type={field.kind === "number" ? "number" : "text"}
-                                            value={String(configValue(fieldSection(section(), field), field.key) ?? "")}
-                                            placeholder={fallbackPlaceholder(section().id, field)}
-                                            onInput={(value) => {
-                                              const table = fieldSection(section(), field);
-                                              if (value === "") return setConfigValue(table, field.key, undefined);
-                                              if (field.kind === "number") {
-                                                const parsed = Number(value);
-                                                return setConfigValue(
-                                                  table,
-                                                  field.key,
-                                                  Number.isFinite(parsed) ? parsed : undefined,
-                                                );
-                                              }
-                                              setConfigValue(table, field.key, value);
-                                            }}
-                                          />
-                                        }
-                                      >
-                                        <TextArea
-                                          mono
-                                          class="min-h-32"
-                                          value={String(configValue(fieldSection(section(), field), field.key) ?? "")}
-                                          placeholder={fallbackPlaceholder(section().id, field)}
-                                          onInput={(value) => {
-                                            const table = fieldSection(section(), field);
-                                            setConfigValue(table, field.key, value === "" ? undefined : value);
-                                          }}
-                                        />
-                                      </Show>
-                                    }
-                                  >
-                                    <Select
-                                      value={String(
-                                        configValue(fieldSection(section(), field), field.key) ?? selectDefaultValue(field),
-                                      )}
-                                      options={selectOptions(fieldSection(section(), field), field)}
-                                      onChange={(value) =>
-                                        setConfigValue(
-                                          fieldSection(section(), field),
-                                          field.key,
-                                          value === selectDefaultValue(field) ? undefined : value,
-                                        )
-                                      }
-                                    />
-                                  </Show>
-                                }
-                              >
-<AccessField
-                                  table={section().id}
-                                  field={field.key}
-                                  options={section().id === "ai" ? AI_ACCESS_OPTIONS : QUEUE_PUBLISH_OPTIONS}
-                                  fallback={section().id === "ai" ? "authenticated" : "private"}
-                                />
-                              </Show>
-                                }
-                              >
-                                <ListField
-                                  table={fieldSection(section(), field)}
-                                  field={field.key}
-                                  placeholder={field.placeholder}
-                                />
-                              </Show>
-                            </Labelled>
-                          </Show>
-                        )}
-                      </For>
-                    </>
-                  )}
-                </For>
-              </div>
-            </Card>
-
-            <Show when={section().id === "queues"}>
-              <SubscriptionsCard />
-            </Show>
-
-            <Show when={section().id === "observability" && configValue("observability", "enabled") === true}>
-              <EntriesCard
-                title="Resource attributes"
-                hint="Attached to every span and metric this service reports, beside its name and version."
-                table="observability"
-                field="resource_attributes"
-                keyPlaceholder="region"
-                valuePlaceholder="eu-west-1"
-                empty="None. Add one where a backend needs to tell this deployment apart from another running the same build — region, cluster, tenant."
-                addLabel="Add attribute"
-              />
-              <EntriesCard
-                title="Export headers"
-                hint="Sent with every export request. This is where a vendor's ingest key goes — write it as $VAR so the key itself stays out of the file."
-                table="observability.otlp"
-                field="headers"
-                keyPlaceholder="authorization"
-                valuePlaceholder="$OTEL_TOKEN"
-                empty="None. A collector on your own network usually needs none; a hosted backend needs its API key."
-                addLabel="Add header"
-              />
-            </Show>
-
-            <Show when={section().id === "application"}>
               <Card>
-                <CardHeader title="HTTPS" hint="Not configured here — inferred from the app directory." />
-                <p class="px-4 py-4 text-xs leading-relaxed text-muted">
-                  Drop a certificate and a key into <Mono>https/</Mono> and the server serves TLS. Recognised
-                  names: <Mono>cert.pem</Mono>, <Mono>fullchain.pem</Mono>, <Mono>certificate.pem</Mono>,{" "}
-                  <Mono>server.crt</Mono> for the certificate; <Mono>key.pem</Mono>, <Mono>privkey.pem</Mono>,{" "}
-                  <Mono>server.key</Mono>, <Mono>private.pem</Mono> for the key.
-                  <Show when={studio.project?.hasTls}>
-                    {" "}
-                    This app has one, so it will serve HTTPS.
-                  </Show>
-                </p>
+                <CardHeader title={section().title} hint={section().hint} />
+                <div class="grid gap-4 px-4 py-4 sm:grid-cols-2">
+                  <For each={groupedFields(section())}>
+                    {(group, groupIndex) => (
+                      <>
+                        <Show when={group.title}>
+                          <h3
+                            class={`sm:col-span-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-faint ${
+                              groupIndex() === 0
+                                ? ""
+                                : "mt-2 border-t border-surface-3 pt-4"
+                            }`}
+                          >
+                            {group.title}
+                          </h3>
+                        </Show>
+                        <For each={group.fields}>
+                          {(field) => (
+                            <Show
+                              when={field.kind !== "boolean"}
+                              fallback={
+                                <div class="sm:col-span-2">
+                                  <Switch
+                                    checked={switchIsOn(
+                                      fieldSection(section(), field),
+                                      field,
+                                    )}
+                                    label={field.label}
+                                    onChange={(value) =>
+                                      setConfigValue(
+                                        fieldSection(section(), field),
+                                        field.key,
+                                        // Back to the server's own default writes
+                                        // nothing, so the file only records what
+                                        // this app actually changed.
+                                        field.defaultOn && value
+                                          ? undefined
+                                          : value,
+                                      )
+                                    }
+                                  />
+                                  <Show when={field.hint}>
+                                    <p class="mt-1 text-[0.6875rem] leading-relaxed text-faint">
+                                      {field.hint}
+                                    </p>
+                                  </Show>
+                                </div>
+                              }
+                            >
+                              <Labelled label={field.label} hint={field.hint}>
+                                <Show
+                                  when={field.kind === "policy"}
+                                  fallback={
+                                    <Show
+                                      when={field.kind === "list"}
+                                      fallback={
+                                        <Show
+                                          when={
+                                            (section().id === "ai" &&
+                                              field.key === "access") ||
+                                            (section().id === "queues" &&
+                                              field.key === "publish")
+                                          }
+                                          fallback={
+                                            <Show
+                                              when={field.kind === "select"}
+                                              fallback={
+                                                <Show
+                                                  when={
+                                                    field.kind === "textarea"
+                                                  }
+                                                  fallback={
+                                                    <TextInput
+                                                      mono
+                                                      type={
+                                                        field.kind === "number"
+                                                          ? "number"
+                                                          : "text"
+                                                      }
+                                                      value={String(
+                                                        configValue(
+                                                          fieldSection(
+                                                            section(),
+                                                            field,
+                                                          ),
+                                                          field.key,
+                                                        ) ?? "",
+                                                      )}
+                                                      placeholder={fallbackPlaceholder(
+                                                        section().id,
+                                                        field,
+                                                      )}
+                                                      onInput={(value) => {
+                                                        const table =
+                                                          fieldSection(
+                                                            section(),
+                                                            field,
+                                                          );
+                                                        if (value === "")
+                                                          return setConfigValue(
+                                                            table,
+                                                            field.key,
+                                                            undefined,
+                                                          );
+                                                        if (
+                                                          field.kind ===
+                                                          "number"
+                                                        ) {
+                                                          const parsed =
+                                                            Number(value);
+                                                          return setConfigValue(
+                                                            table,
+                                                            field.key,
+                                                            Number.isFinite(
+                                                              parsed,
+                                                            )
+                                                              ? parsed
+                                                              : undefined,
+                                                          );
+                                                        }
+                                                        setConfigValue(
+                                                          table,
+                                                          field.key,
+                                                          value,
+                                                        );
+                                                      }}
+                                                    />
+                                                  }
+                                                >
+                                                  <TextArea
+                                                    mono
+                                                    class="min-h-32"
+                                                    value={String(
+                                                      configValue(
+                                                        fieldSection(
+                                                          section(),
+                                                          field,
+                                                        ),
+                                                        field.key,
+                                                      ) ?? "",
+                                                    )}
+                                                    placeholder={fallbackPlaceholder(
+                                                      section().id,
+                                                      field,
+                                                    )}
+                                                    onInput={(value) => {
+                                                      const table =
+                                                        fieldSection(
+                                                          section(),
+                                                          field,
+                                                        );
+                                                      setConfigValue(
+                                                        table,
+                                                        field.key,
+                                                        value === ""
+                                                          ? undefined
+                                                          : value,
+                                                      );
+                                                    }}
+                                                  />
+                                                </Show>
+                                              }
+                                            >
+                                              <Select
+                                                value={String(
+                                                  configValue(
+                                                    fieldSection(
+                                                      section(),
+                                                      field,
+                                                    ),
+                                                    field.key,
+                                                  ) ??
+                                                    selectDefaultValue(field),
+                                                )}
+                                                options={selectOptions(
+                                                  fieldSection(
+                                                    section(),
+                                                    field,
+                                                  ),
+                                                  field,
+                                                )}
+                                                onChange={(value) =>
+                                                  setConfigValue(
+                                                    fieldSection(
+                                                      section(),
+                                                      field,
+                                                    ),
+                                                    field.key,
+                                                    value ===
+                                                      selectDefaultValue(field)
+                                                      ? undefined
+                                                      : value,
+                                                  )
+                                                }
+                                              />
+                                            </Show>
+                                          }
+                                        >
+                                          <AccessField
+                                            table={section().id}
+                                            field={field.key}
+                                            options={
+                                              section().id === "ai"
+                                                ? AI_ACCESS_OPTIONS
+                                                : QUEUE_PUBLISH_OPTIONS
+                                            }
+                                            fallback={
+                                              section().id === "ai"
+                                                ? "authenticated"
+                                                : "private"
+                                            }
+                                          />
+                                        </Show>
+                                      }
+                                    >
+                                      <ListField
+                                        table={fieldSection(section(), field)}
+                                        field={field.key}
+                                        placeholder={field.placeholder}
+                                      />
+                                    </Show>
+                                  }
+                                >
+                                  <PolicyField
+                                    table={fieldSection(section(), field)}
+                                    field={field.key}
+                                  />
+                                </Show>
+                              </Labelled>
+                            </Show>
+                          )}
+                        </For>
+                      </>
+                    )}
+                  </For>
+                </div>
               </Card>
-            </Show>
+
+              <Show when={section().id === "queues"}>
+                <SubscriptionsCard />
+              </Show>
+
+              <Show
+                when={
+                  section().id === "observability" &&
+                  configValue("observability", "enabled") === true
+                }
+              >
+                <EntriesCard
+                  title="Resource attributes"
+                  hint="Attached to every span and metric this service reports, beside its name and version."
+                  table="observability"
+                  field="resource_attributes"
+                  keyPlaceholder="region"
+                  valuePlaceholder="eu-west-1"
+                  empty="None. Add one where a backend needs to tell this deployment apart from another running the same build — region, cluster, tenant."
+                  addLabel="Add attribute"
+                />
+                <EntriesCard
+                  title="Export headers"
+                  hint="Sent with every export request. This is where a vendor's ingest key goes — write it as $VAR so the key itself stays out of the file."
+                  table="observability.otlp"
+                  field="headers"
+                  keyPlaceholder="authorization"
+                  valuePlaceholder="$OTEL_TOKEN"
+                  empty="None. A collector on your own network usually needs none; a hosted backend needs its API key."
+                  addLabel="Add header"
+                />
+              </Show>
+
+              <Show when={section().id === "application"}>
+                <Card>
+                  <CardHeader
+                    title="HTTPS"
+                    hint="Not configured here — inferred from the app directory."
+                  />
+                  <p class="px-4 py-4 text-xs leading-relaxed text-muted">
+                    Drop a certificate and a key into <Mono>https/</Mono> and
+                    the server serves TLS. Recognised names:{" "}
+                    <Mono>cert.pem</Mono>, <Mono>fullchain.pem</Mono>,{" "}
+                    <Mono>certificate.pem</Mono>, <Mono>server.crt</Mono> for
+                    the certificate; <Mono>key.pem</Mono>,{" "}
+                    <Mono>privkey.pem</Mono>, <Mono>server.key</Mono>,{" "}
+                    <Mono>private.pem</Mono> for the key.
+                    <Show when={studio.project?.hasTls}>
+                      {" "}
+                      This app has one, so it will serve HTTPS.
+                    </Show>
+                  </p>
+                </Card>
+              </Show>
             </div>
           )}
         </Show>
@@ -1584,12 +2068,19 @@ export function ConfigPage() {
         <Show when={tab() === TOML_TAB_ID}>
           <div>
             <div class="mb-2 flex items-center justify-between">
-              <p class="text-xs text-muted">Edit the file directly; the other tabs follow.</p>
+              <p class="text-xs text-muted">
+                Edit the file directly; the other tabs follow.
+              </p>
               <Show when={error()}>
                 <span class="text-xs text-danger">{error()}</span>
               </Show>
             </div>
-            <CodeEditor language="toml" value={draft() ?? canonical()} onInput={commit} minHeight="26rem" />
+            <CodeEditor
+              language="toml"
+              value={draft() ?? canonical()}
+              onInput={commit}
+              minHeight="26rem"
+            />
           </div>
         </Show>
       </Show>

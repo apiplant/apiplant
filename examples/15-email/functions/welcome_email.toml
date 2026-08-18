@@ -1,9 +1,11 @@
 # Config for the `welcome_email` hook, read at boot — change a value and
 # restart, no rebuild needed.
 #
-# Wording lives here rather than in the source for exactly that reason: the
-# subject line is the thing most likely to change, and it shouldn't need a
-# compiler.
+# The wording is not here either: it lives in `emails/welcome.liquid`, which the
+# hook asks for by name. What stays in config is the fact the template is given.
 
-subject = "Welcome to Example"
 sign_in_url = "http://127.0.0.1:8099/api/docs"
+
+# A subject here would override the template's own front matter, which is how
+# one template serves several messages that differ only in their subject line:
+# subject = "Welcome to Example"

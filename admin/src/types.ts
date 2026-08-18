@@ -118,7 +118,7 @@ export interface ActionPermissionManifest {
 
 /** Deployment-wide rules about the tenant itself. */
 export interface OrganizationManifest {
-  org_class_editors: ActionPermissionManifest;
+  global_admin_role: ActionPermissionManifest;
   known_classes: string[];
 }
 
@@ -222,6 +222,12 @@ export interface AuthManifest {
   invitations_enabled: boolean;
   /** "Forgot your password?" is worth offering. */
   password_reset_enabled: boolean;
+  /**
+   * Whether an organisation's admins may act as one of its members. The
+   * borrowed session is pinned to the organisation, so the offer is safe to
+   * make on any row the team screen shows.
+   */
+  allow_impersonation: boolean;
   signup_fields: FieldManifest[];
   profile_fields: FieldManifest[];
   known_roles: string[];
@@ -320,6 +326,12 @@ export type Route =
   | { kind: "account" }
   | { kind: "team" }
   | { kind: "organization" }
+  /**
+   * The two back-office screens, which exist only for a global admin: every
+   * organisation in the deployment, and every account in it.
+   */
+  | { kind: "organizations" }
+  | { kind: "users" }
   | { kind: "keys" }
   | { kind: "billing" }
   /** The `apiplant cli` handoff; see `pages/cli.tsx`. */

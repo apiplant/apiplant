@@ -1,0 +1,52 @@
+# A customer's support tickets: the table form of `[permissions]`, where one
+# action has more than one answer.
+#
+# "Managers see the whole queue, everyone else sees their own" is two answers to
+# one question, and no single level says both — `member` is too many people and
+# `owner` is too few. `allow` and `own` sit side by side and the wider one wins:
+# a manager matches `allow` and gets everything, a plain member falls through to
+# `own` and gets their own rows, and the query is filtered rather than refused,
+# so somebody else's ticket is a 404 and not a 403.
+#
+# `deny` outranks both. It matches only a role somebody *actually holds*, never
+# the blanket one an `admin` gets — otherwise `deny = ["role:suspended"]` would
+# lock out the very admins who granted it.
+
+[resource]
+name = "ticket"
+timestamps = true
+
+[permissions.list]
+allow = ["role:manager"]
+own   = ["member"]
+
+[permissions.read]
+allow = ["role:manager"]
+own   = ["member"]
+
+[permissions.create]
+allow = ["member"]
+deny  = ["role:suspended"]
+
+[permissions.update]
+allow = ["role:manager"]
+own   = ["member"]
+deny  = ["role:suspended"]
+
+[permissions.delete]
+allow = ["role:admin"]
+
+[fields.subject]
+type     = "string"
+required = true
+
+[fields.body]
+type = "text"
+
+[fields.status]
+type    = "string"
+default = "open"
+
+[fields.owner_id]
+type       = "reference"
+references = "user"

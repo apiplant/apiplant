@@ -1,9 +1,12 @@
 //! Two ways an app sends mail, in one library.
 //!
 //! * `welcome_email` is a **hook**: `resources/users.toml` points the `user`
-//!   resource's `after_create` event at it, so registering triggers it.
-//! * `notify` is an **endpoint**: `POST /api/functions/notify` mails a message
-//!   to an existing account.
+//!   resource's `after_create` event at it, so registering triggers it. Its
+//!   body comes from `emails/welcome.liquid` — the function names a template
+//!   and the values it needs, and never spells out a sentence.
+//! * `notify` is an **endpoint**: `POST /api/functions/notify` mails an address
+//!   the caller names, through a template the caller names, with the values it
+//!   should be filled in with.
 //!
 //! Neither one names a provider. `ctx.send_email(...)` goes out through
 //! whatever `[email] provider` says in `main.toml` — SMTP here, SES or SendGrid
@@ -11,14 +14,15 @@
 
 use apiplant_function::prelude::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 /// Config from `functions/welcome_email.toml`.
 #[derive(Deserialize)]
 #[serde(default)]
 struct WelcomeSettings {
-    /// Subject line. Kept in config so the wording changes with a restart
-    /// rather than a rebuild.
+    /// Subject line, when this app wants one per message. Empty — the default —
+    /// leaves it to the front matter of `emails/welcome.liquid`, which is where
+    /// the rest of the wording lives.
     subject: String,
     /// Where the mail tells people to go.
     sign_in_url: String,
@@ -27,7 +31,7 @@ struct WelcomeSettings {
 impl Default for WelcomeSettings {
     fn default() -> Self {
         WelcomeSettings {
-            subject: "Welcome".to_string(),
+            subject: String::new(),
             sign_in_url: "http://127.0.0.1:8099/".to_string(),
         }
     }
@@ -49,18 +53,21 @@ fn welcome_email(ctx: &Context<WelcomeSettings>, input: Value) -> Result<Value, 
     }
     let name = input["display_name"].as_str().unwrap_or("there");
 
+    // The body is not here. `emails/welcome.liquid` holds it — subject, markup
+    // and the plain-text half beside it — so changing the wording is editing a
+    // file and restarting, with no Rust involved. This function's job is to
+    // know *who* is being written to and *what facts* the message needs.
     let recipient = format!("{name} <{email}>");
-    let message = Email::to(recipient)
-        .subject(&settings.subject)
-        .text(format!(
-            "Hello {name},\n\nYour account is ready. Sign in at {}.\n",
-            settings.sign_in_url
-        ))
-        .html(format!(
-            "<p>Hello {name},</p><p>Your account is ready. \
-             <a href=\"{}\">Sign in</a>.</p>",
-            settings.sign_in_url
-        ));
+    let mut message = Email::to(recipient)
+        .template("welcome")
+        .var("name", name)
+        .var("sign_in_url", settings.sign_in_url.as_str());
+
+    // A subject spelled out here wins over the template's own, which is how one
+    // template serves several messages that differ only in their subject line.
+    if !settings.subject.is_empty() {
+        message = message.subject(&settings.subject);
+    }
 
     match ctx.send_email(message) {
         Ok(sent) => ctx.info(&format!(
@@ -75,11 +82,21 @@ fn welcome_email(ctx: &Context<WelcomeSettings>, input: Value) -> Result<Value, 
     Ok(reply::proceed())
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Default, Deserialize, JsonSchema)]
+#[serde(default)]
 struct NotifyInput {
-    /// Id of the account to write to.
-    user_id: String,
+    /// Where to send it: `bo@example.com` or `Bo <bo@example.com>`.
+    to: String,
+    /// A template in `emails/` to render — `welcome` here. Leave it out to send
+    /// `body` as written instead.
+    template: String,
+    /// What the template reads: `{"name": "Bo", "sign_in_url": "…"}`. A value
+    /// the template never mentions is harmless; one it mentions without being
+    /// given renders as empty.
+    vars: serde_json::Map<String, Value>,
+    /// Overrides the template's own subject. Required when sending a `body`.
     subject: String,
+    /// The message, when no template is named.
     body: String,
 }
 
@@ -91,36 +108,45 @@ struct NotifyOutput {
     message_id: String,
 }
 
-/// `POST /api/functions/notify` — mail an existing account.
+/// `POST /api/functions/notify` — mail an address, through a template.
 ///
-/// The address comes out of the database rather than off the request, so this
-/// endpoint can't be used to send mail to an arbitrary stranger. Here the
-/// failure *is* the answer, so it is returned rather than swallowed.
+/// The recipient comes off the request, so this endpoint will mail anybody it
+/// is told to. That is what `permission: "role:admin"` in the manifest below is
+/// holding: an operator action, not something an account can aim at a stranger.
+/// An app that mails its *own users* should look the address up by id instead —
+/// then no caller can name one.
+///
+/// Here the failure *is* the answer, so it is returned rather than swallowed.
 fn notify(ctx: &Context<()>, input: NotifyInput) -> Result<NotifyOutput, String> {
-    let row = ctx
-        .query_one(
-            "SELECT email, display_name FROM apiplant_user WHERE id = $1::uuid",
-            &[json!(input.user_id)],
-        )?
-        .ok_or("no such user")?;
-
-    let email = row["email"].as_str().unwrap_or_default();
-    if email.is_empty() {
-        return Err("that account has no email address".to_string());
+    // Not an address validator — the provider is the authority on that — just
+    // enough to turn the common mistake into a sentence instead of a rejected
+    // send and a bill for an API call.
+    if !input.to.contains('@') {
+        return Err("`to` must be an email address".to_string());
     }
-    let name = row["display_name"].as_str().unwrap_or_default();
 
-    let recipient = if name.is_empty() {
-        email.to_string()
+    let mut message = Email::to(&input.to);
+
+    if !input.template.is_empty() {
+        // The body is `emails/<template>.liquid`, rendered with whatever the
+        // caller passed. Naming a template the app does not have fails the
+        // send, and the error says which name.
+        message = message.template(&input.template).vars(input.vars);
+    } else if !input.body.is_empty() {
+        message = message.text(&input.body);
     } else {
-        format!("{name} <{email}>")
-    };
+        return Err("give either a `template` or a `body`".to_string());
+    }
 
-    let sent = ctx.send_email(
-        Email::to(recipient)
-            .subject(input.subject)
-            .text(input.body),
-    )?;
+    // A subject spelled out here wins over the template's front matter, which
+    // is how one template serves several messages that differ only in it.
+    if !input.subject.is_empty() {
+        message = message.subject(&input.subject);
+    } else if input.template.is_empty() {
+        return Err("a message with no template needs a `subject`".to_string());
+    }
+
+    let sent = ctx.send_email(message)?;
 
     Ok(NotifyOutput {
         provider: sent.provider,
@@ -138,13 +164,13 @@ apiplant_function::functions! {
     },
     {
         name: "notify",
-        description: "Sends a message to an existing account.",
+        description: "Sends a message to an address, rendering one of the app's templates.",
         method: Post,
         permission: "role:admin",  // mailing other people is an operator action
         admin: {
             label: "Send a message",
             group: "Communication",
-            description: "Emails one account, using the app's configured provider.",
+            description: "Emails one address, rendering a template from emails/ with the values you give it.",
             run_label: "Send",
         },
         handler: notify,

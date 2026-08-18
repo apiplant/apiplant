@@ -1074,7 +1074,7 @@ impl From<Access> for Policy {
 pub const ORG_CLASS_SUFFIX: &str = "@org_class=";
 
 /// The `organization` column holding a class. Server-owned: written only by
-/// somebody `[organization] org_class_editors` names.
+/// somebody `[organization] global_admin_role` names.
 pub const ORG_CLASS_FIELD: &str = "org_class";
 
 /// What matching a rule does: the three answers a permission can give.
@@ -2197,8 +2197,12 @@ type = "string"
         // `alow = [...]` would otherwise parse as an empty table — private —
         // and a typo that silently locks everyone out is only marginally better
         // than one that lets everyone in. Say so instead.
-        let error = toml::from_str::<Permissions>("[update]\nalow = [\"role:parent\"]").unwrap_err();
-        assert!(error.to_string().contains("alow"), "unhelpful error: {error}");
+        let error =
+            toml::from_str::<Permissions>("[update]\nalow = [\"role:parent\"]").unwrap_err();
+        assert!(
+            error.to_string().contains("alow"),
+            "unhelpful error: {error}"
+        );
     }
 
     #[test]

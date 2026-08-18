@@ -1,5 +1,6 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
-import { addAgent, addFunction, addResource } from "../lib/store";
+import { addAgent, addEmailTemplate, addFunction, addResource, studio } from "../lib/store";
+import { BUILTIN_EMAILS, EMAIL_NAME_RULE } from "../lib/emails";
 import { setView } from "../lib/nav";
 import { isValidFunctionName } from "../lib/functions";
 import { LANGUAGES, LANGUAGE_EXT, LANGUAGE_LABEL, type Language } from "../lib/types";
@@ -60,6 +61,96 @@ export function NewAgentDialog(props: { onClose: () => void }) {
           </Button>
           <Button variant="primary" disabled={!valid()} onClick={create}>
             Create agent
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * A new `emails/*.liquid`.
+ *
+ * The three built-in messages are offered by name, because overriding one is
+ * what most apps come here to do and the name is the whole of how the server
+ * knows which message a file replaces — typing it slightly wrong produces a
+ * template nothing sends, with nothing to say so.
+ */
+export function NewEmailDialog(props: { onClose: () => void }) {
+  const [name, setName] = createSignal("");
+  const taken = createMemo(() => (studio.project?.emails ?? []).some((entry) => entry.name === name()));
+  const valid = createMemo(() => EMAIL_NAME_RULE.test(name()) && !taken());
+
+  const create = (chosen: string) => {
+    if (addEmailTemplate(chosen)) props.onClose();
+  };
+
+  return (
+    <Modal
+      title="New email template"
+      subtitle="One emails/*.liquid — subject in TOML front matter, body below it, rendered on the server with Liquid."
+      onClose={props.onClose}
+      width="34rem"
+    >
+      <div class="space-y-4">
+        <div>
+          <p class="mb-2 text-[0.6875rem] uppercase tracking-wide text-faint">Replace a built-in message</p>
+          <div class="space-y-1.5">
+            <For each={BUILTIN_EMAILS}>
+              {(builtin) => {
+                const exists = () => (studio.project?.emails ?? []).some((e) => e.name === builtin.name);
+                return (
+                  <button
+                    type="button"
+                    disabled={exists()}
+                    onClick={() => create(builtin.name)}
+                    class="w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-left transition-colors hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <span class="flex items-center gap-2">
+                      <Mono>{builtin.name}.liquid</Mono>
+                      <Show when={exists()}>
+                        <span class="text-[0.625rem] text-faint">already written</span>
+                      </Show>
+                    </span>
+                    <span class="mt-0.5 block text-[0.6875rem] leading-relaxed text-muted">
+                      {builtin.description}
+                    </span>
+                  </button>
+                );
+              }}
+            </For>
+          </div>
+        </div>
+
+        <Labelled
+          label="or a template of your own"
+          hint="Nothing sends it on its own — a function asks for it by name through send_email."
+        >
+          <TextInput
+            mono
+            lowercase
+            value={name()}
+            placeholder="welcome"
+            onInput={(value) => setName(value.trim())}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && valid()) create(name());
+            }}
+          />
+          <Show when={name() && !valid()}>
+            <p class="mt-1 text-[0.6875rem] text-danger">
+              {taken()
+                ? "There is already a template with that name."
+                : "Use lowercase letters, digits, dashes and underscores."}
+            </p>
+          </Show>
+        </Labelled>
+
+        <div class="flex justify-end gap-2">
+          <Button variant="ghost" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={!valid()} onClick={() => create(name())}>
+            Create template
           </Button>
         </div>
       </div>

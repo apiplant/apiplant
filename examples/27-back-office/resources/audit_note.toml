@@ -1,0 +1,34 @@
+# What support writes down about a customer, which the customer never sees.
+#
+# Global, so it is not filtered by tenant — the `organization` field here is a
+# reference the note is *about*, not the row's owner — and readable only from
+# inside the support organisation. Append-only on purpose: `update` and
+# `delete` are `private`, so a note can be added and never quietly amended.
+#
+# `private` is the one thing being the back office does not lift. A global admin
+# gets 404 from these two exactly like anybody else, which is the point: a
+# record that its own administrators can edit is not a record.
+
+[resource]
+name = "audit_note"
+scope = "global"
+timestamps = true
+
+[permissions]
+list   = "member@org_class=support"
+read   = "member@org_class=support"
+create = "member@org_class=support"
+update = "private"
+delete = "private"
+
+[fields.subject_organization_id]
+type       = "reference"
+references = "organization"
+
+[fields.note]
+type     = "text"
+required = true
+
+[fields.author_id]
+type       = "reference"
+references = "user"

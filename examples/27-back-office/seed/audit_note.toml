@@ -1,0 +1,22 @@
+# What support writes about a customer. Global rows, so no `organization_id`:
+# `subject_organization_id` names the tenant the note is *about*, which is a
+# reference like any other and not the tenant column — a customer never reaches
+# this table at all, whichever organisation they are standing in.
+
+[[row]]
+id = "note-northwind-export"
+subject_organization_id = "northwind"
+author_id = "agent"
+note = "Export failure reproduced on staging. Sent them the workaround."
+
+[[row]]
+id = "note-umbra-suspended"
+subject_organization_id = "umbra"
+author_id = "root"
+note = "Ugo suspended pending the security review. Read access unchanged."
+
+[[row]]
+id = "note-lumen-trial"
+subject_organization_id = "lumen"
+author_id = "agent"
+note = "Trial ends on the 30th. Nadia is consulting for them."

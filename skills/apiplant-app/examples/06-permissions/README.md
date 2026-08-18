@@ -142,38 +142,38 @@ A qualifier only ever narrows: `role:admin@org_class=school` is fewer people
 than `role:admin`, and a permission with no class applies everywhere — so
 classing organisations changes nothing until a permission asks for one.
 
-The class itself is server-owned. `main.toml` says who may write it:
+The class itself is server-owned. `main.toml` says who administers the
+deployment, and writing it is one of the things that means:
 
 ```toml
 [organization]
-org_class_editors = "member@org_class=admin"
+global_admin_role = "role:admin@org_class=admin"
 ```
 
 Anyone else sending `org_class` has it dropped from the body, exactly like
 `organization_id` — otherwise an organisation could class itself into whatever
 these permissions guard.
 
-Being named there also widens what you can see, because you cannot class an
-organisation you cannot find:
+Being named there lifts the role check and the organisation check for that
+caller entirely: they see every organisation and every user, and reach data in
+all of them. What it does not lift is `private`, which says a thing is not on
+the API rather than that they lack a permission for it.
 
 ```bash
 # acting from Operations: every organisation, including ones you are not in
 curl -s "localhost:8099/api/organization" -H "authorization: Bearer $T1" \
   -H "x-organization: $OPS" | jq '.[].slug'
 
-# the class of one of them — and only the class
+# and write one you are not a member of
 curl -s -XPATCH localhost:8099/api/organization/$SOMEONE_ELSES \
   -H "authorization: Bearer $T1" -H "x-organization: $OPS" \
   -H 'content-type: application/json' -d '{"org_class":"customer"}'   # → 200
-
-curl -s -XPATCH localhost:8099/api/organization/$SOMEONE_ELSES \
-  -H "authorization: Bearer $T1" -H "x-organization: $OPS" \
-  -H 'content-type: application/json' -d '{"name":"Hijacked"}' -i     # → 404
 ```
 
-Drop the `x-organization` header, or point it at Acme, and both the wide list
-and the class write go away: the setting is answered against the organisation
-you selected.
+Dropping the `x-organization` header does not take any of it away — this is the
+one check answered by who you *are* rather than by where you are standing. What
+the header does instead is narrow: send one and a list is that tenant's; send
+none and it is the whole deployment's.
 
 ## Which status you get
 
@@ -186,3 +186,7 @@ you selected.
 Details in [Permissions](../../docs/permissions.md).
 
 **Next:** [07 · Functions](../07-functions) — writing custom code.
+
+**See also:** [27 · Back office](../27-back-office) — the same model with a
+seeded deployment behind it: a support organisation, three customers, nine
+accounts, `allow`/`own`/`deny` in one table, and both doors into impersonation.

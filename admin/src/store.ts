@@ -36,6 +36,17 @@ export interface Session {
    * rather than a single value.
    */
   roles: string[];
+  /**
+   * Who is really behind this session, when it was borrowed from somebody
+   * else. Set from `/auth/me`, so it survives a reload — a banner that
+   * vanished on refresh would leave somebody typing into a stranger's account
+   * believing it was their own.
+   */
+  impersonator: string | null;
+  /** The token the borrowing started from, so there is a way back. */
+  ownToken: string;
+  /** Whether this caller administers the deployment itself. */
+  globalAdmin: boolean;
   loading: boolean;
 }
 
@@ -47,6 +58,9 @@ const [sessionState, setSessionState] = createStore<Session>({
   organizations: [],
   organizationId: "",
   roles: [],
+  impersonator: null,
+  ownToken: "",
+  globalAdmin: false,
   loading: false,
 });
 
@@ -182,6 +196,8 @@ export function parseHash(hash: string): Route {
   if (parts[0] === "account") return { kind: "account" };
   if (parts[0] === "team") return { kind: "team" };
   if (parts[0] === "organization") return { kind: "organization" };
+  if (parts[0] === "organizations") return { kind: "organizations" };
+  if (parts[0] === "users") return { kind: "users" };
   if (parts[0] === "keys") return { kind: "keys" };
   if (parts[0] === "billing") return { kind: "billing" };
   if (parts[0] === "cli") return { kind: "cli" };
@@ -224,6 +240,7 @@ export function restoreSession() {
       token,
       apiKey: typeof stored.apiKey === "string" ? stored.apiKey : "",
       organizationId: typeof stored.organizationId === "string" ? stored.organizationId : "",
+      ownToken: typeof stored.ownToken === "string" ? stored.ownToken : "",
       userId: token ? decodeJwtSubject(token) : null,
     });
   } catch {
@@ -238,6 +255,7 @@ export function persistSession() {
       token: now.token,
       apiKey: now.apiKey,
       organizationId: now.organizationId,
+      ownToken: now.ownToken,
     }),
   );
 }
@@ -261,9 +279,124 @@ export function signOut() {
     organizations: [],
     organizationId: "",
     roles: [],
+    impersonator: null,
+    ownToken: "",
+    globalAdmin: false,
   });
   persistSession();
   navigate({ kind: "dashboard" });
+}
+
+// --- acting as somebody else -----------------------------------------------
+
+/** Whether this session is somebody acting as somebody else. */
+export function isImpersonating(): boolean {
+  return Boolean(session.impersonator);
+}
+
+/**
+ * Whether this dashboard should offer to act as `userId`.
+ *
+ * Two doors, and the wide one is checked first because it is the one that
+ * reaches people the narrow one cannot: a global admin may borrow anybody,
+ * while an organisation's admin may borrow the people on their own team
+ * screen. Never yourself, and never while already wearing somebody
+ * else's account — the server refuses both, and offering a button that would
+ * be refused is worse than not having one.
+ *
+ * As with every other check here, this decides what to *show*.
+ */
+/**
+ * Whether this caller administers the deployment itself.
+ *
+ * Answered by the server, per request, from `[organization] global_admin_role`
+ * — not from the roles the dashboard holds for the organisation it happens to
+ * have selected, which say nothing about a standing that spans all of them.
+ * A borrowed session is never one, whoever borrowed it.
+ */
+export function isGlobalAdmin(): boolean {
+  return session.globalAdmin;
+}
+
+export function mayImpersonate(userId: string): boolean {
+  if (!userId || userId === session.userId || isImpersonating()) return false;
+  if (session.globalAdmin) return true;
+  return Boolean(manifest()?.auth.allow_impersonation) && hasRole("admin");
+}
+
+/**
+ * Take a session that acts as `userId`, and reload the dashboard as them.
+ *
+ * The token in hand is stashed first. The server can always mint the way back
+ * from the borrowed token's own `act` claim, so this is belt and braces — but
+ * it is what makes "stop" instant, and what gets somebody home if the borrowed
+ * session is refused for a reason the stop endpoint cannot fix.
+ */
+export async function impersonate(userId: string) {
+  const previous = now.token;
+  const response = asRecord(
+    await api("/auth/impersonate", {
+      method: "POST",
+      body: { user_id: userId },
+      org: true,
+    }),
+  );
+  const token = typeof response?.token === "string" ? response.token : "";
+  if (!token) throw new Error("the server issued no token");
+
+  const pinned = typeof response?.organization_id === "string" ? response.organization_id : "";
+  updateSession({
+    token,
+    apiKey: "",
+    ownToken: previous,
+    userId: typeof response?.user_id === "string" ? response.user_id : decodeJwtSubject(token),
+    impersonator:
+      typeof response?.impersonator === "string" ? response.impersonator : session.userId,
+    // A pinned session may act in exactly one organisation, so selecting any
+    // other is not a thing the switcher should be able to do — `refreshSession`
+    // rebuilds the list from what the borrowed token can see, which is that one.
+    organizationId: pinned || now.organizationId,
+    globalAdmin: false,
+    profile: null,
+    roles: [],
+  });
+  persistSession();
+  await refreshSession();
+}
+
+/**
+ * Go back to being yourself.
+ *
+ * Asks the server first, because the borrowed token is the record of who
+ * borrowed it and a freshly-minted token is better than a stashed one that may
+ * have expired while it sat there. The stash is the fallback for the case
+ * where the endpoint cannot answer at all.
+ */
+export async function stopImpersonating() {
+  let token = now.ownToken;
+  try {
+    const response = asRecord(await api("/auth/impersonate/stop", { method: "POST" }));
+    if (typeof response?.token === "string" && response.token) token = response.token;
+  } catch (error) {
+    if (!token) throw error;
+  }
+  if (!token) {
+    signOut();
+    return;
+  }
+  updateSession({
+    token,
+    apiKey: "",
+    ownToken: "",
+    impersonator: null,
+    userId: decodeJwtSubject(token),
+    organizationId: "",
+    profile: null,
+    roles: [],
+  });
+  persistSession();
+  await verifySession();
+  await refreshSession();
 }
 
 // --- signing in with somebody else's account -------------------------------
@@ -670,6 +803,14 @@ export async function verifySession(): Promise<boolean> {
     // source of its user id.
     const userId = identity && typeof identity.user_id === "string" ? identity.user_id : null;
     if (userId) updateSession({ userId });
+    // Whose account this is, and what this caller may do that no manifest can
+    // say — both are about the person, not the app, so the server answers them
+    // per request and the dashboard simply believes it.
+    updateSession({
+      impersonator:
+        identity && typeof identity.impersonator === "string" ? identity.impersonator : null,
+      globalAdmin: identity?.global_admin === true,
+    });
     return true;
   } catch (error) {
     if ((error as ApiError).status === 401) {
@@ -684,15 +825,28 @@ export async function refreshSession() {
   if (!signedInNow()) return;
   updateSession({ loading: true });
   try {
-    const [organizations, profile] = await Promise.all([
+    // `/auth/me` is fetched here and not only on boot: whether this caller is
+    // the back office is a fact about *them*, and a token that has just been
+    // issued carries no answer to it. Without this the dashboard treats a
+    // freshly signed-in global admin as an ordinary member until the first
+    // reload — offering neither the back-office screens nor Act as, on a
+    // session the server would honour for both.
+    const [organizations, profile, identity] = await Promise.all([
       api("/organization").then(asRecords).catch(() => []),
       now.userId
         ? api(`/user/${encodeURIComponent(now.userId)}`)
             .then(asRecord)
             .catch(() => null)
         : Promise.resolve(null),
+      api("/auth/me").then(asRecord).catch(() => null),
     ]);
     updateSession({ organizations, profile });
+    if (identity) {
+      updateSession({
+        impersonator: typeof identity.impersonator === "string" ? identity.impersonator : null,
+        globalAdmin: identity.global_admin === true,
+      });
+    }
 
     // Select the sole organisation automatically; there is nothing to choose.
     const known = organizations.map((organization) => String(organization.id ?? ""));
@@ -714,6 +868,12 @@ export async function refreshSession() {
  * rule; this only decides what to *offer*.
  */
 export function hasRole(role: string): boolean {
+  // A global admin satisfies every role check, in every organisation, exactly
+  // as the server answers one — their standing is about who they are and not
+  // about where they are standing. Without this the dashboard hides controls
+  // the server would honour: the team screen of an organisation they are not a
+  // member of would draw its people and offer nothing to do with them.
+  if (session.globalAdmin) return true;
   return session.roles.includes(role) || session.roles.includes("admin");
 }
 

@@ -1,0 +1,32 @@
+# `create` and `delete` are `private`, so this table has no API that could fill
+# it — which is precisely the sort of table a seed file is for. A customer reads
+# these; their admin may correct a reference; nobody, back office included,
+# creates one over HTTP.
+
+[[row]]
+id = "invoice-north-1"
+organization_id = "northwind"
+reference = "NW-2024-001"
+amount_cents = 129000
+paid = true
+
+[[row]]
+id = "invoice-north-2"
+organization_id = "northwind"
+reference = "NW-2024-002"
+amount_cents = 129000
+paid = false
+
+[[row]]
+id = "invoice-umbra-1"
+organization_id = "umbra"
+reference = "UM-2024-014"
+amount_cents = 54000
+paid = false
+
+[[row]]
+id = "invoice-lumen-1"
+organization_id = "lumen"
+reference = "LU-2024-003"
+amount_cents = 0
+paid = true

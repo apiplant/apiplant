@@ -138,3 +138,4 @@ the `README.md` inside one before copying from it.
 | `24-nested-resources` | Nested resources |
 | `25-observability` | Observability |
 | `26-file-upload` | File upload |
+| `27-back-office` | Back office |

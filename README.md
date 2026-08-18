@@ -424,7 +424,9 @@ role, and every other resource is organisation-scoped unless you set
 | Create stamping | `organization_id` is filled in by the server; clients cannot spoof it |
 | Update refusal | `organization_id` in a body is dropped, so a row cannot be moved between organisations |
 | Role checks | `role:admin` means admin of the active organisation |
-| Organisation classes | `role:admin@org_class=school` narrows a permission to organisations of one class; `org_class` is server-owned, written only by `[organization] org_class_editors` |
+| Organisation classes | `role:admin@org_class=school` narrows a permission to organisations of one class; `org_class` is server-owned, written only by `[organization] global_admin_role` |
+| Global admins | whoever `[organization] global_admin_role` names runs the back office: role and organisation checks do not apply to them — but `private` still does |
+| Acting as somebody | an organisation's admins may borrow one of its members, pinned to that organisation; whoever `[organization] global_admin_role` names may borrow anyone, anywhere |
 
 Single-org users never need the header; multi-org users send it per request.
 Full details in [Multitenancy](docs/multitenancy.md).

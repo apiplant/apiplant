@@ -32,6 +32,7 @@ import { json } from "@codemirror/lang-json";
 import { rust } from "@codemirror/lang-rust";
 import { cpp } from "@codemirror/lang-cpp";
 import { go } from "@codemirror/lang-go";
+import { html } from "@codemirror/lang-html";
 import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { theme } from "../lib/theme";
 
@@ -119,6 +120,11 @@ export function languageExtension(name: string | undefined): Extension {
       return javascript();
     case "json":
       return json();
+    // Liquid is HTML with `{{ }}` in it: the HTML grammar leaves the tags alone
+    // and gets the markup around them right, which is what the editor is for.
+    case "html":
+    case "liquid":
+      return html();
     case "toml":
       return StreamLanguage.define(toml);
     default:
@@ -191,6 +197,12 @@ function editorTheme(dark: boolean): Extension {
 
 // ---- the component ----------------------------------------------------------
 
+/** What a page can do to a mounted editor from outside it. */
+export interface EditorHandle {
+  /** Drop text in at the cursor (or over the selection) and focus the editor. */
+  insert(text: string): void;
+}
+
 export function CodeEditor(props: {
   value: string;
   onInput?: (value: string) => void;
@@ -198,6 +210,8 @@ export function CodeEditor(props: {
   minHeight?: string;
   language?: string;
   placeholder?: string;
+  /** Called once the view exists, with the handle for inserting into it. */
+  onReady?: (handle: EditorHandle) => void;
 }) {
   let host!: HTMLDivElement;
   let view: EditorView | undefined;
@@ -238,6 +252,17 @@ export function CodeEditor(props: {
           }),
         ],
       }),
+    });
+    props.onReady?.({
+      insert(text) {
+        if (!view) return;
+        const { from, to } = view.state.selection.main;
+        view.dispatch({
+          changes: { from, to, insert: text },
+          selection: { anchor: from + text.length },
+        });
+        view.focus();
+      },
     });
     return () => view?.destroy();
   });

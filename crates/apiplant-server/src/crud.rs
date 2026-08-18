@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use apiplant_auth::{Principal, ADMIN_ROLE};
 use apiplant_core::schema::{Access, Effect, Policy, PolicySet, Rule};
-use apiplant_core::{CrudAction, FieldType, HookEvent, Resource, ORG_CLASS_FIELD};
+use apiplant_core::{FieldType, HookEvent, Resource, ORG_CLASS_FIELD};
 use apiplant_db::{value, Filter, Sort};
 use ntex::web::types::{Json, Path, State};
 use ntex::web::{HttpRequest, HttpResponse};
@@ -96,7 +96,7 @@ fn strip_server_owned(r: &Resource, data: &mut serde_json::Map<String, serde_jso
 }
 
 /// Drop `organization.org_class` from a client body unless the caller is
-/// somebody `[organization] org_class_editors` names.
+/// somebody `[organization] global_admin_role` names.
 ///
 /// The class is what a `@org_class=` permission is checked against, so an
 /// organisation able to write its own class could grant itself whatever those
@@ -111,14 +111,15 @@ fn strip_org_class(state: &AppState, r: &Resource, caller: &Caller, data: &mut M
     if r.meta.name != "organization" || !data.contains_key(ORG_CLASS_FIELD) {
         return;
     }
-    if !may_edit_org_class(&state.app.config.organization.org_class_policy(), caller) {
+    if !is_global_admin(state, caller) {
         data.remove(ORG_CLASS_FIELD);
     }
 }
 
-/// [`may_edit_org_class`] against the app's configured policy.
-fn is_org_class_editor(state: &AppState, caller: &Caller) -> bool {
-    may_edit_org_class(&state.app.config.organization.org_class_policy(), caller)
+/// Whether this caller is one of the deployment's administrators. See
+/// [`AppState::is_global_admin`], which is the whole of the rule.
+fn is_global_admin(state: &AppState, caller: &Caller) -> bool {
+    state.is_global_admin(caller.principal.as_ref())
 }
 
 /// Stamp `[organization] default_org_class` on a new organisation that has no
@@ -155,28 +156,6 @@ pub(crate) fn stamp_default_org_class(
     }
 }
 
-/// Whether `caller` satisfies the `org_class_editors` policy.
-fn may_edit_org_class(policy: &Policy, caller: &Caller) -> bool {
-    match (&policy.level, caller.principal.as_ref()) {
-        (Access::Private, _) | (_, None) => false,
-        // Every level below is answered in the organisation the caller
-        // *selected*, not the one being edited: this says who administers
-        // classes across the deployment, which is what a staff organisation is.
-        (level, Some(principal)) => {
-            let membership = caller.active_org.and_then(|org| principal.membership(org));
-            match membership {
-                None => false,
-                Some(m) if !policy.matches_org_class(m.org_class.as_deref()) => false,
-                Some(m) => match level {
-                    Access::Role(role) => m.has_role(role),
-                    Access::Public | Access::Authenticated | Access::Member | Access::Owner => true,
-                    Access::Private => false,
-                },
-            }
-        }
-    }
-}
-
 fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpResponse> {
     state
         .app
@@ -187,9 +166,28 @@ fn resource<'s>(state: &'s AppState, name: &str) -> Result<&'s Resource, HttpRes
 
 /// Authorize an action, returning the filters that must scope the query (org
 /// isolation, ownership, org membership set) or an error response.
-fn authorize(set: &PolicySet, caller: &Caller, r: &Resource) -> Result<Vec<Filter>, HttpResponse> {
-    select(set, caller, r).map(|(_, filters)| filters)
+fn authorize(
+    state: &AppState,
+    set: &PolicySet,
+    caller: &Caller,
+    r: &Resource,
+) -> Result<Vec<Filter>, HttpResponse> {
+    select(state, set, caller, r).map(|(_, filters)| filters)
 }
+
+/// What a global admin's request is answered by: yes, and scoped to nothing.
+///
+/// Spelled as a rule rather than as an early return in every handler so the
+/// bypass travels the same path as an ordinary decision — [`scope`] reads its
+/// level to decide what else to narrow by, and `public` is the level that asks
+/// for no narrowing at all, which is the point.
+static GLOBAL_ADMIN_RULE: Rule = Rule {
+    policy: Policy {
+        level: Access::Public,
+        org_class: None,
+    },
+    effect: Effect::Allow,
+};
 
 /// Pick the clause of `set` that answers this caller, and scope the query the
 /// way it asks.
@@ -212,6 +210,7 @@ fn authorize(set: &PolicySet, caller: &Caller, r: &Resource) -> Result<Vec<Filte
 /// two grammars from drifting — `update = "role:parent"` and a set holding only
 /// that one `allow` are the same code path.
 fn select<'s>(
+    state: &AppState,
     set: &'s PolicySet,
     caller: &Caller,
     r: &Resource,
@@ -220,6 +219,33 @@ fn select<'s>(
     // it appears, so it answers before anything is matched.
     if set.is_private() {
         return Err(error(404, "not found"));
+    }
+
+    // The back office, and the only thing in the system that reads as an
+    // exception. Whoever `[organization] global_admin_role` names is answered
+    // yes here — before `deny`, before roles, before the tenant filter — and
+    // their query is scoped to nothing, so it sees every organisation's rows.
+    //
+    // It sits *after* the `private` check on purpose, and that is the whole
+    // shape of the grant: it bypasses the questions about **where a caller
+    // stands** — which role they hold, which organisation they selected —
+    // because a deployment administrator stands outside both. It bypasses
+    // nothing about what is *reachable*: `private` says a thing is not on the
+    // API, which is not a permission to be over-ruled, so it stays a `404`
+    // here exactly as it is for everybody else.
+    if is_global_admin(state, caller) {
+        // Scoped to nothing — except the organisation they have actually
+        // selected, if they selected one. A back office that could not narrow
+        // to one tenant would answer every list with every tenant's rows mixed
+        // together, so the header still means what it says; dropping it is how
+        // you ask for the whole deployment.
+        let mut filters = Vec::new();
+        if r.is_org_scoped() {
+            if let Some(org) = caller.active_org {
+                filters.push(Filter::eq("organization_id", org));
+            }
+        }
+        return Ok((&GLOBAL_ADMIN_RULE, filters));
     }
 
     let matches = |policy: &Policy| authorize_policy(policy, caller, r);
@@ -291,7 +317,9 @@ fn forbidden(caller: &Caller) -> HttpResponse {
 fn owner_narrowing(caller: &Caller, r: &Resource) -> Option<Filter> {
     let principal = caller.principal.as_ref()?;
     if r.is_org_scoped() {
-        let membership = caller.active_org.and_then(|org| principal.membership(org))?;
+        let membership = caller
+            .active_org
+            .and_then(|org| principal.membership(org))?;
         if membership.has_role(ADMIN_ROLE) {
             return None;
         }
@@ -385,9 +413,8 @@ async fn scope(
     set: &PolicySet,
     caller: &Caller,
     r: &Resource,
-    action: CrudAction,
 ) -> Result<Vec<Filter>, HttpResponse> {
-    let (rule, mut filters) = select(set, caller, r)?;
+    let (rule, mut filters) = select(state, set, caller, r)?;
     // The extras below are properties of the answer, not of how it was spelled,
     // so an `own` clause is read as `owner` however its own level reads.
     let access = match rule.effect {
@@ -395,19 +422,6 @@ async fn scope(
         _ => &rule.policy.level,
     };
 
-    // Somebody who administers organisation *classes* administers them across
-    // the deployment, so they have to be able to find an organisation they are
-    // not in — otherwise the only organisations they could class are the ones
-    // they had already joined, which is not what a back office is for.
-    //
-    // Reading only: their write is narrowed to the class column alone, in
-    // [`update`], and every other action still goes by the ordinary policy.
-    if r.meta.name == "organization"
-        && matches!(action, CrudAction::List | CrudAction::Read)
-        && is_org_class_editor(state, caller)
-    {
-        filters.retain(|filter| !matches!(filter, Filter::In { column, .. } if column == "id"));
-    }
     if *access == Access::Owner && !r.is_org_scoped() {
         if let (Some(principal), Some(org)) = (caller.principal.as_ref(), caller.active_org) {
             if principal.is_admin_of(org) {
@@ -415,7 +429,9 @@ async fn scope(
                 // leaving any other narrowing the clause asked for in place.
                 let owner = owner_column(r);
                 let ids = state.organization_user_ids(org).await;
-                filters.retain(|filter| !matches!(filter, Filter::Eq { column, .. } if column == owner));
+                filters.retain(
+                    |filter| !matches!(filter, Filter::Eq { column, .. } if column == owner),
+                );
                 filters.push(Filter::in_uuids(owner, ids));
             }
         }
@@ -739,15 +755,7 @@ async fn expand_relations(
         let Some(target) = state.app.resources.get(&reference.target) else {
             continue;
         };
-        let scope = match scope(
-            state,
-            &target.permissions.read,
-            caller,
-            target,
-            CrudAction::Read,
-        )
-        .await
-        {
+        let scope = match scope(state, &target.permissions.read, caller, target).await {
             Ok(filters) => filters,
             Err(_) => {
                 for row in rows.iter_mut() {
@@ -806,7 +814,7 @@ pub async fn list(req: HttpRequest, state: State<AppState>, path: Path<String>) 
     let params = parse_query(req.query_string());
     let caller = state.caller(&req).await;
 
-    let mut filters = match scope(&state, &r.permissions.list, &caller, r, CrudAction::List).await {
+    let mut filters = match scope(&state, &r.permissions.list, &caller, r).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -884,7 +892,7 @@ pub async fn get(
     };
     let params = parse_query(req.query_string());
     let caller = state.caller(&req).await;
-    let filters = match scope(&state, &r.permissions.read, &caller, r, CrudAction::Read).await {
+    let filters = match scope(&state, &r.permissions.read, &caller, r).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -979,15 +987,7 @@ pub async fn nested_list(
     };
 
     let caller = state.caller(&req).await;
-    let mut filters = match scope(
-        &state,
-        &child.permissions.list,
-        &caller,
-        child,
-        CrudAction::List,
-    )
-    .await
-    {
+    let mut filters = match scope(&state, &child.permissions.list, &caller, child).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -1061,7 +1061,7 @@ pub async fn create(
         Err(resp) => return resp,
     };
     let caller = state.caller(&req).await;
-    if let Err(resp) = authorize(&r.permissions.create, &caller, r) {
+    if let Err(resp) = authorize(&state, &r.permissions.create, &caller, r) {
         return resp;
     }
     // `user` ships with `create = "public"` so registration works; that door has
@@ -1385,41 +1385,14 @@ pub async fn update(
     };
     let caller = state.caller(&req).await;
     let mut data = body.into_inner();
-    let mut denied: Option<HttpResponse> = None;
 
-    // A class editor may write `org_class` on **any** organisation, including
-    // ones they are not in — that is the whole job — but only that column: an
-    // organisation's own admins still own its name, its slug and its logo. So
-    // a body that is nothing but the class is authorised by the setting, and
-    // anything else goes by the resource's ordinary `update` policy.
-    //
-    // Judged on the body the client sent, so a `before_update` hook cannot
-    // turn a permitted class change into a wider write; the final body is
-    // checked again below, after the hook has had its say.
-    let class_only = |data: &Map<String, Value>| {
-        r.meta.name == "organization"
-            && data.len() == 1
-            && data.contains_key(ORG_CLASS_FIELD)
-            && is_org_class_editor(&state, &caller)
-    };
-    let class_update = class_only(&data);
-    let mut filters = match scope(
-        &state,
-        &r.permissions.update,
-        &caller,
-        r,
-        CrudAction::Update,
-    )
-    .await
-    {
+    // Note there is no special case here for writing `org_class` on an
+    // organisation the caller is not in: whoever may write the column is a
+    // global admin, and a global admin is already scoped to nothing by
+    // [`select`]. The column stays server-owned for everyone else through
+    // [`strip_org_class`] below.
+    let filters = match scope(&state, &r.permissions.update, &caller, r).await {
         Ok(f) => f,
-        // Refused by the policy, but the setting may still allow this one
-        // column. Held rather than returned so the decision is made on the
-        // body that will actually be written.
-        Err(resp) if class_update => {
-            denied = Some(resp);
-            Vec::new()
-        }
         Err(resp) => return resp,
     };
 
@@ -1454,16 +1427,6 @@ pub async fn update(
 
     strip_server_owned(r, &mut data);
     strip_org_class(&state, r, &caller, &mut data);
-
-    if class_only(&data) {
-        // The class alone, so the setting authorises it wherever the
-        // organisation is: drop the narrowing the ordinary policy applied.
-        filters.clear();
-        denied = None;
-    }
-    if let Some(resp) = denied {
-        return resp;
-    }
 
     let updated = match state.db.update(r, id, &data, &filters).await {
         Ok(Some(row)) => row,
@@ -1503,15 +1466,7 @@ pub async fn delete(
         Err(_) => return error(400, "invalid id"),
     };
     let caller = state.caller(&req).await;
-    let filters = match scope(
-        &state,
-        &r.permissions.delete,
-        &caller,
-        r,
-        CrudAction::Delete,
-    )
-    .await
-    {
+    let filters = match scope(&state, &r.permissions.delete, &caller, r).await {
         Ok(f) => f,
         Err(resp) => return resp,
     };
@@ -1603,6 +1558,8 @@ mod tests {
             principal: Some(Principal {
                 user_id: Uuid::new_v4(),
                 organizations: vec![OrgMembership::new(access_org, role.map(str::to_string), [])],
+                impersonator: None,
+                org_lock: None,
             }),
             active_org: Some(access_org),
         }
@@ -1652,49 +1609,13 @@ references = "user"
     /// A caller in one classed organisation, having selected it.
     fn caller_in_class(org: Uuid, role: Option<&str>, class: Option<&str>) -> Caller {
         Caller {
-            principal: Some(Principal {
-                user_id: Uuid::new_v4(),
-                organizations: vec![OrgMembership::new(org, role.map(str::to_string), [])
+            principal: Some(Principal::new(
+                Uuid::new_v4(),
+                vec![OrgMembership::new(org, role.map(str::to_string), [])
                     .in_class(class.map(str::to_string))],
-            }),
+            )),
             active_org: Some(org),
         }
-    }
-
-    #[test]
-    fn only_the_named_editors_may_write_an_organisations_class() {
-        let staff = Uuid::new_v4();
-        // The setting the feature exists for: the staff organisation edits
-        // everyone's classes, including other organisations'.
-        let policy = Policy::parse("member@org_class=staff");
-
-        assert!(may_edit_org_class(
-            &policy,
-            &caller_in_class(staff, Some("member"), Some("staff"))
-        ));
-        // A member of any other organisation is not staff, whatever they are
-        // there — an admin of their own org included.
-        assert!(!may_edit_org_class(
-            &policy,
-            &caller_in_class(staff, Some("admin"), Some("school"))
-        ));
-        assert!(!may_edit_org_class(
-            &policy,
-            &caller_in_class(staff, Some("admin"), None)
-        ));
-        // Nobody selected an organisation, nobody signed in: no.
-        assert!(!may_edit_org_class(
-            &policy,
-            &Caller {
-                principal: None,
-                active_org: None
-            }
-        ));
-        // The default setting locks the column for everyone.
-        assert!(!may_edit_org_class(
-            &Policy::parse("private"),
-            &caller_in_class(staff, Some("admin"), Some("staff"))
-        ));
     }
 
     #[test]
@@ -1765,6 +1686,8 @@ type = "string"
                     OrgMembership::new(staff, Some("admin".into()), [])
                         .in_class(Some("staff".into())),
                 ],
+                impersonator: None,
+                org_lock: None,
             }),
             active_org: Some(staff),
         };
@@ -1854,6 +1777,8 @@ type = "string"
                     OrgMembership::new(org_a, Some("admin".into()), []),
                     OrgMembership::new(org_b, Some("member".into()), []),
                 ],
+                impersonator: None,
+                org_lock: None,
             }),
             active_org: None,
         };
@@ -1908,7 +1833,8 @@ type = "string"
             principal: caller.principal.clone(),
             active_org: Some(org_b),
         };
-        let err = match authorize_policy(&Access::Role("admin".into()).into(), &member_here, &plan) {
+        let err = match authorize_policy(&Access::Role("admin".into()).into(), &member_here, &plan)
+        {
             Ok(_) => panic!("a member is not an admin"),
             Err(err) => err,
         };

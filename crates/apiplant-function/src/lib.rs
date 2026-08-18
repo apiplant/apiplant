@@ -608,6 +608,14 @@ pub struct Email {
     pub from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub reply_to: Option<String>,
+    /// A template in the app's `emails/` directory to produce the body from,
+    /// instead of spelling one out here. Empty means this message carries its
+    /// own body, which is the ordinary case.
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub template: String,
+    /// What that template is rendered with. Ignored without a `template`.
+    #[serde(skip_serializing_if = "serde_json::Map::is_empty", default)]
+    pub vars: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Email {
@@ -658,6 +666,46 @@ impl Email {
     /// Override the app's configured sender for this message.
     pub fn from(mut self, address: impl Into<String>) -> Email {
         self.from = Some(address.into());
+        self
+    }
+
+    /// Produce the body from a template in the app's `emails/` directory.
+    ///
+    /// The copy then lives in one place — a `.liquid` file somebody can edit
+    /// without a rebuild — rather than inside whichever function happens to
+    /// send it. A `subject` set here still wins over the template's own, so one
+    /// template can serve several messages that differ only in their subject.
+    ///
+    /// ```no_run
+    /// # use apiplant_function::prelude::*;
+    /// # use serde_json::json;
+    /// # fn example(ctx: &Context<()>) -> Result<(), String> {
+    /// ctx.send_email(
+    ///     Email::to("bo@example.com")
+    ///         .template("welcome")
+    ///         .var("name", "Bo")
+    ///         .var("plan", "Team"),
+    /// )?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// Errors at send time when the app has no such template — a name is not
+    /// checked until the message goes out.
+    pub fn template(mut self, name: impl Into<String>) -> Email {
+        self.template = name.into();
+        self
+    }
+
+    /// One variable for the template. A name the template never reads is
+    /// harmless, and one it reads without being given renders as empty.
+    pub fn var(mut self, name: impl Into<String>, value: impl Into<serde_json::Value>) -> Email {
+        self.vars.insert(name.into(), value.into());
+        self
+    }
+
+    /// Every variable at once, for a function that already has them in hand.
+    pub fn vars(mut self, vars: serde_json::Map<String, serde_json::Value>) -> Email {
+        self.vars = vars;
         self
     }
 
@@ -1915,6 +1963,52 @@ mod tests {
         assert!(request.get("html").is_none());
         assert!(request.get("cc").is_none());
         assert!(request.get("from").is_none());
+    }
+
+    /// The host reads `template` and `vars` off the request to decide whether
+    /// the body comes from the app's `emails/` directory, so a message that
+    /// names one has to put them on the wire under exactly those names.
+    #[test]
+    fn a_templated_email_carries_the_name_and_its_variables() {
+        let (mock, host) = shared(
+            MockHost::success("{}", "u1", serde_json::json!([]))
+                .replying(serde_json::json!({ "provider": "smtp", "id": "", "recipients": 1 })),
+        );
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        ctx.send_email(
+            Email::to("bo@example.com")
+                .template("welcome")
+                .var("name", "Bo")
+                .var("sign_in_url", "https://example.test/in"),
+        )
+        .unwrap();
+
+        let request = mock.last_service_request();
+        assert_eq!(request["template"], "welcome");
+        assert_eq!(request["vars"]["name"], "Bo");
+        assert_eq!(request["vars"]["sign_in_url"], "https://example.test/in");
+        // No body of its own: that is the whole point of naming a template.
+        assert!(request.get("html").is_none());
+        assert!(request.get("text").is_none());
+    }
+
+    /// …and a message with no template must not mention one, or the host would
+    /// go looking for a template named "" instead of sending what it was given.
+    #[test]
+    fn an_untemplated_email_mentions_no_template() {
+        let (mock, host) = shared(
+            MockHost::success("{}", "u1", serde_json::json!([]))
+                .replying(serde_json::json!({ "provider": "smtp", "id": "", "recipients": 1 })),
+        );
+        let ctx = Context::__new(&host, (), "u1".into(), None);
+
+        ctx.send_email(Email::to("ann@example.com").subject("Hi").text("Hello"))
+            .unwrap();
+
+        let request = mock.last_service_request();
+        assert!(request.get("template").is_none());
+        assert!(request.get("vars").is_none());
     }
 
     #[test]

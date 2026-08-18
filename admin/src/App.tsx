@@ -27,6 +27,7 @@ import { ActionPage } from "./pages/action";
 import { AgentPage } from "./pages/agent";
 import { CliPage } from "./pages/cli";
 import { AccountPage, ApiKeysPage, OrganizationPage, TeamPage } from "./pages/settings";
+import { OrganizationsPage, UsersPage } from "./pages/backoffice";
 import { BillingPage, noticeCheckoutOutcome } from "./pages/billing";
 import { AdminAiAssist } from "./ai-assist";
 import {
@@ -39,6 +40,8 @@ import {
   agentByName,
   dismissToast,
   functionByName,
+  isGlobalAdmin,
+  isImpersonating,
   isSignedIn,
   signedInNow,
   manifest,
@@ -56,6 +59,7 @@ import {
   setActiveOrganization,
   setManifest,
   signOut,
+  stopImpersonating,
   syncRouteFromHash,
   toasts,
   verifySession,
@@ -175,6 +179,7 @@ function Shell() {
 
   return (
     <div class="relative z-10 flex min-h-screen flex-col">
+      <ImpersonationBanner />
       <TopBar onToggleNav={() => setNavOpen((open) => !open)} />
       <div class="flex min-h-0 flex-1">
         {/* One sidebar, shown as a drawer on small screens. */}
@@ -210,6 +215,51 @@ function Shell() {
         </main>
       </div>
     </div>
+  );
+}
+
+/**
+ * The strip that says whose account this is.
+ *
+ * Loud, and above everything: the whole risk of impersonation is forgetting you
+ * are doing it, and every write from here lands in somebody else's name. It is
+ * also the only way back that does not depend on remembering a route, which is
+ * why the button lives in it rather than in the account menu.
+ */
+function ImpersonationBanner() {
+  const [leaving, setLeaving] = createSignal(false);
+
+  const stop = async () => {
+    setLeaving(true);
+    try {
+      await stopImpersonating();
+      notify("success", "You are yourself again.");
+      navigate({ kind: "dashboard" });
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setLeaving(false);
+    }
+  };
+
+  return (
+    <Show when={isImpersonating()}>
+      {/*
+        In flow rather than sticky: the top bar below it already sticks, and two
+        stuck strips fight over the same edge. What stays on screen instead is
+        the badge the top bar draws, which says the same thing in less room.
+      */}
+      <div class="flex flex-wrap items-center gap-3 border-b border-warn-line bg-warn-soft px-4 py-2 text-[0.8125rem] text-ink sm:px-6">
+        <span class="inline-flex h-2 w-2 shrink-0 rounded-full bg-warn" aria-hidden="true" />
+        <p class="min-w-0 flex-1">
+          You are working as <span class="font-semibold">{currentUserLabel()}</span>. Everything you
+          do here is recorded as theirs.
+        </p>
+        <Button size="sm" onClick={() => void stop()} disabled={leaving()}>
+          {leaving() ? "Leaving…" : "Back to your account"}
+        </Button>
+      </div>
+    </Show>
   );
 }
 
@@ -284,6 +334,14 @@ function TopBar(props: { onToggleNav: () => void }) {
             size="sm"
           />
           <span class="max-w-40 truncate">{organizationLabel(currentOrganization())}</span>
+        </span>
+      </Show>
+
+      <Show when={isImpersonating()}>
+        <span class="inline-flex items-center gap-1.5 rounded-lg border border-warn-line bg-warn-soft px-2.5 py-1.5 text-[0.75rem] text-ink">
+          <span class="inline-flex h-1.5 w-1.5 rounded-full bg-warn" aria-hidden="true" />
+          <span class="hidden max-w-32 truncate sm:inline">Acting as {currentUserLabel()}</span>
+          <span class="sm:hidden">Acting as someone</span>
         </span>
       </Show>
 
@@ -439,6 +497,33 @@ function Navigation(props: { onNavigate: () => void }) {
         </div>
       </Show>
 
+      {/* Only the deployment's own administrators have a deployment to
+          administer. Everyone else's questions are about the organisation they
+          are in, which the Settings group below already answers. */}
+      <Show when={isGlobalAdmin()}>
+        <div>
+          <p class="px-3 pb-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-faint">
+            Back office
+          </p>
+          <div class="space-y-0.5">
+            <button
+              type="button"
+              class={item(isActive((r) => r.kind === "organizations"))}
+              onClick={() => go({ kind: "organizations" })}
+            >
+              Organizations
+            </button>
+            <button
+              type="button"
+              class={item(isActive((r) => r.kind === "users"))}
+              onClick={() => go({ kind: "users" })}
+            >
+              Users
+            </button>
+          </div>
+        </div>
+      </Show>
+
       <div>
         <p class="px-3 pb-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-faint">
           Settings
@@ -530,6 +615,12 @@ function CurrentPage() {
       </Match>
       <Match when={route().kind === "organization"}>
         <OrganizationPage />
+      </Match>
+      <Match when={route().kind === "organizations"}>
+        <OrganizationsPage />
+      </Match>
+      <Match when={route().kind === "users"}>
+        <UsersPage />
       </Match>
       <Match when={route().kind === "keys"}>
         <ApiKeysPage />

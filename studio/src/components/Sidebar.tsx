@@ -3,6 +3,7 @@ import type { JSX } from "@solidjs/web";
 import { isActive, setView, view, type View } from "../lib/nav";
 import { pendingChanges, studio, type Project } from "../lib/store";
 import { LANGUAGE_LABEL, type AgentEntry, type FunctionEntry, type ResourceEntry } from "../lib/types";
+import type { EmailEntry } from "../lib/emails";
 import { Badge } from "./ui";
 
 function NavItem(props: {
@@ -69,6 +70,7 @@ export function Sidebar(props: {
   onNewResource: () => void;
   onNewFunction: () => void;
   onNewAgent: () => void;
+  onNewEmail: () => void;
   onNavigate?: () => void;
 }) {
   const [filter, setFilter] = createSignal("");
@@ -84,12 +86,15 @@ export function Sidebar(props: {
   );
   const functions = createMemo(() => props.project.functions.filter((entry) => matches(entry.name)));
   const agents = createMemo(() => props.project.agents.filter((entry) => matches(entry.name)));
+  const emails = createMemo(() => props.project.emails.filter((entry) => matches(entry.name)));
 
   const resourceDirty = (entry: ResourceEntry) => !!entry.path && dirtyPaths().has(entry.path);
   const functionDirty = (entry: FunctionEntry) =>
     entry.files.some((file) => dirtyPaths().has(file.path)) ||
     entry.configs.some((config) => dirtyPaths().has(config.path));
   const agentDirty = (entry: AgentEntry) => dirtyPaths().has(entry.path);
+  const emailDirty = (entry: EmailEntry) =>
+    dirtyPaths().has(entry.path) || (!!entry.textPath && dirtyPaths().has(entry.textPath));
 
   return (
     <nav class="flex h-full w-64 max-w-[85vw] shrink-0 flex-col border-r border-line bg-surface shadow-xl shadow-black/20 lg:max-w-none lg:bg-surface/40 lg:shadow-none">
@@ -137,7 +142,7 @@ export function Sidebar(props: {
           </svg>
           <input
             class="input pl-8 text-xs"
-            placeholder="Filter resources, functions & agents"
+            placeholder="Filter resources, functions, agents & emails"
             value={filter()}
             spellcheck={false}
             onInput={(event) => setFilter(event.currentTarget.value)}
@@ -228,6 +233,39 @@ export function Sidebar(props: {
                 trailing={() => (
                   <span class="text-[0.625rem] text-faint">{entry.storageEnabled ? "stored" : "live"}</span>
                 )}
+              />
+            )}
+          </For>
+        </Show>
+
+        <SectionHeader
+          label="Emails"
+          count={props.project.emails.length}
+          onAdd={props.onNewEmail}
+          addLabel="New email template"
+        />
+        <Show
+          when={emails().length}
+          fallback={
+            <p class="px-2.5 py-1 text-xs leading-relaxed text-faint">
+              No templates. The framework sends its own plain wording for verification, password resets and
+              invitations.
+            </p>
+          }
+        >
+          <For each={emails()}>
+            {(entry) => (
+              <NavItem
+                target={{ kind: "email", name: entry.name }}
+                label={entry.name}
+                mono
+                dirty={emailDirty(entry)}
+                onSelect={props.onNavigate}
+                trailing={
+                  entry.builtin
+                    ? () => <span class="text-[0.625rem] text-accent/70">override</span>
+                    : () => <span class="text-[0.625rem] text-faint">custom</span>
+                }
               />
             )}
           </For>

@@ -1,0 +1,43 @@
+# Org-scoped rows, so each carries the tenant it belongs to. `owner_id` is who
+# raised it — the column `own = ["member"]` filters on, which is why Nina sees
+# one ticket at Northwind and Noel sees all three.
+
+[[row]]
+id = "ticket-north-1"
+organization_id = "northwind"
+owner_id = "nina"
+subject = "Export runs out of memory"
+body = "The nightly CSV export dies at about 400k rows."
+status = "open"
+
+[[row]]
+id = "ticket-north-2"
+organization_id = "northwind"
+owner_id = "noel"
+subject = "Add a second billing contact"
+body = "Finance would like invoices to reach two mailboxes."
+status = "open"
+
+[[row]]
+id = "ticket-north-3"
+organization_id = "northwind"
+owner_id = "nadia"
+subject = "SSO for the warehouse team"
+body = "Forty people who should not each have a password."
+status = "closed"
+
+[[row]]
+id = "ticket-umbra-1"
+organization_id = "umbra"
+owner_id = "ugo"
+subject = "Webhook retries stop after one attempt"
+body = "We only ever see a single delivery in our logs."
+status = "open"
+
+[[row]]
+id = "ticket-lumen-1"
+organization_id = "lumen"
+owner_id = "liam"
+subject = "Trial limits"
+body = "How many seats does the trial include?"
+status = "open"

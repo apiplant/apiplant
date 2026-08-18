@@ -19,6 +19,24 @@ auto_migrate = true
 jwt_secret = "demo-secret-change-me-in-production"
 allow_registration = true   # the welcome mail hangs off /auth/register
 
+# Confirming an address is the end of the sign-up detour, and the place to land
+# afterwards is the app — not the dashboard screen that happened to spend the
+# token. `POST /auth/verify-email` returns this as `redirect_to` beside the
+# session token, and the dashboard sends the browser there.
+#
+# An absolute URL or a path on this origin (`/welcome`). Unset, the key is
+# absent from the response rather than empty, so a client can tell "go here"
+# from "nowhere in particular".
+#
+# Here it is a page in `public/`, served at the root of this origin: a
+# confirmation link is opened from a mailbox, by somebody who may be signed
+# into nothing, so the page it lands on has to be one anybody can fetch.
+verify_email_redirect = "/thank-you.html"
+
+# Address confirmation itself is already on: it follows `[email]`, so
+# configuring a provider switches it on. `require_email_verification = false`
+# here would turn it back off.
+
 [docs]
 enabled = true
 path = "/docs"

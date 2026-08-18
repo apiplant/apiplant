@@ -554,7 +554,11 @@ history = "owner"
         assert!(resources["ai_coach_thread"].fields["summary"].hidden);
         assert!(resources["ai_coach_thread"].fields["summary_updated_at"].hidden);
         assert_eq!(
-            resources["ai_coach_thread"].permissions.delete.primary().as_string(),
+            resources["ai_coach_thread"]
+                .permissions
+                .delete
+                .primary()
+                .as_string(),
             "owner"
         );
     }
@@ -577,7 +581,11 @@ delete_history = "role:admin"
 
         let resources = agent.storage_resources().unwrap();
         assert_eq!(
-            resources["ai_coach_thread"].permissions.delete.primary().as_string(),
+            resources["ai_coach_thread"]
+                .permissions
+                .delete
+                .primary()
+                .as_string(),
             "role:admin"
         );
     }

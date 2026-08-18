@@ -1,0 +1,20 @@
+# Global rows: no `organization_id`, because the resource is `scope = "global"`.
+# Anyone may read these without signing in; only somebody standing in an
+# organisation of class `support` may change one.
+
+[[row]]
+id = "status-api"
+component = "API"
+state = "operational"
+note = "Median latency 24ms."
+
+[[row]]
+id = "status-exports"
+component = "Exports"
+state = "degraded"
+note = "Nightly exports are running late. We are looking at it."
+
+[[row]]
+id = "status-dashboard"
+component = "Dashboard"
+state = "operational"

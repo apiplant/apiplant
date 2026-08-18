@@ -1,6 +1,6 @@
 # Examples
 
-Twenty-six self-contained apps, each adding one idea to the last. Every directory
+Twenty-seven self-contained apps, each adding one idea to the last. Every directory
 is a complete app: point the binary at it and it runs.
 
 | # | Example | Adds |
@@ -31,6 +31,7 @@ is a complete app: point the binary at it and it runs.
 | 24 | [nested-resources](24-nested-resources) | `/{parent}/{id}/{child}` across scopes: a global child, an org-scoped child of a global parent, `?via=`, and why a global resource can still need `X-Organization` |
 | 25 | [observability](25-observability) | watching it run: `[observability]`, OTLP to a one-container Grafana stack, spans on the HTTP semantic conventions, trace-correlated logs, and the headers it refuses to capture |
 | 26 | [file-upload](26-file-upload) | uploads into a bucket: one `[storage]` block pointed at Cloudflare R2, a `file` field that holds a relative link and never a bucket address, and the four lines that are the whole difference between a volume and S3 |
+| 27 | [back-office](27-back-office) | a whole deployment as a playground: a support organisation, three customers, nine accounts, `allow`/`own`/`deny` in one table, class-gated writes, and both doors into impersonation |
 
 ## Running one
 

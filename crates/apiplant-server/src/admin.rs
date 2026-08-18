@@ -80,7 +80,7 @@ struct OrganizationManifest {
     /// Who may write `organization.org_class` — the dashboard shows the class
     /// as an editable field only to them, and read-only to everyone else,
     /// rather than offering an input the server would silently ignore.
-    org_class_editors: ActionPermissionManifest,
+    global_admin_role: ActionPermissionManifest,
     /// Every class the app's own permissions mention, so the dashboard can
     /// offer them instead of asking an operator to remember the spelling.
     /// A class is a free string, so this is a suggestion, not a constraint.
@@ -138,6 +138,11 @@ struct AuthManifest {
     invitations_enabled: bool,
     /// Whether to offer "forgot your password?".
     password_reset_enabled: bool,
+    /// Whether an organisation's admins may act as one of its members, so the
+    /// team screen offers it on each row rather than on a button that would be
+    /// refused. Their session is pinned to the organisation either way — the
+    /// dashboard does not have to know that, but a banner is nicer when it does.
+    allow_impersonation: bool,
     /// Extra fields the register form should collect, so nobody has to type
     /// JSON to create an account.
     signup_fields: Vec<FieldManifest>,
@@ -594,6 +599,7 @@ fn build_manifest(
             verify_email_redirect: app.config.auth.verify_email_redirect.trim().to_string(),
             invitations_enabled: app.config.auth.invitations_enabled(email_enabled),
             password_reset_enabled: app.config.auth.password_reset_enabled(email_enabled),
+            allow_impersonation: app.config.auth.allow_impersonation,
             signup_fields,
             profile_fields,
             known_roles: known_roles(app, functions),
@@ -606,8 +612,8 @@ fn build_manifest(
         organization: OrganizationManifest {
             // `false` for `org_scoped`: the setting is answered against the
             // organisation the caller *selected*, like any global policy.
-            org_class_editors: permission_manifest(
-                &app.config.organization.org_class_policy(),
+            global_admin_role: permission_manifest(
+                &app.config.organization.global_admin_policy(),
                 false,
             ),
             known_classes: known_classes(app),
@@ -683,7 +689,7 @@ fn billing_manifest(app: &App) -> Option<BillingManifest> {
 }
 
 /// Every organisation class named by a permission anywhere in the app —
-/// resources, agents, and the `org_class_editors` setting itself.
+/// resources, agents, and the `global_admin_role` setting itself.
 fn known_classes(app: &App) -> Vec<String> {
     let mut classes: BTreeSet<String> = BTreeSet::new();
     let mut note = |policy: &Policy| {
@@ -709,7 +715,7 @@ fn known_classes(app: &App) -> Vec<String> {
             note(policy);
         }
     }
-    note(&app.config.organization.org_class_policy());
+    note(&app.config.organization.global_admin_policy());
     classes.into_iter().collect()
 }
 
@@ -843,7 +849,7 @@ fn field_manifest(name: &str, field: &Field, resource: &Resource) -> FieldManife
     // The framework stamps the owner and the tenant itself; offering either as
     // an input invites someone to fill in a value the server will overwrite.
     // …and `organization.org_class` is server-owned in the same way: only the
-    // `org_class_editors` policy writes it, and the dashboard offers it on the
+    // `global_admin_role` policy writes it, and the dashboard offers it on the
     // organisation screen, which knows whether this operator is named by it.
     // A generic record form here would be an input that silently does nothing.
     let stamped = name == resource.meta.owner_field

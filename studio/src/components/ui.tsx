@@ -107,6 +107,7 @@ export function TextInput(
     list?: string;
     type?: string;
     lowercase?: boolean;
+    autofocus?: boolean;
     onKeyDown?: (event: KeyboardEvent) => void;
   },
 ) {
@@ -124,6 +125,12 @@ export function TextInput(
       list={props.list}
       spellcheck={false}
       autocomplete="off"
+      // Runs once, when the element is created — which is exactly the moment
+      // wanted: a control revealed by expanding a row takes the caret, and one
+      // merely re-rendered never steals it.
+      ref={(element) => {
+        if (props.autofocus) queueMicrotask(() => element.select());
+      }}
       autocapitalize={props.lowercase ? "none" : undefined}
       autocorrect={props.lowercase ? "off" : undefined}
       onInput={(event) => {
@@ -315,7 +322,7 @@ export function Tabs<T extends string>(props: {
 }
 
 // The editor lives on its own because CodeMirror brings its own world with it.
-export { CodeEditor } from "./CodeEditor";
+export { CodeEditor, type EditorHandle } from "./CodeEditor";
 
 // ---- overlays ---------------------------------------------------------------
 

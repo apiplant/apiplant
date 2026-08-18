@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use apiplant_ai::Ai;
-use apiplant_auth::{Authenticator, OrgMembership, Principal};
+use apiplant_auth::{Authenticator, OrgMembership, Principal, Session as AuthSession};
 use apiplant_cache::Cache;
-use apiplant_core::{App, ORG_CLASS_FIELD};
+use apiplant_core::{Access, App, Policy, ORG_CLASS_FIELD};
 use apiplant_db::Db;
 use apiplant_email::Mailer;
 use apiplant_oauth::Providers;
@@ -155,26 +155,47 @@ impl AppState {
     /// organisation) are loaded fresh from the database so changes take effect
     /// immediately. Anonymous callers resolve to `None`.
     pub async fn resolve_principal(&self, req: &HttpRequest) -> Option<Principal> {
-        let user_id = self.resolve_user_id(req).await?;
-        let organizations = self.load_memberships(user_id).await;
+        let session = self.resolve_session(req).await?;
+        let mut organizations = self.load_memberships(session.user_id).await;
+        // A pinned session sees one organisation and no other. Done by
+        // *dropping* the rest rather than by consulting the lock at each use:
+        // every `role:` check, every tenant filter and every hook context is
+        // built from this list, so a membership that is not in it cannot be
+        // reached by something that forgot to ask about the lock.
+        if let Some(locked) = session.org_lock {
+            organizations.retain(|membership| membership.org_id == locked);
+        }
         Some(Principal {
-            user_id,
+            user_id: session.user_id,
             organizations,
+            impersonator: session.impersonator,
+            org_lock: session.org_lock,
         })
     }
 
-    async fn resolve_user_id(&self, req: &HttpRequest) -> Option<Uuid> {
+    /// The session behind a request: who it acts as, and whether somebody else
+    /// is acting as them.
+    ///
+    /// An API key is always a plain session — a key belongs to an account, and
+    /// no door issues an impersonating one.
+    pub(crate) async fn resolve_session(&self, req: &HttpRequest) -> Option<AuthSession> {
         if let Some(key) = req.headers().get("x-api-key").and_then(|v| v.to_str().ok()) {
             if !key.is_empty() {
-                return self.user_id_from_api_key(key.trim()).await;
+                return self
+                    .user_id_from_api_key(key.trim())
+                    .await
+                    .map(AuthSession::plain);
             }
         }
         let header = req.headers().get("authorization")?.to_str().ok()?;
         if let Some(token) = header.strip_prefix("Bearer ") {
-            return self.auth.verify_token(token.trim()).ok();
+            return self.auth.verify_session(token.trim()).ok();
         }
         if let Some(key) = header.strip_prefix("ApiKey ") {
-            return self.user_id_from_api_key(key.trim()).await;
+            return self
+                .user_id_from_api_key(key.trim())
+                .await
+                .map(AuthSession::plain);
         }
         None
     }
@@ -383,7 +404,30 @@ impl AppState {
     /// is never a safe guess — a request that does not say which organisation
     /// it means is answered as one that has none.
     pub fn active_org(&self, req: &HttpRequest, principal: &Option<Principal>) -> Option<Uuid> {
-        resolve_active_org(req, principal)
+        resolve_active_org(req, principal, self.is_global_admin(principal.as_ref()))
+    }
+
+    /// Whether this caller is one of the deployment's own administrators —
+    /// whoever `[organization] global_admin_role` names.
+    ///
+    /// Asked of the caller's memberships as a whole rather than of the
+    /// organisation they have selected, and that is the difference between
+    /// this and every other check in the system. An ordinary permission asks
+    /// "what may you do *here*", so it is answered where you stand; this one
+    /// asks "who are you", and someone whose standing evaporated the moment
+    /// they looked at another tenant's organisation would be no use as a back
+    /// office.
+    ///
+    /// `private` — the default — names nobody, so an app that has not asked
+    /// for a back office does not have one.
+    ///
+    /// It is also the wider of the two doors into
+    /// [impersonation](crate::impersonation): support access that stopped
+    /// applying the moment they looked at the tenant they were supporting
+    /// would be no access at all, which is exactly how this reads a caller.
+    pub fn is_global_admin(&self, principal: Option<&Principal>) -> bool {
+        let policy = self.app.config.organization.global_admin_policy();
+        principal.is_some_and(|principal| is_global_admin(&policy, principal))
     }
 
     // --- what this deployment can do with a mailbox -----------------------
@@ -477,15 +521,58 @@ impl AppState {
     }
 }
 
-fn resolve_active_org(req: &HttpRequest, principal: &Option<Principal>) -> Option<Uuid> {
+/// Whether `principal` satisfies a `global_admin_role` policy, without a whole
+/// [`AppState`] to ask it of.
+///
+/// Answered across **every** organisation the caller belongs to, not the one
+/// they selected, which is what makes it a statement about who they are rather
+/// than about where they stand — see [`AppState::is_global_admin`].
+pub(crate) fn is_global_admin(policy: &Policy, principal: &Principal) -> bool {
+    if policy.level == Access::Private {
+        return false;
+    }
+    // An impersonated session is never a back office, whoever is behind it: the
+    // token acts as the borrowed account, and that account's own standing is
+    // the whole of what it may do. Otherwise a global admin could impersonate
+    // anybody and keep their own powers while wearing somebody else's name,
+    // which is the one shape of this no audit trail can untangle.
+    if principal.is_impersonating() {
+        return false;
+    }
+    principal.organizations.iter().any(|membership| {
+        policy.matches_org_class(membership.org_class.as_deref())
+            && match &policy.level {
+                Access::Role(role) => membership.has_role(role),
+                Access::Public | Access::Authenticated | Access::Member | Access::Owner => true,
+                Access::Private => false,
+            }
+    })
+}
+
+fn resolve_active_org(
+    req: &HttpRequest,
+    principal: &Option<Principal>,
+    global_admin: bool,
+) -> Option<Uuid> {
     let principal = principal.as_ref()?;
+    // A token pinned to one organisation is answered by the pin, not by the
+    // header: an organisation admin borrowing a member's account may not steer
+    // it anywhere but their own organisation, and refusing the header rather
+    // than ignoring it would only tell them to stop sending it.
+    if let Some(locked) = principal.org_lock {
+        return Some(locked);
+    }
     if let Some(raw) = req
         .headers()
         .get("x-organization")
         .and_then(|v| v.to_str().ok())
     {
         let org = Uuid::parse_str(raw.trim()).ok()?;
-        return principal.is_member(org).then_some(org);
+        // A deployment administrator may stand in any organisation, including
+        // ones they have never joined — that is what administering the
+        // deployment means, and what makes "look at this tenant's data" a
+        // thing they can do at all.
+        return (global_admin || principal.is_member(org)).then_some(org);
     }
     None
 }
@@ -496,13 +583,100 @@ mod tests {
     use ntex::web::test;
 
     fn principal(orgs: &[(Uuid, Option<&str>)]) -> Principal {
-        Principal {
-            user_id: Uuid::new_v4(),
-            organizations: orgs
-                .iter()
+        Principal::new(
+            Uuid::new_v4(),
+            orgs.iter()
                 .map(|(org_id, role)| OrgMembership::new(*org_id, role.map(str::to_string), []))
                 .collect(),
-        }
+        )
+    }
+
+    /// A caller who belongs to one classed organisation.
+    fn member_of_class(role: Option<&str>, class: Option<&str>) -> Principal {
+        Principal::new(
+            Uuid::new_v4(),
+            vec![
+                OrgMembership::new(Uuid::new_v4(), role.map(str::to_string), [])
+                    .in_class(class.map(str::to_string)),
+            ],
+        )
+    }
+
+    #[test]
+    fn only_the_named_role_administers_the_deployment() {
+        // The setting the feature exists for: admins of a staff organisation
+        // run the back office.
+        let policy = Policy::parse("role:admin@org_class=staff");
+
+        assert!(is_global_admin(
+            &policy,
+            &member_of_class(Some("admin"), Some("staff"))
+        ));
+        // Staff, but not an admin of it.
+        assert!(!is_global_admin(
+            &policy,
+            &member_of_class(Some("support"), Some("staff"))
+        ));
+        // An admin of any other organisation is not staff — nor is an admin of
+        // an unclassed one.
+        assert!(!is_global_admin(
+            &policy,
+            &member_of_class(Some("admin"), Some("school"))
+        ));
+        assert!(!is_global_admin(
+            &policy,
+            &member_of_class(Some("admin"), None)
+        ));
+        // The default setting names nobody.
+        assert!(!is_global_admin(
+            &Policy::parse("private"),
+            &member_of_class(Some("admin"), Some("staff"))
+        ));
+    }
+
+    #[test]
+    fn one_qualifying_membership_is_enough_wherever_the_caller_is_standing() {
+        let policy = Policy::parse("role:admin@org_class=staff");
+        let customer = Uuid::new_v4();
+        let mut principal = member_of_class(Some("admin"), Some("staff"));
+        principal.organizations.push(
+            OrgMembership::new(customer, Some("member".into()), [])
+                .in_class(Some("customer".into())),
+        );
+
+        // Standing in the customer organisation does not stop them being the
+        // deployment's administrator: the question is who they are.
+        assert!(is_global_admin(&policy, &principal));
+
+        // …but a session borrowed from somebody else is not, whoever holds it.
+        principal.impersonator = Some(Uuid::new_v4());
+        assert!(!is_global_admin(&policy, &principal));
+    }
+
+    #[test]
+    fn a_global_admin_may_stand_in_an_organisation_they_do_not_belong_to() {
+        let elsewhere = Uuid::new_v4();
+        let caller = Some(member_of_class(Some("admin"), Some("staff")));
+        let req = test::TestRequest::default()
+            .header("x-organization", elsewhere.to_string())
+            .to_http_request();
+
+        assert_eq!(resolve_active_org(&req, &caller, true), Some(elsewhere));
+        assert_eq!(resolve_active_org(&req, &caller, false), None);
+    }
+
+    #[test]
+    fn a_pinned_session_ignores_the_header() {
+        let locked = Uuid::new_v4();
+        let mut borrowed = member_of_class(Some("member"), None);
+        borrowed.impersonator = Some(Uuid::new_v4());
+        borrowed.org_lock = Some(locked);
+        let caller = Some(borrowed);
+        let req = test::TestRequest::default()
+            .header("x-organization", Uuid::new_v4().to_string())
+            .to_http_request();
+
+        assert_eq!(resolve_active_org(&req, &caller, false), Some(locked));
     }
 
     #[test]
@@ -516,7 +690,7 @@ mod tests {
             (Uuid::new_v4(), Some("member")),
         ]));
 
-        assert_eq!(resolve_active_org(&req, &caller), Some(wanted));
+        assert_eq!(resolve_active_org(&req, &caller, false), Some(wanted));
     }
 
     #[test]
@@ -528,8 +702,8 @@ mod tests {
         // one they create would otherwise silently change what their existing
         // requests mean.
         let one_org = Some(principal(&[(only, Some("member"))]));
-        assert_eq!(resolve_active_org(&req, &one_org), None);
-        assert_eq!(resolve_active_org(&req, &None), None);
+        assert_eq!(resolve_active_org(&req, &one_org, false), None);
+        assert_eq!(resolve_active_org(&req, &None, false), None);
     }
 
     #[test]
@@ -538,6 +712,6 @@ mod tests {
             .header("x-organization", Uuid::new_v4().to_string())
             .to_http_request();
         let caller = Some(principal(&[(Uuid::new_v4(), Some("admin"))]));
-        assert_eq!(resolve_active_org(&req, &caller), None);
+        assert_eq!(resolve_active_org(&req, &caller, false), None);
     }
 }

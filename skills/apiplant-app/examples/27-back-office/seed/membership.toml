@@ -1,0 +1,84 @@
+# Who belongs where, and as what. This file is the whole permission system in
+# data form: nothing about an *account* says what it may do.
+#
+# Seeding writes rows directly, so the `before_create` hook that lets the API
+# name a member by `email` does not run here — say `user_id` outright.
+#
+# `role` is the membership's *primary* role; `seed/membership_role.toml` holds
+# the rest of the set, and a `role:` permission is checked against all of them.
+# `admin` satisfies every role check in its own organisation without being
+# granted anything.
+
+# The back office. Rae is an admin of an `org_class = "support"` organisation,
+# which is exactly what `[organization] global_admin_role` names — so this one
+# row is what makes her the deployment's administrator, wherever she is
+# standing. Ash is in the same organisation and is *not* one: being near the
+# back office is not being it.
+[[row]]
+id = "root-at-vantage"
+user_id = "root"
+organization_id = "vantage"
+role = "admin"
+
+[[row]]
+id = "agent-at-vantage"
+user_id = "agent"
+organization_id = "vantage"
+role = "agent"
+
+# --- Northwind: an admin, a manager, and an ordinary member ------------------
+
+[[row]]
+id = "nadia-at-northwind"
+user_id = "nadia"
+organization_id = "northwind"
+role = "admin"
+
+[[row]]
+id = "noel-at-northwind"
+user_id = "noel"
+organization_id = "northwind"
+role = "manager"
+
+[[row]]
+id = "nina-at-northwind"
+user_id = "nina"
+organization_id = "northwind"
+role = "member"
+
+# --- Umbra: an admin, and a member who has been suspended -------------------
+
+[[row]]
+id = "uma-at-umbra"
+user_id = "uma"
+organization_id = "umbra"
+role = "admin"
+
+[[row]]
+id = "ugo-at-umbra"
+user_id = "ugo"
+organization_id = "umbra"
+role = "member"
+
+# --- Lumen, plus the same person in two places ------------------------------
+
+[[row]]
+id = "lea-at-lumen"
+user_id = "lea"
+organization_id = "lumen"
+role = "admin"
+
+[[row]]
+id = "liam-at-lumen"
+user_id = "liam"
+organization_id = "lumen"
+role = "member"
+
+# Nadia consults for Lumen. Roles live on the membership, so she is an admin at
+# Northwind and a plain member here — the same token, two different answers,
+# decided by the `X-Organization` header she sends.
+[[row]]
+id = "nadia-at-lumen"
+user_id = "nadia"
+organization_id = "lumen"
+role = "member"

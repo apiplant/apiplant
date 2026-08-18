@@ -1162,12 +1162,12 @@ fn contains_org(listed: &Value, id: &str) -> bool {
 
 /// The whole `org_class` contract, end to end.
 ///
-/// A class decides which `@org_class=` permissions apply inside an
-/// organisation, so who may write it is a deployment setting rather than a
-/// row-level one — and whoever it names has to be able to reach organisations
-/// they are not in, or the only classes they could set would be their own.
+/// The back office. `[organization] global_admin_role` names one role in one
+/// class of organisation, and whoever holds it stands outside the two questions
+/// every other permission is made of — which role you hold, and which
+/// organisation you are in. What it does not stand outside is `private`.
 #[ntex::test]
-async fn an_org_class_editor_sees_every_organisation_and_may_class_only_that() {
+async fn a_global_admin_reaches_every_organisation_and_may_class_them() {
     let db = TempDatabase::create("orgclass").await;
     let root = temp_dir("orgclass");
     write_files(
@@ -1176,7 +1176,7 @@ async fn an_org_class_editor_sees_every_organisation_and_may_class_only_that() {
             "main.toml",
             &format!(
                 "[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n\n\
-                 [organization]\norg_class_editors = \"member@org_class=admin\"\n",
+                 [organization]\nglobal_admin_role = \"member@org_class=admin\"\n",
                 db.url
             ),
         )],
@@ -1232,7 +1232,8 @@ async fn an_org_class_editor_sees_every_organisation_and_may_class_only_that() {
         .to_request()
     };
 
-    // Nobody is in an `admin`-class organisation yet, so nobody may class one:
+    // Nobody is in an `admin`-class organisation yet, so nobody administers
+    // the deployment and nobody may class anything:
     // the request succeeds as an ordinary update and the column is untouched.
     let attempt = read_json(
         test::call_service(
@@ -1263,10 +1264,9 @@ async fn an_org_class_editor_sees_every_organisation_and_may_class_only_that() {
         .await
         .unwrap();
 
-    // Now the list widens: a class editor sees every organisation, including
-    // one they have no membership of, because they cannot class what they
-    // cannot find. The header is what makes them one — the setting is answered
-    // against the organisation selected, here and everywhere else.
+    // Now the list widens: a global admin sees every organisation, including
+    // ones they have no membership of, because a back office that could only
+    // find what it had already joined is not one.
     let listed = read_json(
         test::call_service(
             &app,
@@ -1283,8 +1283,10 @@ async fn an_org_class_editor_sees_every_organisation_and_may_class_only_that() {
     .await;
     assert!(contains_org(&listed, &theirs_id));
 
-    // Acting from anywhere else, the same account sees only its own again.
-    let narrowed = read_json(
+    // …and standing somewhere else does not undo it. This is the one check in
+    // the system answered by who the caller *is* rather than by where they are
+    // standing, so dropping the header narrows nothing.
+    let unheadered = read_json(
         test::call_service(
             &app,
             bearer(
@@ -1296,7 +1298,7 @@ async fn an_org_class_editor_sees_every_organisation_and_may_class_only_that() {
         .await,
     )
     .await;
-    assert!(!contains_org(&narrowed, &theirs_id));
+    assert!(contains_org(&unheadered, &theirs_id));
 
     // …and only for them: everybody else still sees their own.
     let theirs_view = read_json(
@@ -1313,44 +1315,136 @@ async fn an_org_class_editor_sees_every_organisation_and_may_class_only_that() {
     .await;
     assert!(!contains_org(&theirs_view, &ops_id));
 
-    // The class editor may class an organisation they are not a member of.
+    // They may class an organisation they are not a member of — the thing the
+    // setting exists for — and write the rest of it too, because the bypass is
+    // of the organisation check, not of one column.
     let classed = test::call_service(
         &app,
         patch_class(
             &staff_token,
             &theirs_id,
             &ops_id,
-            json!({ "org_class": "customer" }),
+            json!({ "org_class": "customer", "name": "Theirs, renamed" }),
         ),
     )
     .await;
     assert_eq!(classed.status().as_u16(), 200);
-    assert_eq!(read_json(classed).await["org_class"], "customer");
+    let classed = read_json(classed).await;
+    assert_eq!(classed["org_class"], "customer");
+    assert_eq!(classed["name"], "Theirs, renamed");
 
-    // But nothing else about it: a rename is not part of the bargain, and
-    // smuggling one alongside the class does not make it one either.
-    for body in [
-        json!({ "name": "Hijacked" }),
-        json!({ "name": "Hijacked", "org_class": "customer" }),
-    ] {
-        let refused =
-            test::call_service(&app, patch_class(&staff_token, &theirs_id, &ops_id, body)).await;
-        assert_eq!(refused.status().as_u16(), 404);
-    }
+    // An ordinary member of nothing in particular still cannot: the column is
+    // server-owned for everybody the setting does not name, and is stripped
+    // rather than refused.
+    let stripped = read_json(
+        test::call_service(
+            &app,
+            patch_class(
+                &outsider_token,
+                &theirs_id,
+                &theirs_id,
+                json!({ "org_class": "admin" }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(stripped["org_class"], "customer");
+}
 
-    // And the setting is answered against the organisation *selected*: the
-    // same person, acting somewhere unclassed, may not class anything.
-    let elsewhere =
-        read_json(test::call_service(&app, create_org(&staff_token, "Side project")).await).await;
-    let elsewhere_id = elsewhere["id"].as_str().unwrap().to_string();
+/// The line the bypass stops at. `private` is not a permission a back office
+/// out-ranks: it says a thing is not on the API, and it says it to everybody.
+#[ntex::test]
+async fn a_global_admin_does_not_bypass_private() {
+    let db = TempDatabase::create("orgclassprivate").await;
+    let root = temp_dir("orgclassprivate");
+    write_files(
+        &root,
+        &[
+            (
+                "main.toml",
+                &format!(
+                    "[server]\nbase_path = \"/api\"\n\n[database]\nurl = \"{}\"\n\n\
+                     [organization]\nglobal_admin_role = \"member@org_class=admin\"\n",
+                    db.url
+                ),
+            ),
+            (
+                "resources/ledger.toml",
+                "[resource]\nname = \"ledger\"\n\n[permissions]\nlist = \"private\"\n\
+                 read = \"private\"\n\n[fields.note]\ntype = \"string\"\n",
+            ),
+        ],
+    );
+
+    let state = load_state(&root).await;
+    let app = init_http_app!(state);
+
+    let staff = read_json(
+        test::call_service(
+            &app,
+            req_json(
+                "POST",
+                "/api/auth/register",
+                json!({ "email": "staff@example.com", "password": "pw" }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let staff_token = staff["token"].as_str().unwrap().to_string();
+    let ops = read_json(
+        test::call_service(
+            &app,
+            bearer(
+                test::TestRequest::post()
+                    .uri("/api/organization")
+                    .header(CONTENT_TYPE, "application/json")
+                    .set_payload(json!({ "name": "Ops" }).to_string()),
+                &staff_token,
+            )
+            .to_request(),
+        )
+        .await,
+    )
+    .await;
+    let ops_id = ops["id"].as_str().unwrap().to_string();
+    state
+        .db
+        .raw_json(
+            &format!(
+                "UPDATE {} SET org_class = 'admin' WHERE id = $1::uuid",
+                state.table("organization").unwrap()
+            ),
+            &[Value::String(ops_id.clone())],
+        )
+        .await
+        .unwrap();
+
+    // They administer the deployment — the organisation list proves it — and
+    // the private resource is still not there.
+    let listed = test::call_service(
+        &app,
+        bearer(
+            test::TestRequest::get()
+                .uri("/api/organization")
+                .header("x-organization", ops_id.clone()),
+            &staff_token,
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(listed.status().as_u16(), 200);
+
     let refused = test::call_service(
         &app,
-        patch_class(
+        bearer(
+            test::TestRequest::get()
+                .uri("/api/ledger")
+                .header("x-organization", ops_id.clone()),
             &staff_token,
-            &theirs_id,
-            &elsewhere_id,
-            json!({ "org_class": "pwned" }),
-        ),
+        )
+        .to_request(),
     )
     .await;
     assert_eq!(refused.status().as_u16(), 404);
@@ -1564,7 +1658,8 @@ type = "uuid"
     assert_eq!(theirs.status().as_u16(), 404);
 
     // The `allow` clause is the wider answer to the same question.
-    let parental = test::call_service(&app, as_parent(rename(&teens_chore_id, "mow the lawn"))).await;
+    let parental =
+        test::call_service(&app, as_parent(rename(&teens_chore_id, "mow the lawn"))).await;
     assert_eq!(parental.status().as_u16(), 200);
 
     // A second role that is denied outranks the one that allows: the teen still
@@ -1606,8 +1701,11 @@ type = "uuid"
     // The parent administers the organisation, so they hold `grounded` the way
     // an admin holds every role — and a denial must not read it that way, or
     // adding the role would have locked the family's own admin out.
-    let still_allowed =
-        test::call_service(&app, as_parent(rename(&teens_chore_id, "mow the lawn again"))).await;
+    let still_allowed = test::call_service(
+        &app,
+        as_parent(rename(&teens_chore_id, "mow the lawn again")),
+    )
+    .await;
     assert_eq!(still_allowed.status().as_u16(), 200);
 
     // Nothing in the set mentions an action's other verbs, so they keep the

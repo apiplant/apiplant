@@ -306,11 +306,12 @@ Any other name is a new template. Nothing sends it by itself; a function asks
 for it by name instead of spelling out a body:
 
 ```rust
-ctx.send_email(&json!({
-    "to": "bo@example.com",
-    "template": "welcome",
-    "vars": { "name": "Bo", "plan": "Team" },
-}))?;
+ctx.send_email(
+    Email::to("bo@example.com")
+        .template("welcome")
+        .var("name", "Bo")
+        .var("plan", "Team"),
+)?;
 ```
 
 A `subject` given beside the template still wins, so one template can serve

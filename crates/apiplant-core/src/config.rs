@@ -230,6 +230,24 @@ pub struct AuthConfig {
     /// origin (`/welcome`). Unset — the default — means no redirect, and the
     /// confirmation screen says so itself.
     pub verify_email_redirect: String,
+
+    // --- acting as somebody else ------------------------------------------
+    /// Let an organisation's admins sign in as one of their own members
+    /// (default on).
+    ///
+    /// On is the useful default because the alternative is what people do
+    /// instead: ask a member for their password. The grant is deliberately
+    /// small — an admin may borrow an account **in the organisation they
+    /// administer and nowhere else**, so the token they get back is pinned to
+    /// that organisation and carries none of the account's other memberships.
+    /// A member of two organisations cannot have one admin see the other.
+    ///
+    /// Turning it off removes the door for organisation admins entirely. It
+    /// does not touch the deployment's own back office: whoever
+    /// [`[organization] global_admin_role`](OrganizationConfig::global_admin_role)
+    /// names may act as anyone regardless, because a deployment's back office
+    /// is not a tenant's admin.
+    pub allow_impersonation: bool,
 }
 
 impl Default for AuthConfig {
@@ -245,6 +263,7 @@ impl Default for AuthConfig {
             verification_ttl_secs: 60 * 60 * 24,
             password_reset_ttl_secs: 60 * 60,
             verify_email_redirect: String::new(),
+            allow_impersonation: true,
         }
     }
 }
@@ -268,6 +287,7 @@ impl AuthConfig {
     pub fn password_reset_enabled(&self, email_enabled: bool) -> bool {
         self.allow_password_reset.unwrap_or(email_enabled) && email_enabled
     }
+
 }
 
 /// How many requests one client may make, before the API starts answering
@@ -427,21 +447,36 @@ impl Default for AdminConfig {
 
 /// The `[organization]` section: deployment-wide rules about the tenant itself.
 ///
-/// Only one today, and it exists because `organization.org_class` is not an
-/// ordinary column. A class decides what a `@org_class=` permission lets people
-/// do, so an organisation that could rename its own class could grant itself
-/// access — which is why the column is server-owned, and why saying who may
-/// write it is a deployment decision rather than a row-level one.
+/// It exists because `organization.org_class` is not an ordinary column. A
+/// class decides what a `@org_class=` permission lets people do, so an
+/// organisation that could rename its own class could grant itself access —
+/// which is why the column is server-owned, and why saying who may write it is
+/// a deployment decision rather than a row-level one.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct OrganizationConfig {
-    /// Who may set or change an organisation's `org_class`, in the same
-    /// grammar as `[permissions]` — typically a class of its own, e.g.
-    /// `"member@org_class=staff"`.
+    /// Who administers the deployment, in the same grammar as `[permissions]`
+    /// — typically an organisation class of its own, e.g.
+    /// `"role:admin@org_class=staff"`.
     ///
-    /// Defaults to `"private"`: with no setting, no request can write the
-    /// column at all and classes are fixed by the operator (seed data, or SQL).
-    pub org_class_editors: String,
+    /// This is the back office, and it is deliberately one setting rather than
+    /// five, because the jobs are one job. Whoever it names may:
+    ///
+    /// * write any organisation's `org_class`,
+    /// * list every organisation, and see who administers each,
+    /// * list every user, and
+    /// * read and write data in every organisation.
+    ///
+    /// They bypass **role checks and organisation checks** — the two things
+    /// that are about *where* a caller stands. They do not bypass `private`,
+    /// which is not a permission anybody holds but a statement that something
+    /// is not reachable over the API at all; a `private` resource, action or
+    /// field stays a `404` for them exactly as for everyone else.
+    ///
+    /// Defaults to `"private"`: with no setting there is no back office, no
+    /// request can write the column, and classes are fixed by the operator
+    /// (seed data, or SQL).
+    pub global_admin_role: String,
 
     /// The class stamped on an organisation created with none — every
     /// organisation the API makes, personal ones included.
@@ -460,17 +495,18 @@ pub struct OrganizationConfig {
 impl Default for OrganizationConfig {
     fn default() -> Self {
         OrganizationConfig {
-            org_class_editors: "private".to_string(),
+            global_admin_role: "private".to_string(),
             default_org_class: String::new(),
         }
     }
 }
 
 impl OrganizationConfig {
-    /// The parsed policy for writing `org_class`. An unparseable setting is
-    /// `private`, like every other access string in the system.
-    pub fn org_class_policy(&self) -> Policy {
-        Policy::parse(&self.org_class_editors)
+    /// The parsed policy naming the deployment's administrators. An
+    /// unparseable setting is `private`, like every other access string in the
+    /// system.
+    pub fn global_admin_policy(&self) -> Policy {
+        Policy::parse(&self.global_admin_role)
     }
 
     /// The class new organisations start with, if the app names one.
@@ -1715,6 +1751,16 @@ impl ObservabilityConfig {
 }
 
 impl Config {
+    /// Whether *any* door to impersonation is open, which is what decides
+    /// whether the endpoint is mounted and whether the dashboard offers it:
+    /// `[auth] allow_impersonation` for a tenant's own admins, and
+    /// `[organization] global_admin_role` for the back office, which may act
+    /// as anyone wherever it names somebody.
+    pub fn impersonation_enabled(&self) -> bool {
+        self.auth.allow_impersonation
+            || self.organization.global_admin_policy().level != Access::Private
+    }
+
     /// Load `main.toml` from an app directory, applying defaults for anything
     /// absent. A missing file is not an error.
     pub fn load(app_dir: &Path) -> crate::Result<Self> {

@@ -89,16 +89,17 @@ An `admin` holds every role the app defines, and nobody may remove their own
 The seed gives each organisation an `org_class`: Acme and Globex are
 `customer`, and Operations — which `admin@example.com` also belongs to — is
 `admin`. A permission can be narrowed to a class by appending
-`@org_class=<name>` to any level, and `main.toml` names who may change a class
-at all:
+`@org_class=<name>` to any level, and `main.toml` names the deployment's own
+administrators — who may change a class, among much else:
 
 ```toml
 [organization]
-org_class_editors = "member@org_class=admin"
+global_admin_role = "role:admin@org_class=admin"
 ```
 
 The column is server-owned like `organization_id`, so any other caller sending
-`org_class` has it dropped. See
+`org_class` has it dropped. Those administrators also bypass role and
+organisation checks everywhere else — though never `private`. See
 [06 · Permissions](../06-permissions) for a resource guarded by a class.
 
 Details in [Multitenancy](../../docs/multitenancy.md).

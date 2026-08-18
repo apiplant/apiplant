@@ -1,0 +1,79 @@
+# Everybody's password is `password`. It is not a field of the resource — it is
+# hashed, with argon2, into whichever field the `user` resource's `[auth]`
+# section names — so the plaintext never reaches the database and the fixture
+# stays readable.
+#
+# Nine accounts, and none of them is special by itself. What each one may do is
+# decided entirely by `seed/membership.toml`: sign in as any of them to see the
+# same endpoints answer differently.
+
+# --- the back office ---------------------------------------------------------
+
+[[row]]
+id = "root"
+email = "root@example.com"
+password = "password"
+display_name = "Rae Root"
+email_verified_at = 2024-02-01T09:00:00Z
+
+[[row]]
+id = "agent"
+email = "agent@example.com"
+password = "password"
+display_name = "Ash Agent"
+email_verified_at = 2024-02-01T09:05:00Z
+
+# --- Northwind Traders -------------------------------------------------------
+
+[[row]]
+id = "nadia"
+email = "nadia@northwind.example"
+password = "password"
+display_name = "Nadia Nolan"
+email_verified_at = 2024-02-02T10:00:00Z
+
+[[row]]
+id = "noel"
+email = "noel@northwind.example"
+password = "password"
+display_name = "Noel Nyman"
+email_verified_at = 2024-02-02T10:15:00Z
+
+[[row]]
+id = "nina"
+email = "nina@northwind.example"
+password = "password"
+display_name = "Nina Ndiaye"
+email_verified_at = 2024-02-02T10:30:00Z
+
+# --- Umbra Logistics ---------------------------------------------------------
+
+[[row]]
+id = "uma"
+email = "uma@umbra.example"
+password = "password"
+display_name = "Uma Ortiz"
+email_verified_at = 2024-02-03T11:00:00Z
+
+[[row]]
+id = "ugo"
+email = "ugo@umbra.example"
+password = "password"
+display_name = "Ugo Bello"
+email_verified_at = 2024-02-03T11:20:00Z
+
+# --- Lumen Health ------------------------------------------------------------
+
+[[row]]
+id = "lea"
+email = "lea@lumen.example"
+password = "password"
+display_name = "Lea Larsen"
+email_verified_at = 2024-02-04T12:00:00Z
+
+[[row]]
+id = "liam"
+email = "liam@lumen.example"
+password = "password"
+display_name = "Liam Okafor"
+email_verified_at = 2024-02-04T12:30:00Z

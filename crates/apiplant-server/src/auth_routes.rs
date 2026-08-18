@@ -569,7 +569,22 @@ pub async fn me(req: HttpRequest, state: State<AppState>) -> HttpResponse {
     if rows.as_array().is_none_or(|a| a.is_empty()) {
         return error(401, "user no longer exists");
     }
-    HttpResponse::Ok().json(&json!({ "user_id": principal.user_id.to_string() }))
+    // The impersonation half is here rather than in a screen's own bookkeeping
+    // because a reloaded page has only its token, and "whose account is this"
+    // has to survive the reload — a banner that disappeared on refresh would
+    // leave somebody typing into a stranger's account believing it was theirs.
+    HttpResponse::Ok().json(&json!({
+        "user_id": principal.user_id.to_string(),
+        "impersonator": principal.impersonator.map(|id| id.to_string()),
+        "organization_id": principal.org_lock.map(|id| id.to_string()),
+        // A fact about *this caller* that no manifest can carry, because a
+        // manifest describes the app and is the same for everybody. It is
+        // answered across every organisation the caller belongs to, so a
+        // dashboard cannot work it out from the roles it holds for the one
+        // organisation it has selected — it has to be told. It is also what
+        // says whether they may act as anyone, anywhere.
+        "global_admin": state.is_global_admin(Some(&principal)),
+    }))
 }
 
 /// `POST <base>/auth/apikeys` — issue an API key for the authenticated caller.

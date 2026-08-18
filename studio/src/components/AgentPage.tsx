@@ -458,7 +458,7 @@ function ToolsTab(props: {
           fallback={<p class="px-4 py-8 text-center text-xs text-muted">No tools configured for this agent.</p>}
         >
           <div class="divide-y divide-line">
-            <For each={props.entry.tools}>
+            <For each={props.entry.tools} keyed={false}>
               {(tool, index) => (
                 <div class="space-y-4 px-4 py-4">
                   <div class="grid gap-4 sm:grid-cols-2">
@@ -466,11 +466,11 @@ function ToolsTab(props: {
                       <TextInput
                         mono
                         lowercase
-                        value={tool.name}
+                        value={tool().name}
                         placeholder="lookup_order"
                         onInput={(value) =>
                           props.onEdit((draft) => {
-                            draft.tools[index()].name = value.trim();
+                            draft.tools[index].name = value.trim();
                           })
                         }
                       />
@@ -482,22 +482,22 @@ function ToolsTab(props: {
                           <TextInput
                             mono
                             lowercase
-                            value={tool.function}
+                            value={tool().function}
                             placeholder="function_name"
                             onInput={(value) =>
                               props.onEdit((draft) => {
-                                draft.tools[index()].function = value.trim();
+                                draft.tools[index].function = value.trim();
                               })
                             }
                           />
                         }
                       >
                         <Select
-                          value={tool.function || functions()[0] || ""}
+                          value={tool().function || functions()[0] || ""}
                           options={functions().map((name) => ({ value: name, label: name }))}
                           onChange={(value) =>
                             props.onEdit((draft) => {
-                              draft.tools[index()].function = value;
+                              draft.tools[index].function = value;
                             })
                           }
                         />
@@ -505,11 +505,11 @@ function ToolsTab(props: {
                     </Labelled>
                     <Labelled class="sm:col-span-2" label="description" hint="Passed to the model for tool selection.">
                       <TextInput
-                        value={tool.description}
+                        value={tool().description}
                         placeholder="Look up an order by id."
                         onInput={(value) =>
                           props.onEdit((draft) => {
-                            draft.tools[index()].description = value;
+                            draft.tools[index].description = value;
                           })
                         }
                       />
@@ -518,10 +518,10 @@ function ToolsTab(props: {
                       <TextArea
                         mono
                         class="min-h-40 text-xs"
-                        value={schemaText(tool.inputSchema)}
+                        value={schemaText(tool().inputSchema)}
                         onInput={(value) =>
                           props.onEdit((draft) => {
-                            draft.tools[index()].inputSchema = parseSchema(value, draft.tools[index()].inputSchema);
+                            draft.tools[index].inputSchema = parseSchema(value, draft.tools[index].inputSchema);
                           })
                         }
                       />
@@ -530,10 +530,10 @@ function ToolsTab(props: {
                       <TextArea
                         mono
                         class="min-h-40 text-xs"
-                        value={schemaText(tool.outputSchema)}
+                        value={schemaText(tool().outputSchema)}
                         onInput={(value) =>
                           props.onEdit((draft) => {
-                            draft.tools[index()].outputSchema = parseSchema(value, draft.tools[index()].outputSchema);
+                            draft.tools[index].outputSchema = parseSchema(value, draft.tools[index].outputSchema);
                           })
                         }
                       />
@@ -545,7 +545,7 @@ function ToolsTab(props: {
                       variant="danger"
                       onClick={() =>
                         props.onEdit((draft) => {
-                          draft.tools.splice(index(), 1);
+                          draft.tools.splice(index, 1);
                         })
                       }
                     >

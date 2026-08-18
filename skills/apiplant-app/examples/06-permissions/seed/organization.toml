@@ -7,7 +7,7 @@
 # `org_class` says what *kind* of organisation each one is. A permission can be
 # narrowed to a class — `role:admin@org_class=customer` — and the class itself
 # is server-owned: no API request writes it unless `[organization]
-# org_class_editors` in main.toml names the caller, which is why it is set here,
+# global_admin_role` in main.toml names the caller, which is why it is set here,
 # in the seed, alongside the row it belongs to.
 
 [[row]]

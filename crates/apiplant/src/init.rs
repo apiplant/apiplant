@@ -192,6 +192,14 @@ auto_migrate = true
 # tokens. `${{JWT_SECRET}}` reads it from the environment instead.
 jwt_secret = "change-me-before-you-deploy"
 
+# An organisation's admins may sign in as one of their own members, to see what
+# that member sees. On by default; the borrowed session is pinned to their
+# organisation, so it reaches nothing the member has anywhere else.
+allow_impersonation = true
+# Whoever `[organization] global_admin_role` names may do it to *anyone*, in any
+# organisation, and switch between organisations while they do — support access
+# for the back office rather than tenant administration.
+
 [rate_limit]
 # Nothing is limited until this names a rate. One line covers every endpoint;
 # a resource or a function narrows it — or lifts it — for its own.
@@ -205,10 +213,15 @@ jwt_secret = "change-me-before-you-deploy"
 # Every new organisation starts as a `customer`, including the personal one each
 # account is given at registration; `seed/organization.toml` classes Operations
 # as `admin` instead. And because a class decides what people may do, no request
-# writes it: only somebody who is already in an `admin`-class organisation may
-# class anything, which is what the second line says.
+# writes it: only the back office named below may class anything.
 default_org_class = "customer"
-org_class_editors = "member@org_class=admin"
+
+# The back office: admins of an `admin`-class organisation. They class other
+# organisations, list every organisation with its admins, list every user, and
+# read and write data in every organisation — role checks and organisation
+# checks do not apply to them. `private` still does: anything marked private is
+# no more reachable for them than for anybody else.
+global_admin_role = "role:admin@org_class=admin"
 
 [docs]
 enabled = true
@@ -263,7 +276,7 @@ const SEED_ORGANIZATION: &str = r#"# The organisations the app starts with.
 #
 # `org_class` is server-owned — no API request writes it — so seeding is where
 # the first one comes from. Operations is the back office: `main.toml` says
-# `org_class_editors = "member@org_class=admin"`, so being in *this*
+# `global_admin_role = "role:admin@org_class=admin"`, so administering *this*
 # organisation is what lets somebody class the others.
 
 [[row]]

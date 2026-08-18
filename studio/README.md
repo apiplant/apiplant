@@ -35,6 +35,7 @@ header, it starts from your system preference, and it is remembered.
 | `resources/*.toml` | Fields (type, `required`/`unique`/`hidden`, `max_length`, `default`, `references`, `on_delete`), the five permission actions including `role:<name>`, tenancy scope, `table`, `owner_field`, timestamps, `[admin] search_fields` (which columns one `?search=` term is matched against), and `[auth]` on `user`. Other `[admin]` keys are carried through untouched. |
 | Built-in resources | `organization`, `user`, `membership`, `api_key` and `oauth_connection` are listed with the definitions the framework ships. Editing one writes a `resources/*.toml` that replaces the default — the framework's own override mechanism. |
 | `[hooks]` | All ten events, with a picker over the function names the libraries in `functions/` actually export. A hook naming a function nothing exports is flagged. |
+| `emails/*.liquid` | The app's own wording for the messages the framework sends. The subject is edited as a field and written into the TOML front matter; the body is edited as Liquid and rendered live with LiquidJS against sample values you can change, previewed as the mail client will show it, as the plain-text half that goes out beside it, and as the HTML that produced both. A file named `verification`, `password_reset` or `invitation` replaces that built-in message; any other name is a template a function asks for by name. |
 | `functions/` | New functions in **Rust, TypeScript, C, Zig or Go**, as a single file or a directory (a crate, a Go module, an npm project, a multi-file C or Zig project). Sources and per-function `<name>.toml` config are editable in place; build output — `lib*.so`, or `<name>.js` for TypeScript — is listed with its size and never touched. |
 
 Every generated template compiles with `apiplant build` as written and mounts at
@@ -91,11 +92,12 @@ src/
 │   ├── fs.ts          File System Access: pick, scan, write, delete
 │   ├── functions.ts   reading functions/ the way `apiplant build` does
 │   ├── templates.ts   the per-language function scaffolds
+│   ├── emails.ts      reading emails/ the way email_templates.rs does, plus Liquid rendering
 │   ├── store.ts       the open project: resources, the file map, and pending changes
 │   ├── theme.ts       light/dark, remembered, system preference by default
 │   └── nav.ts         which page is showing
 └── components/
-    ├── CodeEditor.tsx CodeMirror 6 — Rust, TypeScript, C, Go, JSON, TOML, Zig
+    ├── CodeEditor.tsx CodeMirror 6 — Rust, TypeScript, C, Go, JSON, TOML, Zig, Liquid
     ├── ui.tsx         the shared primitives
     └── …              one file per page
 ```

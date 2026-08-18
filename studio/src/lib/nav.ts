@@ -6,6 +6,7 @@ export type View =
   | { kind: "resource"; name: string }
   | { kind: "function"; name: string }
   | { kind: "agent"; name: string }
+  | { kind: "email"; name: string }
   | { kind: "changes" };
 
 function parsePath(pathname: string): View {
@@ -19,6 +20,7 @@ function parsePath(pathname: string): View {
   if (parts[0] === "resources" && parts[1]) return { kind: "resource", name: parts[1] };
   if (parts[0] === "functions" && parts[1]) return { kind: "function", name: parts[1] };
   if (parts[0] === "agents" && parts[1]) return { kind: "agent", name: parts[1] };
+  if (parts[0] === "emails" && parts[1]) return { kind: "email", name: parts[1] };
   return { kind: "overview" };
 }
 
@@ -36,6 +38,8 @@ function pathFor(view: View): string {
       return `/functions/${encodeURIComponent(view.name)}`;
     case "agent":
       return `/agents/${encodeURIComponent(view.name)}`;
+    case "email":
+      return `/emails/${encodeURIComponent(view.name)}`;
   }
 }
 
@@ -64,5 +68,6 @@ export function isActive(current: View, target: View): boolean {
   if (current.kind === "resource" && target.kind === "resource") return current.name === target.name;
   if (current.kind === "function" && target.kind === "function") return current.name === target.name;
   if (current.kind === "agent" && target.kind === "agent") return current.name === target.name;
+  if (current.kind === "email" && target.kind === "email") return current.name === target.name;
   return true;
 }

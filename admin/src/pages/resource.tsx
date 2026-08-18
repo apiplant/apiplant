@@ -40,7 +40,9 @@ import {
   asRecords,
   can,
   hasRole,
+  impersonate,
   includeOrgContext,
+  mayImpersonate,
   navigate,
   notify,
   reportError,
@@ -216,6 +218,17 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
     setOwnerOnly(false);
   };
 
+  /** Borrow the account on this row and land on the dashboard as them. */
+  const actAsRow = async (row: ApiRecord) => {
+    try {
+      await impersonate(String(row.id ?? ""));
+      notify("success", `You are now working as ${recordLabel(props.resource, row)}.`);
+      navigate({ kind: "dashboard" });
+    } catch (error) {
+      reportError(error);
+    }
+  };
+
   return (
     <>
       <PageTitle
@@ -365,6 +378,28 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
                             )}
                           </For>
                           <td class="px-4 py-3 text-right text-faint">
+                            {/*
+                              Where the back office finds somebody it shares no
+                              organisation with. The team screen offers this per
+                              member of one organisation, which is everybody an
+                              org admin may borrow — but a global admin may
+                              borrow anyone, and this list is the only screen
+                              that holds them all. `stopPropagation` because the
+                              row itself opens the record.
+                            */}
+                            <Show when={props.resource.name === "user" && mayImpersonate(String(row.id ?? ""))}>
+                              <button
+                                type="button"
+                                class="mr-3 rounded-md border border-line px-2 py-1 text-[0.6875rem] text-muted transition-colors hover:border-accent hover:text-ink"
+                                title="See the dashboard as this person sees it"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void actAsRow(row);
+                                }}
+                              >
+                                Act as
+                              </button>
+                            </Show>
                             <svg
                               class="inline h-3.5 w-3.5"
                               viewBox="0 0 16 16"
@@ -605,6 +640,17 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
   const heading = () =>
     isNew() ? `New ${props.resource.label.toLowerCase()}` : recordLabel(props.resource, record() ?? null);
 
+  /** Borrow this account and land on the dashboard as them. */
+  const actAs = async () => {
+    try {
+      await impersonate(props.id ?? "");
+      notify("success", `You are now working as ${heading()}.`);
+      navigate({ kind: "dashboard" });
+    } catch (error) {
+      reportError(error);
+    }
+  };
+
   return (
     <>
       <button
@@ -619,6 +665,20 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
       </button>
 
       <PageTitle title={heading()} subtitle={isNew() ? undefined : props.resource.label}>
+        {/*
+          The other door into impersonation. The team screen offers it per row
+          for the people an organisation's admin administers; this one is where
+          a global admin finds somebody they share no organisation with — the
+          list beside it offers the same thing without opening the record.
+        */}
+        <Show when={props.resource.name === "user" && !isNew() && mayImpersonate(props.id ?? "")}>
+          <Button
+            onClick={() => void actAs()}
+            title="See the dashboard as this person sees it"
+          >
+            Act as this user
+          </Button>
+        </Show>
         <Show when={mayDelete()}>
           <Button variant="danger" onClick={() => setConfirmDelete(true)}>
             Delete

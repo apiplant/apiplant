@@ -373,11 +373,7 @@ pub async fn send_verification(
     }
     let ttl = state.app.config.auth.verification_ttl_secs;
     let plaintext = mint_token(state, user_id, KIND_VERIFICATION, ttl).await?;
-    let message = emails::verification(
-        &links(state),
-        &plaintext,
-        &emails::humanise(ttl),
-    );
+    let message = emails::verification(&links(state), &plaintext, &emails::humanise(ttl));
     send(state, message.to(address)).await
 }
 
@@ -475,11 +471,8 @@ pub async fn forgot_password(state: State<AppState>, body: Json<Value>) -> HttpR
             let ttl = state.app.config.auth.password_reset_ttl_secs;
             match mint_token(&state, user_id, KIND_RESET, ttl).await {
                 Ok(plaintext) => {
-                    let message = emails::password_reset(
-                        &links(&state),
-                        &plaintext,
-                        &emails::humanise(ttl),
-                    );
+                    let message =
+                        emails::password_reset(&links(&state), &plaintext, &emails::humanise(ttl));
                     if send(&state, message.to(&address)).await.is_err() {
                         tracing::warn!("could not send a password reset email");
                     }
@@ -1012,14 +1005,14 @@ mod tests {
     use apiplant_core::Access;
 
     fn principal(org: Uuid, role: &str) -> apiplant_auth::Principal {
-        apiplant_auth::Principal {
-            user_id: Uuid::new_v4(),
-            organizations: vec![apiplant_auth::OrgMembership::new(
+        apiplant_auth::Principal::new(
+            Uuid::new_v4(),
+            vec![apiplant_auth::OrgMembership::new(
                 org,
                 Some(role.to_string()),
                 [],
             )],
-        }
+        )
     }
 
     #[test]

@@ -97,6 +97,7 @@ back; a directory left in the app is inert.
 | An action | A form generated from a [function](functions.md)'s input type, its streamed output as it happens, and its final result. |
 | Team | Who is in the organisation and which roles each holds, granted and revoked individually. |
 | Organization | The workspace's details — including the logo shown wherever it is named — and switching between workspaces. |
+| Organizations, Users | The two **back office** screens, shown only to whoever [`[organization] global_admin_role`](permissions.md#the-back-office) names: every organisation in the deployment and every account in it, unfiltered by default, with search, a class or organisation filter, and a page at a time. From the first, a class is set inline and any tenant is switched into or opened at its team; from the second, any account is borrowed with **Act as**. |
 | Your account | Their own profile, and — where `[oauth]` names providers — the linked accounts they can sign in through, to connect or disconnect. |
 | API keys | Issuing and revoking keys. |
 | Connect a terminal | Issuing a key to [`apiplant cli`](cli.md), reached only from the link that command opens. |
@@ -123,6 +124,27 @@ The Organization screen is where that workspace is renamed and where another is
 created or selected. Whether creation is offered is the app's decision rather
 than the dashboard's: it follows the `organization` resource's `create` policy,
 so an app that provisions tenants itself does not show it.
+
+### The back office
+
+An operator the `global_admin_role` policy names gets two screens the others do
+not, grouped under **Back office**. They exist because every other screen is
+written from inside one organisation — Team is *your* team — and the questions a
+deployment's administrator asks are the other shape: which tenants exist, who is
+in one, and whose account is this.
+
+**Organizations** lists every tenant, not only the ones they belong to. The
+class is edited in the row, since that is the column the setting authorises, and
+each row switches into that tenant or opens its team — including a team they are
+no member of, where the ordinary management controls and **Act as** are all
+offered, because the server lifts the role and organisation checks for them.
+
+**Users** lists every account, filterable to one organisation, with **Act as**
+on each row. That is the only screen where somebody they share no organisation
+with can be found at all.
+
+Both open unfiltered — the whole deployment, a page at a time — and the search
+and drop-downs narrow from there.
 
 ### Connecting the console
 

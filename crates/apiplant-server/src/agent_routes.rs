@@ -233,8 +233,7 @@ pub async fn chat(
                         // No `delta`: the thinking already went out as
                         // `reasoning` events, and repeating it as the answer is
                         // how the thinking ends up being the reply.
-                        let mut bytes =
-                            sse::event("warning", &json!({ "text": warning })).to_vec();
+                        let mut bytes = sse::event("warning", &json!({ "text": warning })).to_vec();
                         bytes.extend_from_slice(done.as_ref());
                         return Ok::<Bytes, sse::Never>(Bytes::from(bytes));
                     }
@@ -1163,10 +1162,7 @@ fn summary_prefix_length(
 }
 
 fn owner_principal(user_id: Uuid) -> Principal {
-    Principal {
-        user_id,
-        organizations: Vec::new(),
-    }
+    Principal::new(user_id, Vec::new())
 }
 
 async fn persist_tool_calls(
@@ -1320,8 +1316,7 @@ fn reply_json(reply: ChatReply, thread_id: Option<Uuid>) -> Value {
 /// thinking, which is the one thing the reasoning/answer split exists to
 /// prevent.
 fn truncated_answer(reply: &ChatReply) -> Option<&'static str> {
-    (reply.text.trim().is_empty() && !reply.reasoning.trim().is_empty())
-        .then_some(TRUNCATED_ANSWER)
+    (reply.text.trim().is_empty() && !reply.reasoning.trim().is_empty()).then_some(TRUNCATED_ANSWER)
 }
 
 fn done_json(done: Done, thread_id: Option<Uuid>) -> Value {

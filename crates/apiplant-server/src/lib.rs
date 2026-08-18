@@ -73,6 +73,20 @@ macro_rules! build_app {
                 $crate::ntex_web::post().to($crate::auth_routes::create_api_key),
             );
 
+        // Acting as somebody else. Mounted only where some door into it is
+        // open, so an app that has switched both off has no endpoint to probe.
+        if config.impersonation_enabled() {
+            scope = scope
+                .route(
+                    "/auth/impersonate",
+                    $crate::ntex_web::post().to($crate::impersonation::start),
+                )
+                .route(
+                    "/auth/impersonate/stop",
+                    $crate::ntex_web::post().to($crate::impersonation::stop),
+                );
+        }
+
         // Uploads carry their own payload limit, because the framework-wide
         // default is a JSON body's worth and this route exists to take files.
         if let Some(storage) = &state.storage {
@@ -362,6 +376,7 @@ mod emails;
 mod function_routes;
 pub mod functions;
 pub mod hooks;
+pub mod impersonation;
 mod oauth_routes;
 mod openapi;
 mod queue_routes;
@@ -906,10 +921,7 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
     // working until somebody reads their mail.
     let email_templates = Arc::new(email_templates::EmailTemplates::load(&app.root)?);
     if !email_templates.names().is_empty() {
-        tracing::info!(
-            "  emails -> {}",
-            email_templates.names().join(", ")
-        );
+        tracing::info!("  emails -> {}", email_templates.names().join(", "));
     }
 
     let telemetry =

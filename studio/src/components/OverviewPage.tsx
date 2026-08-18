@@ -123,6 +123,7 @@ export function OverviewPage(props: {
   onNewResource: () => void;
   onNewFunction: () => void;
   onNewAgent: () => void;
+  onNewEmail: () => void;
 }) {
   const custom = createMemo(() => props.project.resources.filter((entry) => !entry.builtin));
   const overridden = createMemo(() => props.project.resources.filter((entry) => entry.builtin && entry.path));
@@ -191,6 +192,7 @@ export function OverviewPage(props: {
                 { label: "Add a resource", action: props.onNewResource },
                 { label: "Add an agent", action: props.onNewAgent },
                 { label: "Add a function", action: props.onNewFunction },
+                { label: "Write an email template", action: props.onNewEmail },
                 { label: "Review configuration", action: () => setView({ kind: "config" }) },
                 { label: "Review pending changes", action: () => setView({ kind: "changes" }) },
               ]}
@@ -307,6 +309,41 @@ export function OverviewPage(props: {
                     {entry.storageEnabled ? "stored" : "live"}
                   </span>
                   <span class="w-24 text-right text-[0.6875rem] text-faint">{entry.scope}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Card>
+
+      <Card class="mt-3">
+        <CardHeader
+          title="Emails"
+          hint="emails/*.liquid — an app's own wording for the messages the framework sends."
+        />
+        <Show
+          when={props.project.emails.length}
+          fallback={
+            <p class="px-4 py-8 text-center text-xs text-muted">
+              None. Verification, password reset and invitation go out in the framework's own plain wording.
+            </p>
+          }
+        >
+          <div class="divide-y divide-line">
+            <For each={props.project.emails}>
+              {(entry) => (
+                <button
+                  type="button"
+                  onClick={() => setView({ kind: "email", name: entry.name })}
+                  class="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-surface-2/50"
+                >
+                  <span class="flex-1 truncate font-mono text-[0.8125rem] text-ink">{entry.name}</span>
+                  <span class="w-28 text-right text-[0.6875rem] text-muted">
+                    {entry.builtin ? "overrides built-in" : "custom"}
+                  </span>
+                  <span class="w-24 text-right text-[0.6875rem] text-faint">
+                    {entry.textPath ? "html + text" : "html"}
+                  </span>
                 </button>
               )}
             </For>

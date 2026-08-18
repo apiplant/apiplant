@@ -50,7 +50,7 @@ unique = true
 # permission can be narrowed to one (`role:admin@org_class=school`), so this
 # column decides who gets in, and it is therefore server-owned: it is stripped
 # from every client body like `organization_id` is, and only somebody the
-# `[organization] org_class_editors` setting names may set it. Unset by
+# `[organization] global_admin_role` setting names may set it. Unset by
 # default, which no class-qualified policy matches.
 [fields.org_class]
 type = "string"

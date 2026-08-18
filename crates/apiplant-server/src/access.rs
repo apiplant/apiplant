@@ -31,6 +31,13 @@ pub async fn check(
     let principal = state.resolve_principal(req).await;
     let access = &policy.access;
 
+    // The deployment's own administrators, exactly as in [`crate::crud`]: the
+    // role and the organisation stop being questions, and `private` does not.
+    // A function nobody may call is not a function they may call either.
+    if !matches!(access, FunctionAccess::Private) && state.is_global_admin(principal.as_ref()) {
+        return Ok(principal);
+    }
+
     // A `@org_class=` qualifier narrows every level, including the ones that
     // name no organisation: it says the caller must be acting inside an
     // organisation of that class, so `public@org_class=staff` is a members-only

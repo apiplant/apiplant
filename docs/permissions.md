@@ -248,7 +248,7 @@ An organisation with **no** class matches no qualifier at all, and an empty
 class in a policy (`"role:admin@org_class="`) is a typo, so it collapses to
 `private` like any other unparseable access string.
 
-### Who may set a class
+### The back office
 
 The class decides what a `@org_class=` permission lets people do, so an
 organisation able to write its own class could grant itself whatever those
@@ -259,13 +259,13 @@ caller is named by one deployment-wide setting:
 ```toml
 # main.toml
 [organization]
-org_class_editors = "member@org_class=admin"
+global_admin_role = "role:admin@org_class=admin"
 ```
 
-It is written in this same grammar and answered against the organisation the
-caller has **selected**, not the one being edited — which is how one back-office
-organisation comes to administer everybody's classes. Unset, it is `private`:
-nobody, and classes come only from seed data or SQL.
+Written in this same grammar, and answered across **every** organisation the
+caller belongs to rather than the one they have selected — this is a statement
+about who somebody is, not about where they are standing. Unset, it is
+`private`: nobody, and classes come only from seed data or SQL.
 
 New organisations can start classed rather than waiting to be classified:
 
@@ -279,35 +279,49 @@ the personal one every account is created with — so a deployment whose ordinar
 tenant is one kind has its permissions apply from the moment an organisation
 exists. Unset, new organisations carry no class, which no qualifier matches.
 
-### What a class editor may do
+### What a global admin may do
 
-Classing organisations is deployment-wide work, so the `organization` resource
-answers a class editor differently — but only as far as the job needs:
+Running a deployment is not work any one tenant's permissions can express, so
+whoever this setting names is answered ahead of them:
 
-| Action | For a class editor |
-|--------|--------------------|
-| `list` / `read` | **every** organisation, not only their own — you cannot class what you cannot find |
-| `update` | `org_class` on any organisation, **and nothing else** |
-| everything else | exactly the resource's ordinary policy |
+| Question | For a global admin |
+|----------|--------------------|
+| which role do you hold? | not asked — every `role:` clause passes |
+| which organisation are you in? | not asked — they may select any organisation, member or not |
+| which rows may you see? | every organisation's, or one organisation's when `X-Organization` names it |
+| is this `private`? | **asked, and answered the same as for everybody else** |
 
-A body carrying anything besides `org_class` goes by the normal `update`
-policy, so an organisation's own admins keep sole control of its name, slug and
-logo; a rename smuggled in beside a class change is refused rather than
-half-applied. The rule is judged on the body the client sent *and* on the body a
-`before_update` hook returns, so a hook cannot widen the write either.
+That last row is the whole shape of the grant. It bypasses the two questions
+about *where a caller stands*; it bypasses nothing about what is *reachable*.
+`private` is not a permission to out-rank — it says a resource, an action or a
+field is not on the API at all — so a `private` thing stays a `404` for a global
+admin exactly as it does for an anonymous stranger.
 
-All of this depends on the organisation the caller has **selected**: the setting
-is answered against `X-Organization`, so the same account acting from an
-unclassed organisation is nobody in particular, sees only its own organisations,
-and may class nothing.
+In practice this is what lets one organisation be the back office: its admins
+class other organisations, list every organisation with its admins, list every
+user, and read and write data in all of them. Dropping the `X-Organization`
+header widens a list to the whole deployment; sending one narrows it to that
+tenant, which is what the dashboard does when you switch into one.
 
 The [dashboard](admin.md)'s Organization screen shows the class as an editable
 field to those the setting names and as plain text to everyone else, so nobody
-is offered an input the server would ignore. For a class editor its
-organisation list covers the whole deployment, with a **Mine / All** switch and
-a name filter, and lets the class be set inline on any row — including
-organisations they do not belong to, which are marked as such because switching
-into one is not something membership allows.
+is offered an input the server would ignore. For a global admin its organisation
+list covers the whole deployment, with a **Mine / All** switch and a name
+filter, and lets the class be set inline on any row.
+
+### Acting as somebody else
+
+Being the back office is also what lets somebody act as anybody, in any
+organisation — there is no second list of impersonators. The rest of it is
+documented with sessions, in
+[Authentication](authentication.md#acting-as-somebody-else): an organisation's
+own admins have a narrower door of their own, governed by `[auth]
+allow_impersonation`, and a borrowed session is never a back office, whoever
+borrowed it.
+
+[`examples/27-back-office`](../examples/27-back-office) is a seeded deployment
+to try all of this against: a support organisation, three customers, nine
+accounts, and both doors into impersonation.
 
 ## Decision model
 

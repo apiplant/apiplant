@@ -52,8 +52,8 @@ path    = "/admin"           # where it mounts (outside base_path)
 gravatar = false             # fall back to Gravatar for accounts with no avatar_url
 
 [organization]               # optional: rules about the tenant itself
-org_class_editors = "member@org_class=admin"   # who may class an organisation
-default_org_class = "customer"                 # what a new one starts as
+global_admin_role = "role:admin@org_class=admin"   # the deployment's back office
+default_org_class = "customer"                     # what a new organisation starts as
 
 [public]
 enabled   = true             # serve `dir` at the site root when it exists
@@ -146,6 +146,7 @@ apiplant targets **PostgreSQL**, using `to_jsonb`, `gen_random_uuid()`,
 | `verification_ttl_secs` | `86400` (24h) | How long a confirmation link stays valid. |
 | `password_reset_ttl_secs` | `3600` (1h) | How long a reset link stays valid. Deliberately short, since it is a live credential sitting in a mailbox. |
 | `verify_email_redirect` | unset | Where somebody lands once they confirm their address. An absolute URL or a path on this origin; unset means they stay on the confirmation screen. |
+| `allow_impersonation` | `true` | Let an organisation's admins act as one of its members. The session they get is pinned to that organisation. Whoever `[organization] global_admin_role` names may act as *anyone*, anywhere, regardless of this flag. See [Acting as somebody else](authentication.md#acting-as-somebody-else). |
 
 The three "follows `[email]`" flags are the only defaults here that are not
 constant. Configuring a provider enables all three; configuring none leaves them
@@ -265,7 +266,7 @@ See [Admin dashboard](admin.md).
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `org_class_editors` | `private` | Who may write `organization.org_class`, in the [permissions](permissions.md) grammar. The default writes it for nobody: the column is server-owned and classes come from seed data or SQL. |
+| `global_admin_role` | `private` | The deployment's own administrators, in the [permissions](permissions.md) grammar. They write any organisation's `org_class`, list every organisation and every user, and read and write data in all of them — role checks and organisation checks do not apply to them, and `private` still does. The default names nobody: the class column is server-owned and classes come from seed data or SQL. |
 | `default_org_class` | unset | The class stamped on a new organisation that has none — every organisation the API creates, including the personal one each account is given. Unset leaves them unclassed, which no `@org_class=` qualifier matches. A class editor who names a class on create keeps theirs. |
 
 An organisation's `org_class` is what a `@org_class=` permission is checked
@@ -273,13 +274,13 @@ against, so an organisation able to set its own class could grant itself
 whatever those permissions guard. The column is therefore stripped from every
 request body — like `organization_id` — except for callers this setting names.
 
-The policy is answered against the organisation the caller has **selected**, not
-the one being edited, which is how one back-office organisation comes to
-administer everybody's classes:
+The policy is answered across every organisation the caller belongs to, not the
+one they have selected: it says who somebody *is*, which is what makes one
+back-office organisation able to administer the rest:
 
 ```toml
 [organization]
-org_class_editors = "member@org_class=admin"
+global_admin_role = "role:admin@org_class=admin"
 ```
 
 See [Organisation classes](permissions.md#organisation-classes).
