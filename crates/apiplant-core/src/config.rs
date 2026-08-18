@@ -287,7 +287,6 @@ impl AuthConfig {
     pub fn password_reset_enabled(&self, email_enabled: bool) -> bool {
         self.allow_password_reset.unwrap_or(email_enabled) && email_enabled
     }
-
 }
 
 /// How many requests one client may make, before the API starts answering

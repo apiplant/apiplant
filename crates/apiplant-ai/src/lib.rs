@@ -1233,11 +1233,7 @@ fn parse_openai(value: &Value) -> Option<Event> {
     }
 }
 
-fn parse_complete(
-    provider: Provider,
-    format: ReasoningFormat,
-    value: &Value,
-) -> Option<ChatReply> {
+fn parse_complete(provider: Provider, format: ReasoningFormat, value: &Value) -> Option<ChatReply> {
     match provider {
         Provider::Anthropic => parse_anthropic_complete(value),
         _ => parse_openai_complete(format, value),
@@ -1962,8 +1958,10 @@ mod tests {
     /// leave `<think>` at the head of the reasoning.
     #[test]
     fn a_pre_opened_block_tolerates_the_opening_tag_arriving_too() {
-        let (text, reasoning) =
-            split_stream_as(ReasoningFormat::Implicit, &["<think>\nWhy.</think>Because."]);
+        let (text, reasoning) = split_stream_as(
+            ReasoningFormat::Implicit,
+            &["<think>\nWhy.</think>Because."],
+        );
         assert_eq!(text, "Because.");
         assert_eq!(reasoning, "\nWhy.");
     }
@@ -2008,7 +2006,10 @@ mod tests {
         assert_eq!(ReasoningFormat::parse(" Auto "), ReasoningFormat::Auto);
         assert_eq!(ReasoningFormat::parse("native"), ReasoningFormat::Native);
         assert_eq!(ReasoningFormat::parse("tags"), ReasoningFormat::Tags);
-        assert_eq!(ReasoningFormat::parse("implicit"), ReasoningFormat::Implicit);
+        assert_eq!(
+            ReasoningFormat::parse("implicit"),
+            ReasoningFormat::Implicit
+        );
         // A typo is not a licence to show the thinking as the answer.
         assert_eq!(ReasoningFormat::parse("deepseek-r1"), ReasoningFormat::Auto);
     }
