@@ -251,9 +251,54 @@ function Pager(props: { slug: string }) {
   );
 }
 
+/**
+ * A screenshot, full screen. The guides show them at column width, which is
+ * narrower than the application they picture, so every one of them is worth a
+ * closer look; Escape, or a click anywhere, closes it again.
+ */
+function Lightbox(props: { src: string; alt: string; onClose: () => void }) {
+  createEffect(
+    () => props.src,
+    () => {
+      const onKey = (event: KeyboardEvent) => {
+        if (event.key === "Escape") props.onClose();
+      };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    },
+  );
+
+  return (
+    <div
+      class="fixed inset-0 z-[60] flex cursor-zoom-out items-center justify-center bg-canvas/85 p-4 backdrop-blur-sm sm:p-10"
+      onClick={props.onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={props.alt || "Screenshot"}
+    >
+      <img
+        src={props.src}
+        alt={props.alt}
+        class="max-h-full max-w-full rounded-lg border border-line shadow-2xl"
+      />
+      <button
+        type="button"
+        onClick={props.onClose}
+        aria-label="Close image"
+        class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-muted hover:text-ink"
+      >
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 function Article(props: { slug: string }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [zoomed, setZoomed] = createSignal<{ src: string; alt: string } | null>(null);
   const docResource = createMemo(async () => loadDoc(props.slug));
   const doc = () => latest(docResource);
 
@@ -264,7 +309,14 @@ function Article(props: { slug: string }) {
   const intercept = (event: MouseEvent) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey)
       return;
-    const anchor = (event.target as HTMLElement).closest("a");
+    const target = event.target as HTMLElement;
+    // A screenshot outside a link opens full screen instead of navigating.
+    if (target instanceof HTMLImageElement && !target.closest("a")) {
+      event.preventDefault();
+      setZoomed({ src: target.currentSrc || target.src, alt: target.alt });
+      return;
+    }
+    const anchor = target.closest("a");
     const href = anchor?.getAttribute("href");
     if (!anchor || !href || !href.startsWith("/")) return;
     event.preventDefault();
@@ -379,6 +431,12 @@ function Article(props: { slug: string }) {
       </article>
 
       <Show when={doc()}>{(loaded) => <Contents headings={loaded().headings} />}</Show>
+
+      <Show when={zoomed()}>
+        {(image) => (
+          <Lightbox src={image().src} alt={image().alt} onClose={() => setZoomed(null)} />
+        )}
+      </Show>
     </div>
   );
 }

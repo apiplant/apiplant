@@ -180,7 +180,9 @@ const DOC_CLASSES: Record<string, string> = {
   hr: "my-8 border-0 border-t border-line",
   // The screenshots are of a light-background application, so they need a
   // border of their own to keep an edge against the page in either theme.
-  img: "my-5 max-w-full rounded-lg border border-line",
+  // A screenshot is unreadable at column width, so clicking one opens it full
+  // screen — the article's click handler picks it up by the `zoom` marker.
+  img: "my-5 max-w-full rounded-lg border border-line cursor-zoom-in",
   // Not `whitespace-nowrap`: a long path or symbol in prose would otherwise
   // push the whole page wider than a phone screen.
   code_inline:
