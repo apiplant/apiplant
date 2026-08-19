@@ -319,27 +319,16 @@ several messages that differ only in their subject line.
 
 ### When something is wrong with a template
 
-A template that does not **parse** stops the app at boot, naming the file: it
-was written to be used, and an app that quietly sent the built-in message
-instead would look exactly like the override working. A template that parses but
-fails to **render** falls back to the built-in message and logs why — these
-flows are how somebody recovers an account, and a plain message beats no
-message.
+A template that does not **parse** stops the app at boot, naming the file, so a
+broken override cannot silently fall back to the built-in message. A template
+that parses but fails to **render** falls back to the built-in message and logs
+the error: these flows are account recovery, where the built-in message is
+preferable to none.
 
 Liquid was chosen for what it cannot do: no filesystem, no includes, no
 arbitrary code. A template is data, and the variables in scope are exactly the
-ones above.
-
-## What isn't here
-
-* **Attachments.** A message is a subject, a text part and an HTML part.
-* **Provider-side templates.** Available by calling the provider's own API from
-  a function, which is the appropriate place for a provider-specific feature.
-  The `emails/` directory above is rendered by apiplant, on your server.
-* **Queueing and retries.** A send is one HTTP request or one SMTP session, and
-  it either succeeds or returns an error. Durable delivery belongs to a queue,
-  not a request handler.
-* **Inbound mail.** apiplant sends mail; it does not receive it.
+ones above. A send is one HTTP request or one SMTP session: it either succeeds
+or returns an error, and durable delivery is a [queue](queues.md) concern.
 
 ## See also
 

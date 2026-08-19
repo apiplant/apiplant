@@ -101,6 +101,7 @@ is only the map.
 | [payments.md](references/payments.md) | Catalogue, subscriptions, checkout, tax |
 | [ai.md](references/ai.md) | `[ai]` provider, `agents/`, `ctx.chat`, streaming |
 | [admin.md](references/admin.md) | The built-in operator UI and `[admin]` config |
+| [studio.md](references/studio.md) | `apiplant studio`: the local editor for an app's TOML, in a browser |
 | [cli.md](references/cli.md) | `apiplant cli`: the dashboard in a terminal |
 | [security.md](references/security.md) | What to configure before exposing the server |
 | [openapi.md](references/openapi.md) | The generated spec and Swagger UI |

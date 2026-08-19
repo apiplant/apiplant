@@ -4,6 +4,7 @@
  */
 
 import { expect, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +35,35 @@ export async function shoot(page: Page, name: string, fullPage = false): Promise
     animations: "disabled",
     caret: "hide",
   });
+}
+
+/**
+ * `shoot()`, but retaken until the page has stopped moving.
+ *
+ * Some screens repaint a beat after the network goes idle — the streamed
+ * reply is redrawn as its stored copy, and a frame caught mid-repaint holds
+ * the text twice at half opacity. Two consecutive identical frames mean the
+ * repaint is done, so the loop takes frames until that happens.
+ */
+export async function shootStable(page: Page, name: string, fullPage = false): Promise<void> {
+  const path = join(SHOTS_DIR, `${name}.png`);
+  let previous: Buffer | undefined;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => {
+      window.scrollTo(0, 0);
+      for (const element of document.querySelectorAll("nav, aside, main")) element.scrollTop = 0;
+    });
+    const frame = await page.screenshot({ fullPage, animations: "disabled", caret: "hide" });
+    if (previous && previous.equals(frame)) {
+      await writeFile(path, frame);
+      return;
+    }
+    previous = frame;
+    await page.waitForTimeout(750);
+  }
+  // The page never settled; keep the last frame rather than fail the run.
+  await writeFile(path, previous!);
 }
 
 /** Sign in through the form, and wait until the dashboard proper is up. */

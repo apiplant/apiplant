@@ -10,6 +10,15 @@ Every served app has one, and there is nothing to generate:
 apiplant run ./my-app     # → http://localhost:8080/admin/
 ```
 
+![The dashboard's home screen](images/admin-home.png)
+
+Every screenshot in this guide is of [`examples/13-real-world`](../examples/13-real-world),
+running unmodified — the assistance picture is the one exception, taken from
+[`examples/19-ai`](../examples/19-ai), the example that names a provider.
+Nothing on that home screen was written for it: the groups
+in the navigation are the `[admin] group` keys on its resources, and the three
+actions on the right are the functions its one library exports.
+
 The interface is embedded in the `apiplant` binary. Its manifest, describing the
 resources, permissions, auth model and callable functions covered below, is
 derived from the app on boot, so the dashboard talks to its own origin and
@@ -57,6 +66,11 @@ model    = "gpt-4o-mini"
 enabled = true
 system  = "Return only the field content, ready to insert into the form."
 ```
+
+The button sits beside the field it fills, and the prompt box says where the
+reply goes before it goes anywhere:
+
+![The assistance prompt on a form field](images/admin-ai-assist.png)
 
 To use a different console entirely, disable this one and serve your own from
 the app's [`public/`](configuration.md#public) directory:
@@ -113,6 +127,44 @@ providers that work — and none at all in an app that configured none. A consol
 the flow ends on a path of the API's origin and there would be nowhere for the
 session to land; the password form still works there.
 
+![The sign-in screen](images/admin-sign-in.png)
+
+### A resource, and a record
+
+A resource is a table with search, an ownership filter and a page at a time.
+The columns are `[admin] columns` where the resource named them, and the header
+line above it — *available to everyone in this organization* — is the resource's
+own [permissions](permissions.md) said in a sentence.
+
+![A resource's list](images/admin-resource-list.png)
+
+Clicking a row opens the record as a form: every writable field with the widget
+its type and `[fields.<name>.admin]` ask for, references as pickers showing
+names rather than ids, and the read-only facts in a panel beside it.
+
+![One record](images/admin-record.png)
+
+### An action
+
+A [function](functions.md) mounted as an action gets a form generated from its
+input type — the field names, types and doc comments off its JSON Schema — with
+its output beside it, streamed as it happens where the function streams.
+
+![An action and its result](images/admin-action.png)
+
+### Team, and API keys
+
+The auth resources get purpose-built screens rather than raw `membership` and
+`user` tables. Team is who may work in the active organisation, with roles
+granted and revoked one at a time.
+
+![The team screen](images/admin-team.png)
+
+A key is shown once, when it is issued, and never again — the list afterwards
+holds only its prefix.
+
+![A newly issued API key](images/admin-api-key-created.png)
+
 ### Organizations
 
 There is no setup step between signing in and the dashboard. Every account is
@@ -139,9 +191,18 @@ each row switches into that tenant or opens its team — including a team they a
 no member of, where the ordinary management controls and **Act as** are all
 offered, because the server lifts the role and organisation checks for them.
 
+![The back office's organizations screen](images/admin-back-office-organizations.png)
+
 **Users** lists every account, filterable to one organisation, with **Act as**
 on each row. That is the only screen where somebody they share no organisation
 with can be found at all.
+
+![The back office's users screen](images/admin-back-office-users.png)
+
+Those two are from [`examples/27-back-office`](../examples/27-back-office)
+rather than the app above, because the screens appear only where
+`[organization] global_admin_role` names somebody — and that example is the one
+that sets it.
 
 Both open unfiltered — the whole deployment, a page at a time — and the search
 and drop-downs narrow from there.

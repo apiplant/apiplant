@@ -94,7 +94,7 @@ function InstallCard() {
     <Card class="mt-3">
       <CardHeader
         title="Installing the CLI"
-        hint="Official packages. Pick your platform; we start on the one this browser looks like."
+        hint="Official packages. Pick your platform; the detected one is preselected."
       />
       <div class="space-y-3 px-4 py-4">
         <Tabs

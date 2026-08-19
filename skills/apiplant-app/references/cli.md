@@ -62,6 +62,13 @@ read and reports this before starting.
 
 ## Signing in
 
+![The console's first screen, offering four ways to connect](images/cli-connect.png)
+
+Every screenshot in this guide is of [`examples/13-real-world`](../examples/13-real-world)
+with its `seed/` loaded, driven by the real binary in a real terminal — see
+[the harness](../e2e/README.md#the-documentations-screenshots) if you want to
+retake them.
+
 The first screen offers three options, plus two that depend on the app:
 **Create an account**, shown where registration is open, which collects whatever
 fields an account requires and asks for the password twice; and **Forgot your
@@ -84,6 +91,8 @@ the address so it can be opened elsewhere.
 Two rules make this safe: the dashboard rejects any callback that is not plain
 HTTP on a loopback host, so a crafted link cannot send your key to a third
 party, and it never issues a key without an explicit confirmation.
+
+![The email and password form](images/cli-sign-in.png)
 
 **Sign in with an email and password.** The console calls `POST /auth/login`,
 then exchanges the session for a long-lived key so the next run starts
@@ -113,6 +122,8 @@ Every account is created with a **personal organisation** it administers, so a
 session always has somewhere to work: signing in drops you straight into the
 sidebar, with that organisation active.
 
+![The sidebar, with the active organization in the status line](images/cli-home.png)
+
 `O` switches between the organisations you belong to, and the choice is stored
 with the key. `N` on the Session screen creates another one, using a form built
 from the `organization` resource's own fields as the app defines them, and the
@@ -127,6 +138,12 @@ resource, like any other record.
 
 A sidebar of every resource and function you can reach, grouped exactly as the
 dashboard groups them; a pane showing whichever you picked.
+
+![The sidebar beside a resource's table](images/cli-list.png)
+
+`tab` moves between the two halves. The status line carries the count and the
+page, the active organization, and the two keys worth knowing before any
+others.
 
 Only accessible entries are listed: the console applies the same rules the
 dashboard does, using the manifest and your session. A `private` action is
@@ -172,10 +189,15 @@ rows.
 | `D` | clear a field |
 | `esc` | back |
 | `g` `t` | give / take away a role (on the Team screen) |
+| `I` | act as this account; on the Session screen, stop |
 | `O` | switch organization |
 | `N` | start another organization (on the Session screen) |
 | `?` | the full list |
 | `q` / `ctrl-c` | quit |
+
+`?` puts that table on screen over whatever you were doing:
+
+![The key map](images/cli-keys.png)
 
 Forms are built from the manifest, so they contain the fields the dashboard
 would show and omit anything hidden, read-only or not writable by you. A
@@ -186,12 +208,23 @@ is refused, for a relation whose target you may not read, the request is retried
 without expansion so the table is still shown, with ids in place of names. An
 edit sends only the fields you changed.
 
+![A record, with the fields the manifest declares](images/cli-record.png)
+
 The dashboard renders a record's children beneath it. A terminal has no room for
 that, so `c` on a record lists them (its order lines, its payments) and opens
-the ordinary list screen filtered to that parent. A function's form is generated
-from its input schema, with one field per property including its description,
-defaults and `enum` values; a function that declares a confirmation prompts for
-one here as well.
+the ordinary list screen filtered to that parent.
+
+![The resources belonging to one order](images/cli-children.png)
+
+A function's form is generated from its input schema, with one field per
+property including its description, defaults and `enum` values; a function that
+declares a confirmation prompts for one here as well.
+
+![A function's form, generated from its input schema](images/cli-function.png)
+
+What it returns is rendered in the same pane:
+
+![What the function returned](images/cli-function-result.png)
 
 Org-scoped resources need an active organization, sent as `X-Organization`;
 `O` switches it, and the choice is remembered with the key.
@@ -216,7 +249,11 @@ unrecognised address is a dead end; with one, the case does not arise.
 Roles form a set drawn from two places, the membership's own `role` column and
 its `membership_role` rows, so the screen combines them exactly as the server
 does when checking a permission. `g` grants the highlighted person a role and
-`t` revokes one. See [permissions](permissions.md) for what a role means.
+`t` revokes one.
+
+![The Team screen](images/cli-team.png)
+
+See [permissions](permissions.md) for what a role means.
 
 The pickers offer only actions that will succeed. A role someone already holds
 is not offered again, because the server rejects duplicates and a duplicate
@@ -236,6 +273,38 @@ The role carried by the *membership* itself, the primary role the server reports
 as `role`, has no row to delete, so revoking it clears the column instead. It
 behaves identically otherwise.
 
+## Acting as somebody else
+
+`I` on the Team screen takes a session that acts as the highlighted member, and
+the console then shows the app exactly as they see it: their records, their
+roles, their sidebar. It is the same mechanism the dashboard offers, so the same
+two doors open it — an admin of the organization where the app sets
+`[auth] allow_impersonation`, and whoever `[organization] global_admin_role`
+names, over anybody. See [impersonation](authentication.md) for what each may
+reach. The key appears only where one of the two settings is on; who may act as
+whom is the server's decision, and a refusal is reported as it arrives.
+
+`I` is also offered on a row of the `user` table, which is the only route that
+reaches outside the active organization and is therefore the one a global admin
+wants.
+
+It is confirmed before it happens, and the confirmation says that the server
+records who was really behind it. While it lasts, the header carries a banner
+naming both accounts, and the Session screen names them again. `I` on the
+Session screen gives the session back.
+
+An admin's borrowed session is **pinned** to the organization it was taken in:
+`O` cannot move it, and none of the borrowed account's other memberships are
+loaded, so an admin of one organization never sees another through somebody who
+belongs to both. A global admin's is not pinned, since moving around an
+account's organizations is what support access is for. Neither is nestable: a
+borrowed session cannot borrow again.
+
+Nothing about a borrowed session is written to disk. The saved API key is put
+away for the duration and restored when you stop, so the next `apiplant cli`
+starts as you; issuing a key (`g`) is refused while acting, since the key would
+belong to the borrowed account and outlive the borrowing.
+
 ## The other Console screens
 
 **Account** is your own record, built from the fields the app says are yours to
@@ -254,6 +323,11 @@ owner of the API key), along with the server, the API and dashboard addresses,
 the active organization and the roles you hold in it. It can also issue a key
 (`g`), create another organization (`N`), and sign out (`x`).
 
+While the session
+is a borrowed one it names both accounts and stops on `I`.
+
+![The Session screen](images/cli-session.png)
+
 ## When something goes wrong
 
 Errors appear in a bordered row above the status line, wrapped rather than
@@ -266,10 +340,9 @@ the status. "Not found" alone could mean a deleted record, a resource this app
 does not define, or a console using the wrong prefix, so the line below
 identifies which.
 
-## What it is not
+## Scope
 
-The console is an operator tool rather than a development tool. It does not edit
-resources, compile functions or run migrations; those are handled by
-`apiplant build`, `apiplant run` and [studio](../README.md#studio). It only
-calls the public API, using your credentials and permissions, so it can do
-exactly what the same requests via `curl` would allow.
+The console calls the public API with your credentials and permissions: it can
+do exactly what the same requests via `curl` would allow. Editing resources,
+compiling functions and running migrations are `apiplant build`,
+`apiplant run` and [studio](../README.md#studio).

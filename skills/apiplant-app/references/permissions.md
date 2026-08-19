@@ -450,10 +450,10 @@ update = "role:admin"
 delete = "role:admin"
 ```
 
-## What a policy does *not* cover
+## Decided regardless of policy
 
-A policy decides who may perform an action; three things are decided regardless
-of it, because no policy can express them safely:
+A policy decides who may perform an action. Three things are decided by the
+server, because no policy can express them safely:
 
 * **Server-owned columns.** `organization_id`, the owner column and the `user`
   resource's password column are stamped by the server and stripped from any body

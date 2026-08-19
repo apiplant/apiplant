@@ -85,14 +85,15 @@ it: thinking that comes back is always emitted as `reasoning` events, always
 kept on the stored message, and always revealed by the **Show reasoning**
 toggle. A reply the model did not think about simply has no toggle.
 
-Paying a model to think and then discarding the trace is not a configuration
-worth having. What matters is that the trace stays *reasoning* — it is never
-part of the answer, at any stage.
+In the dashboard the trace sits behind that toggle, expanded above the answer
+it explains:
 
-### `reasoning_format` — where the thinking actually is
+![The reply's reasoning, expanded above the answer](images/admin-ai-agent-reasoning.png)
+
+### `reasoning_format` — where the thinking is
 
 `thinking` is about the model. `reasoning_format` is about the **server**: the
-same Qwen3 weights hand their thinking back in three different shapes depending
+same Qwen3 weights return their thinking in three different shapes depending
 on the reasoning parser and chat template in front of them, and only one of
 them is a field of its own.
 
@@ -103,17 +104,16 @@ them is a field of its own.
 | `tags` | a matched `<think>…</think>` pair inside the content |
 | `implicit` | the template opened the block in the *prompt*, so every reply starts inside the thinking and the first `</think>` ends it |
 
-`implicit` is the one that surprises people. Qwen3 and DeepSeek-R1 templates
-append `<think>` to the assistant turn themselves, so the model never generates
+`implicit` is the least obvious. Qwen3 and DeepSeek-R1 templates append
+`<think>` to the assistant turn themselves, so the model never generates
 an opening tag and a raw llama.cpp reply looks like:
 
 ```
 The user is greeting me, so a short reply.</think>Hello!
 ```
 
-Read as a matched pair that is no pair at all, the thinking *is* the message —
-which is exactly what you see when a local model's answer arrives with its
-whole train of thought in front of it.
+With no opening tag to match, the thinking *is* the message: the reply arrives
+with the whole reasoning in front of the answer.
 
 `auto` settles this on its own for a reply read whole (`stream: false`): a
 closing tag with nothing opening it before it can only be a pre-opened block.
@@ -131,8 +131,9 @@ Then the thinking arrives as `reasoning` events and never as `delta`, so it
 shows up behind the **Show reasoning** toggle rather than in the message body.
 
 Most llama.cpp builds need none of this: `--reasoning-format deepseek` is the
-default, and they fill `reasoning_content` like any other server. Check before
-reaching for `implicit` — a raw `curl` at the endpoint answers it in one line.
+default, and they fill `reasoning_content` like any other server. Check the
+endpoint with a raw `curl` before setting `implicit`: one request shows which
+shape the server sends.
 
 ### An answer that is all thinking
 
@@ -141,12 +142,12 @@ with nothing left to say. The turn then has a full reasoning trace and an empty
 answer. The trace stays *reasoning*: the message is empty, and a `warning` event
 explains that the model ran out of tokens before answering.
 
-The thinking is never promoted to be the answer. An empty reply with a visible
-trace behind the toggle is the truth about what happened; a reply that *is* the
-trace is a model appearing to think out loud at the user.
+The thinking is never promoted to be the answer: an empty reply with a visible
+trace records that the model spent its budget reasoning and produced no
+answer.
 
-The fix is a larger `max_tokens` — a local Qwen can spend three thousand tokens
-deciding how to say hello.
+The fix is a larger `max_tokens`: a local Qwen can spend three thousand tokens
+on a short reply.
 
 ### `access`
 
@@ -267,6 +268,12 @@ storage.enabled = true
 chat = "authenticated"
 history = "owner"
 ```
+
+In the dashboard the agent is a screen of its own: its conversations on the
+left, the exchange on the right, and the tool calls it made along the way,
+kept with the answer they produced.
+
+![An agent's conversation, with the tool call it made](images/admin-ai-agent.png)
 
 An agent may also override the app's global `[ai]` provider settings for
 itself:
@@ -432,17 +439,11 @@ Access, method and visibility are the function's own: `/stream` applies the same
 rules and grants no additional access. A function nobody may call returns `404`
 on both endpoints.
 
----
+Exposed as an admin action, the two halves of the stream get their own panes:
+the live output while the model is talking, and the final result when it has
+stopped.
 
-## What the framework does not do
-
-Nothing calls the assistant on your behalf. No CRUD operation summarises a row,
-no hook writes a description, nothing is embedded, indexed or retrieved
-automatically. The assistant is a service a function can call and an endpoint a
-client can call, exactly like `[email]` and `[cache]`.
-
-This is intentional: a framework that generated text on its own initiative would
-be spending your provider credit on an assumption.
+![A streaming action: live output beside the final result](images/admin-ai-action.png)
 
 ---
 

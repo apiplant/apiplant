@@ -418,7 +418,7 @@ export function App() {
                       fallback={
                         <div class="mx-auto max-w-3xl px-6 py-16">
                           <EmptyState
-                            title="That resource is gone"
+                            title="That resource no longer exists"
                             description="It was deleted or renamed. Pick another from the sidebar."
                           />
                         </div>
@@ -436,7 +436,7 @@ export function App() {
                       fallback={
                         <div class="mx-auto max-w-3xl px-6 py-16">
                           <EmptyState
-                            title="That function is gone"
+                            title="That function no longer exists"
                             description="It was deleted. Pick another from the sidebar."
                           />
                         </div>
@@ -454,7 +454,7 @@ export function App() {
                       fallback={
                         <div class="mx-auto max-w-3xl px-6 py-16">
                           <EmptyState
-                            title="That agent is gone"
+                            title="That agent no longer exists"
                             description="It was deleted. Pick another from the sidebar."
                           />
                         </div>
@@ -472,7 +472,7 @@ export function App() {
                       fallback={
                         <div class="mx-auto max-w-3xl px-6 py-16">
                           <EmptyState
-                            title="That email template is gone"
+                            title="That email template no longer exists"
                             description="It was deleted. Pick another from the sidebar."
                           />
                         </div>

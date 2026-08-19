@@ -13,7 +13,9 @@ apiplant run ./my-app     # → http://localhost:8080/admin/
 ![The dashboard's home screen](images/admin-home.png)
 
 Every screenshot in this guide is of [`examples/13-real-world`](../examples/13-real-world),
-running unmodified. Nothing on that home screen was written for it: the groups
+running unmodified — the assistance picture is the one exception, taken from
+[`examples/19-ai`](../examples/19-ai), the example that names a provider.
+Nothing on that home screen was written for it: the groups
 in the navigation are the `[admin] group` keys on its resources, and the three
 actions on the right are the functions its one library exports.
 
@@ -64,6 +66,11 @@ model    = "gpt-4o-mini"
 enabled = true
 system  = "Return only the field content, ready to insert into the form."
 ```
+
+The button sits beside the field it fills, and the prompt box says where the
+reply goes before it goes anywhere:
+
+![The assistance prompt on a form field](images/admin-ai-assist.png)
 
 To use a different console entirely, disable this one and serve your own from
 the app's [`public/`](configuration.md#public) directory:

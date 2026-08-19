@@ -333,8 +333,8 @@ Create or update memberships through the API to assign roles.
 
 ## Acting as somebody else
 
-Support work needs somebody's screen, not their password. Two doors lead to it,
-deliberately different sizes:
+Support work needs the member's screen, not their password. Two roles can
+impersonate, with different reach:
 
 ```toml
 # main.toml
@@ -375,8 +375,9 @@ Some things that follow, none of them optional:
 * **Stopping needs no stored credential.** The way back is minted from the
   borrowed token's own actor claim.
 * **A borrowed session is never a back office.** `global_admin_role` is
-  answered `false` while impersonating, whoever is behind it — otherwise somebody could wear another name and keep their own
-  powers, which is the one arrangement no audit trail can untangle.
+  answered `false` while impersonating, whoever is behind it: the impersonator
+  must not keep global-admin privileges under another identity, which no audit
+  trail could attribute.
 * **Nothing else changes.** Every permission is then answered against the
   borrowed account exactly as it would be for its owner.
 
@@ -386,7 +387,13 @@ appears on the team screen beside each member an admin may borrow — and, for a
 global admin, on every row of the `user` list as well as on the record, since
 they may reach people they share no organisation with whichever organisation
 they are standing in. A strip across the top of every screen says whose account is
-in use and holds the way out.
+in use and holds the way out:
+
+![A borrowed account: the strip says whose it is, and holds the way out](images/admin-impersonation.png)
+
+The [console](cli.md#acting-as-somebody-else) has
+the same two doors on `I`, from the Team screen and from the `user` table, with
+a banner in the header and the way out on the Session screen.
 
 ## Signing in with somebody else's account
 
@@ -572,16 +579,14 @@ SVG, MIT licensed, and the source apiplant's own four are drawn from. Save the
 file into `public/` and point `icon` at it; both the sign-in page you write and
 the [dashboard](admin.md) will use it.
 
-### What it does not do
+### Tokens
 
-* **Refresh tokens.** This signs people in; it never acts on their behalf
-  afterwards, so the access token is used once to read a profile and dropped.
-  An app that needs to keep calling a provider adds columns for them itself and
-  encrypts them at rest.
-* **`id_token` verification.** The profile is read from the userinfo endpoint
-  over a fresh TLS connection instead, which needs no signature check. An
-  `id_token` that arrived any other way would need full JWKS verification.
-* **Cookies.** Sessions are Bearer tokens here as everywhere else.
+* **The access token is used once**, to read the profile, and dropped. There
+  are no refresh tokens; an app that keeps calling a provider stores the tokens
+  itself, encrypted at rest.
+* **The profile comes from the userinfo endpoint** over a fresh TLS connection,
+  so no `id_token` verification is needed.
+* **Sessions are Bearer tokens** as everywhere else; OAuth sets no cookies.
 
 Every setting is in [Configuration](configuration.md#oauth);
 [`examples/22-oauth`](../examples/22-oauth) is the whole thing running.

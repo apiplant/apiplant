@@ -48,6 +48,7 @@ GUIDES = [
     ("payments.md", "Catalogue, subscriptions, checkout, tax"),
     ("ai.md", "`[ai]` provider, `agents/`, `ctx.chat`, streaming"),
     ("admin.md", "The built-in operator UI and `[admin]` config"),
+    ("studio.md", "`apiplant studio`: the local editor for an app's TOML, in a browser"),
     ("cli.md", "`apiplant cli`: the dashboard in a terminal"),
     ("security.md", "What to configure before exposing the server"),
     ("openapi.md", "The generated spec and Swagger UI"),

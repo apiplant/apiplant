@@ -170,8 +170,8 @@ See [Authentication](authentication.md) for the flows themselves.
 A rule is written `"<requests>/<window>"`: `"100/1m"`, `"30/30s"`, `"1000/1h"`,
 `"5/1d"`, or the bare-seconds form `"100/60"`. Two words stand in for a number —
 `"off"` lifts the limit and `"inherit"` defers to the level above. Anything else
-fails the load, naming the file: a rate limit that quietly parsed as "no limit"
-is the one failure mode worth being noisy about.
+fails the load, naming the file: a rate limit that silently parsed as "no
+limit" would be undetectable in production.
 
 Three levels decide, narrowest last:
 

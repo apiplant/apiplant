@@ -340,10 +340,9 @@ the status. "Not found" alone could mean a deleted record, a resource this app
 does not define, or a console using the wrong prefix, so the line below
 identifies which.
 
-## What it is not
+## Scope
 
-The console is an operator tool rather than a development tool. It does not edit
-resources, compile functions or run migrations; those are handled by
-`apiplant build`, `apiplant run` and [studio](../README.md#studio). It only
-calls the public API, using your credentials and permissions, so it can do
-exactly what the same requests via `curl` would allow.
+The console calls the public API with your credentials and permissions: it can
+do exactly what the same requests via `curl` would allow. Editing resources,
+compiling functions and running migrations are `apiplant build`,
+`apiplant run` and [studio](../README.md#studio).

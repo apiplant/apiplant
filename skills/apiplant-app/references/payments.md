@@ -352,18 +352,6 @@ Set `provider = "none"` and the routes and resources are removed. The **tables
 are not**: migrations are additive, and records of money changing hands should
 outlive a configuration change.
 
-## What this does not do
-
-* **Metered and usage-based billing.** Prices here are per-unit with a
-  quantity. Reporting usage to Stripe is a function call away, but there is no
-  resource for it.
-* **Multiple line items in one checkout.** One price, one purchase.
-* **Connect and marketplaces.** Funds go to your own account.
-* **Invoicing customers who are not organisations.** The tenant is the payer.
-
-Each of these remains reachable from a function through `ctx.payments`, without
-being modelled as a resource.
-
 ## See also
 
 * [Example 18 · Payments](../examples/18-payments/): a runnable app with a

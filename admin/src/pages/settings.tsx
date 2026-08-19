@@ -746,7 +746,7 @@ function InviteDialog(props: { open: boolean; roles: string[]; onClose: () => vo
       description={
         invites()
           ? "We'll email them a link. They can accept it whether or not they already have an account."
-          : "They need an account already. Adding them here is what gives it access."
+          : "They need an account first. Adding them here gives that account access to this organization."
       }
       onClose={props.onClose}
       footer={

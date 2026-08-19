@@ -266,22 +266,18 @@ publish            = "private" # who may POST <base>/queues/{topic}
 A retry due before the next sweep pulls the sweep forward, so the backoff you
 configure is the backoff you get rather than being rounded up to `poll_secs`.
 
-## What this is not
+## Limits
 
-Worth being explicit, because "queue" covers a lot of ground:
-
-* **Not ordered.** Messages are claimed oldest-first, but two replicas finish in
-  whatever order they finish, and a retry moves a message behind its successors.
-  A topic that needs strict ordering wants one subscriber and `batch = 1` — and
-  even then, think about what a retry does to the sequence.
-* **Not for very high throughput.** Every message is a row, an `UPDATE`, and a
-  second `UPDATE`. That is thousands per second, not millions. At millions you
-  want a log, and you want the operational cost that comes with it.
-* **Not scheduled jobs.** There is no "run this at 3am". Use a cron job calling
-  `apiplant call <function>`, which can publish.
-* **Not a request/response channel.** Publishing tells you the message was
-  recorded, and never tells you what the handler decided. If you need the
-  answer, you want a function call.
+* **Ordering.** Messages are claimed oldest-first, but completion order across
+  replicas is not guaranteed, and a retry moves a message behind its
+  successors. A topic that needs strict ordering wants one subscriber and
+  `batch = 1`.
+* **Throughput.** Every message is a row and two `UPDATE`s: thousands per
+  second, not millions. At millions you want a log.
+* **Scheduling.** There is no scheduler; a cron job calling
+  `apiplant call <function>` covers fixed times.
+* **Request/response.** Publishing confirms the message was recorded, not the
+  handler's decision. For a return value, call a function.
 
 ## A topic nobody subscribes to
 

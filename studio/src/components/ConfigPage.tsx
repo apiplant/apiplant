@@ -120,7 +120,7 @@ const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
       label: "port",
       placeholder: "0",
       kind: "number" as const,
-      hint: "0 picks the usual port for the encryption.",
+      hint: "0 uses the default port for the selected encryption (587 or 465).",
     },
     {
       section: "email.smtp",
@@ -350,7 +350,7 @@ function aiFields(): ConfigField[] {
       group: "Generation defaults",
       kind: "number" as const,
       placeholder: "2048",
-      hint: "Cap per reply. Give reasoning models enough room or they can think and answer nothing.",
+      hint: "Cap per reply. Give reasoning models enough room, or they may spend it all on reasoning and return no answer.",
     },
     {
       key: "temperature",

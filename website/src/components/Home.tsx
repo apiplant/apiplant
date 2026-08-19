@@ -153,7 +153,7 @@ const STEPS = [
   {
     step: "02",
     title: "Describe and build",
-    body: "Edit resources/*.toml until the API is the one you wanted. apiplant build ./my-app wraps every source in functions/ into a library beside it.",
+    body: "Edit resources/*.toml until the API is what you want. apiplant build ./my-app wraps every source in functions/ into a library beside it.",
   },
   {
     step: "03",
@@ -526,8 +526,8 @@ docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant`;
             <span class="font-mono text-xs text-faint">04</span>
             <h3 class="mt-3 text-base font-semibold tracking-tight text-ink">Build from source</h3>
             <p class="mt-2 text-sm leading-relaxed text-muted">
-              The last resort: this compiles the whole dependency tree. Worth it only if
-              you want a target nothing is published for, or your own patches.
+              Building from source compiles the whole dependency tree. Choose it when you need
+              a target nothing is published for, or your own patches.
             </p>
           </div>
 
@@ -631,10 +631,10 @@ function SkillCallout() {
               Describe the app, get the directory
             </h2>
             <p class="mt-3 max-w-2xl leading-relaxed text-muted">
-              Every guide on this site, all twenty-six examples and the build workflow, packaged as
-              a Claude Code plugin. Install it and Claude writes resources, permissions, hooks and
-              functions from the documentation instead of from guesswork — it loads on its own when
-              the work is apiplant work, with nothing to enable.
+              Every guide on this site, all twenty-seven examples and the build workflow, packaged
+              as a Claude Code plugin. Install it and Claude writes resources, permissions, hooks
+              and functions from the documentation. The skill loads automatically when the work is
+              apiplant work; there is nothing to enable.
             </p>
             {/* Two blocks, because these are two prompts typed one after the
                 other: one copy button per line is what makes that possible
