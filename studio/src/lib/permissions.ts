@@ -9,7 +9,12 @@
  * spells somewhere; that is what `policyVocabulary` collects.
  */
 
-import { ACTIONS, ORG_CLASS_SUFFIX, type TomlTable } from "./types";
+import {
+  ACTIONS,
+  ORG_CLASS_SUFFIX,
+  type PermissionSet,
+  type TomlTable,
+} from "./types";
 import { studio } from "./store";
 import { parseTable } from "./toml";
 
@@ -69,4 +74,70 @@ export function policyVocabulary(): { roles: string[]; classes: string[] } {
   }
 
   return { roles: [...roles].sort(), classes: [...classes].sort() };
+}
+
+/**
+ * What is wrong with one action's clauses, in the reader's own words.
+ *
+ * The server does not reject any of these — every one of them loads, answers
+ * requests, and does something other than what it looks like it says, which is
+ * the only kind of permission bug worth a warning. The rules mirror how a set
+ * is actually evaluated: `deny` is consulted before anything else, the first
+ * positive clause that matches wins, and `private` means "not exposed" only
+ * when it is the whole set, so a `private` clause with company is a clause
+ * naming nobody on an action that is still very much exposed.
+ */
+export function permissionConflicts(rules: PermissionSet): string[] {
+  const issues: string[] = [];
+  const word = (rule: { policy: string; effect: string }) =>
+    `\`${rule.effect} ${rule.policy}\``;
+
+  const seen = new Set<string>();
+  for (const rule of rules) {
+    const key = `${rule.effect} ${rule.policy}`;
+    if (seen.has(key)) issues.push(`${word(rule)} is written twice.`);
+    seen.add(key);
+  }
+
+  const positive = rules.filter((rule) => rule.effect !== "deny");
+  const denials = rules.filter((rule) => rule.effect === "deny");
+  const levelOf = (rule: { policy: string }) => parsePolicy(rule.policy).level;
+
+  // `private` is the absence of an endpoint, and only a set that says nothing
+  // else can say it — see `PolicySet::is_private` on the server.
+  if (rules.some((rule) => levelOf(rule) === "private") && rules.length > 1) {
+    issues.push(
+      "A clause naming no-one only closes the action when it is the only clause; here the others still expose it, and it grants nobody anything.",
+    );
+  }
+
+  // A denial is consulted first and does not care which clause allowed the
+  // caller, so one naming everybody empties every grant above it.
+  if (denials.some((rule) => levelOf(rule) === "public") && positive.length) {
+    issues.push(
+      "`deny everybody` refuses every caller, so the clauses allowing anybody never take effect.",
+    );
+  }
+
+  for (const denial of denials) {
+    const twin = positive.find((rule) => rule.policy === denial.policy);
+    if (twin) {
+      issues.push(
+        `${word(twin)} and ${word(denial)} name the same caller, and deny is consulted first — the grant never applies.`,
+      );
+    }
+  }
+
+  // Not wrong, but not what it looks like: the broadest positive clause already
+  // matched, so anything narrower below it is never reached.
+  if (
+    positive.some((rule) => rule.effect === "allow" && levelOf(rule) === "public") &&
+    positive.length > 1
+  ) {
+    issues.push(
+      "`allow everybody` already matches every caller, so the other clauses allowing anybody add nothing.",
+    );
+  }
+
+  return issues;
 }

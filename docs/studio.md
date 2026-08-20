@@ -85,14 +85,20 @@ than hidden, because they exist on the API whether or not you wrote them.
 
 **Permissions** is the tab that decides who may do what, and it is worth
 opening before the resource has any data in it. Each of the five actions gets a
-row, and each row three columns: allow, allow only on rows the caller already
-owns, and deny.
+block, and each clause under it is one sentence: *allow for members of the
+active organisation in organisation with any class*. The words in blue are the
+policy — what the clause does (allow, allow only if they own the row, or deny),
+who it names, and the class of organisation it is narrowed to — and clicking
+one turns it into the picker or the input that sets it.
 
 ![The access policy for a resource](images/studio-permissions.png)
 
-Deny is consulted first, and a caller named in no column is refused — so an
-empty row is a closed door, not an open one. The [Permissions](permissions.md)
-guide is the model in full; this screen is that model with the vocabulary
+Deny is consulted first, and a caller no clause names is refused — so an action
+with nothing under it is a closed door, not an open one. Clauses that load but
+do not mean what they read as — a grant a denial above it already cancels, a
+`no-one` sitting beside clauses that expose the action anyway — are warned
+about under the action they belong to. The
+[Permissions](permissions.md) guide is the model in full; this screen is that model with the vocabulary
 filled in from your own app, which is why the role picker offers the roles this
 app actually uses.
 

@@ -17,12 +17,8 @@ import {
 } from "../lib/store";
 import type { ConfigEntry, Subscription } from "../lib/store";
 import { setView, view } from "../lib/nav";
-import {
-  formatPolicy,
-  parsePolicy,
-  policyVocabulary,
-  type Subject,
-} from "../lib/permissions";
+import { formatPolicy, parsePolicy } from "../lib/permissions";
+import { PolicyPhrase } from "./PolicyPhrase";
 import {
   Badge,
   Button,
@@ -786,7 +782,7 @@ const SECTIONS: ConfigSection[] = [
   {
     id: "organization",
     title: "Organizations",
-    hint: "The tenant itself. An organisation's `org_class` decides which `@org_class=` permissions apply inside it, so who may write that column — and who administers the deployment as a whole — is a deployment decision rather than a row-level one.",
+    hint: "The tenant itself. An organisation's `org_class` decides which `@org_class=` permissions apply inside it, and the column is server-owned — no ordinary request writes it, whatever the resource permissions say. The global admin role below is the one thing that names who may set it, for every organisation.",
     fields: [
       {
         key: "global_admin_role",
@@ -802,7 +798,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Classes",
         placeholder: "none",
         kind: "text" as const,
-        hint: "The class every new organisation starts with, personal ones included. Unset leaves them unclassed, which no `@org_class=` permission matches. A class editor naming one on create is not overridden.",
+        hint: "The class every new organisation starts with, personal ones included. Only fills a gap: a global admin naming a class on create keeps it. Unset leaves new organisations unclassed, which no `@org_class=` permission matches.",
       },
       {
         section: "auth",
@@ -1231,111 +1227,34 @@ function AccessField(props: {
 }
 
 /** What a `[permissions]` policy may name, when it names a person. */
-const POLICY_LEVELS = [
-  { value: "private", label: "nobody" },
-  { value: "role", label: "role" },
-  { value: "member", label: "any member" },
-  { value: "authenticated", label: "anybody signed in" },
-] as const;
+const POLICY_LEVELS = ["private", "role", "member", "authenticated"];
 
 /**
- * A whole policy string — level, role, and the class it is narrowed to — as one
- * form, the same three controls the resource permissions table uses.
+ * A whole policy string — who it names and the class it is narrowed to —
+ * written as the sentence the resource permissions are written as.
  *
- * A setting like `global_admin_role` is a policy, not a sentence: typed by hand
+ * A setting like `global_admin_role` is a policy, not a name: typed by hand
  * `role:admn@org_class=staff` parses, saves, and silently names nobody. The
  * role and the class are still free text, because neither is declared anywhere
  * — they are membership and organisation data — but what the project already
  * spells somewhere is offered as completions, which is the only check there is.
+ *
+ * No effect: a setting like this one holds a single policy, and "allow" is the
+ * only thing it could mean — a global admin role is not something you deny.
  */
 function PolicyField(props: { table: string; field: string }) {
   const current = () =>
     String(configValue(props.table, props.field) ?? "private");
   const subject = createMemo(() => parsePolicy(current() || "private"));
-  const vocabulary = createMemo(() => policyVocabulary());
-  const roleList = `config-policy-roles-${props.table}-${props.field}`;
-  const classList = `config-policy-classes-${props.table}-${props.field}`;
-
-  const edit = (update: (subject: Subject) => Subject) =>
-    setConfigValue(props.table, props.field, formatPolicy(update(subject())));
 
   return (
-    <div class="space-y-1.5">
-      <div class="flex gap-2">
-        <Select
-          class="flex-1"
-          value={subject().level}
-          options={[...POLICY_LEVELS]}
-          onChange={(value) =>
-            edit((current) => ({
-              ...current,
-              level: value,
-              role: value === "role" ? current.role || "admin" : "",
-            }))
-          }
-        />
-        <Show when={subject().level === "role"}>
-          <TextInput
-            mono
-            lowercase
-            list={roleList}
-            class="max-w-[10rem]"
-            placeholder="admin"
-            value={subject().role}
-            onInput={(value) =>
-              edit((current) => ({ ...current, role: value }))
-            }
-          />
-        </Show>
-      </div>
-
-      {/* The class is a narrowing most policies never use, so it stays one
-          quiet line rather than a field competing with who the caller is. */}
-      <div class="flex flex-wrap items-center gap-1.5">
-        <span class="text-[0.6875rem] text-faint">in organisation with</span>
-        <Show
-          when={vocabulary().classes.length}
-          fallback={
-            <TextInput
-              mono
-              lowercase
-              list={classList}
-              class="max-w-[10rem]"
-              placeholder="any"
-              value={subject().orgClass}
-              onInput={(value) =>
-                edit((current) => ({ ...current, orgClass: value.trim() }))
-              }
-            />
-          }
-        >
-          <Select
-            class="max-w-[12rem] py-0.5 text-[0.6875rem]"
-            value={subject().orgClass}
-            options={[
-              { value: "", label: "any" },
-              ...vocabulary().classes.map((name) => ({
-                value: name,
-                label: name,
-              })),
-            ]}
-            onChange={(value) =>
-              edit((current) => ({ ...current, orgClass: value }))
-            }
-          />
-        </Show>
-        <span class="text-[0.6875rem] text-faint">class</span>
-      </div>
-
-      <datalist id={roleList}>
-        <For each={vocabulary().roles}>{(role) => <option value={role} />}</For>
-      </datalist>
-      <datalist id={classList}>
-        <For each={vocabulary().classes}>
-          {(name) => <option value={name} />}
-        </For>
-      </datalist>
-    </div>
+    <PolicyPhrase
+      subject={subject()}
+      levels={POLICY_LEVELS}
+      onChange={(update) =>
+        setConfigValue(props.table, props.field, formatPolicy(update(subject())))
+      }
+    />
   );
 }
 

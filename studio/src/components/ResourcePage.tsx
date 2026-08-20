@@ -38,9 +38,10 @@ import {
 import {
   formatPolicy,
   parsePolicy,
-  policyVocabulary,
+  permissionConflicts,
   type Subject,
 } from "../lib/permissions";
+import { PolicyPhrase } from "./PolicyPhrase";
 import { emitResource, hasComments } from "../lib/toml";
 import { BUILTIN_SUMMARY, type BuiltinName } from "../lib/builtins";
 import { setView } from "../lib/nav";
@@ -63,53 +64,26 @@ import {
 type TabId = "fields" | "permissions" | "hooks" | "settings" | "toml";
 
 /**
- * Who a clause names.
- *
- * `owner` is deliberately absent: as a level it says the same thing as putting
- * `authenticated` in the "only if they own the row" column, and offering both
- * spellings of one policy is how a form teaches the model wrong. Files that
- * already use it — several built-ins do — keep working, and the clause offers
- * to move itself; see OWNER_OPTION.
- */
-const ACCESS_OPTIONS = [
-  { value: "public", label: "public — anyone" },
-  { value: "authenticated", label: "authenticated — any signed-in caller" },
-  { value: "member", label: "member — of the active organisation" },
-  { value: "role", label: "role:… — a named org role" },
-  { value: "private", label: "private — not exposed" },
-];
-
-/**
  * Levels a clause of each effect may name.
  *
- * Ownership is a comparison against the caller, so `public` cannot appear in
- * the own column: an anonymous request owns nothing, and the clause would match
- * nobody however the data looked. `private` is not a caller at all — it is the
- * absence of an endpoint — so only an `allow` clause can say it, and `deny`
- * takes no `public` either, since a denial is an exception carved out of a
- * grant and one naming everybody leaves nothing behind.
+ * `owner` is deliberately absent: as a level it says the same thing as an
+ * ownership clause — "allow only if they own the row" — and offering both
+ * spellings of one policy is how a form teaches the model wrong. Files that
+ * already use it, several built-ins among them, keep working: the sentence
+ * still says what they say, and offers to rewrite itself.
+ *
+ * Ownership is a comparison against the caller, so `public` cannot be one:
+ * an anonymous request owns nothing, and the clause would match nobody however
+ * the data looked. `private` — "no-one" — is not a caller at all but the
+ * absence of an endpoint, so only an `allow` clause can say it: denying no-one
+ * is a clause that does nothing, and the way to shut an action to everybody is
+ * to allow no-one, or to deny everybody.
  */
 const LEVELS_BY_EFFECT: Record<Effect, string[]> = {
   allow: ["public", "authenticated", "member", "role", "private"],
   own: ["authenticated", "member", "role"],
-  deny: ["authenticated", "member", "role"],
+  deny: ["public", "authenticated", "member", "role"],
 };
-
-/** Shown only by a clause already written that way, so the select is never blank. */
-const OWNER_OPTION = { value: "owner", label: "owner — only rows they own" };
-
-/** The choices for one column, plus whatever a file already says there. */
-function levelOptions(effect: Effect, current: string) {
-  const allowed = LEVELS_BY_EFFECT[effect];
-  const options = ACCESS_OPTIONS.filter((option) =>
-    allowed.includes(option.value),
-  );
-  if (options.some((option) => option.value === current)) return options;
-  return [
-    ...options,
-    current === "owner" ? OWNER_OPTION : { value: current, label: current },
-  ];
-}
 
 // `{res}` is substituted with `<base_path>/<resource>`, which already carries a
 // leading slash — so these must not add one of their own.
@@ -817,43 +791,16 @@ function FieldRow(props: {
 
 // ---- permissions ------------------------------------------------------------
 
-/**
- * What a clause grants, in the order the server consults them — and the column
- * it gets in the form, since "who may do this" has exactly three answers.
- */
-const EFFECT_COLUMNS: {
-  effect: Effect;
-  label: string;
-  hint: string;
-  tone: string;
-}[] = [
-  {
-    effect: "allow",
-    label: "Allow",
-    hint: "May perform the action on any row.",
-    tone: "text-accent",
-  },
-  {
-    effect: "own",
-    label: "Only if they own the row",
-    hint: "May perform it, but only on rows already theirs",
-    tone: "text-warn",
-  },
-  {
-    effect: "deny",
-    label: "Deny",
-    hint: "Refused even when another column also names them.",
-    tone: "text-danger",
-  },
-];
+/** A new clause when there is nothing above it to follow. */
+const DEFAULT_CLAUSE: PermissionRule = { policy: "member", effect: "allow" };
 
 /**
- * The access policy, one action per row and one column per answer.
+ * The access policy, one action per block and one sentence per clause.
  *
- * The columns are the whole model: a caller who matches nothing in any of them
- * is refused, so naming who may act *is* the statement. Roles are added into a
- * column rather than chosen per clause, which is what makes "who may update
- * their own rows" a list you can read down instead of five separate dropdowns.
+ * The clauses are the whole model: a caller no sentence names is refused, so
+ * reading the list top to bottom *is* reading the rule. Effect used to be the
+ * column a clause sat in; it is now the first word of the sentence, which says
+ * the same thing in the place somebody looking for it would read.
  */
 function PermissionsTab(props: {
   resource: Resource;
@@ -863,41 +810,70 @@ function PermissionsTab(props: {
   const rulesOf = (action: Action): PermissionSet =>
     props.resource.permissions[action] ?? DEFAULT_PERMISSIONS[action];
 
-  const columnOf = (action: Action, effect: Effect) =>
-    rulesOf(action)
-      .filter((rule) => rule.effect === effect)
-      .map((rule) => rule.policy);
-
   /**
-   * Rewrite one column, leaving the other two alone.
+   * Rewrite one action's clauses.
    *
-   * Emptying every column cannot leave the action out of the file: an omitted
+   * Emptying the list cannot leave the action out of the file: an omitted
    * action is the `member` default, which is the opposite of what clearing it
    * means, so it is written as `private` instead.
    */
-  const setColumn = (action: Action, effect: Effect, policies: string[]) =>
+  const setRules = (action: Action, rules: PermissionRule[]) =>
     props.onEdit((draft) => {
-      const rules: PermissionRule[] = rulesOf(action)
-        .filter((rule) => rule.effect !== effect)
-        .concat(policies.map((policy) => ({ policy, effect })));
       draft.permissions[action] = rules.length
         ? rules
         : [{ policy: "private", effect: "allow" }];
     });
 
-  const editClause = (
+  const editRule = (
     action: Action,
-    effect: Effect,
+    index: number,
+    update: (rule: PermissionRule) => PermissionRule,
+  ) =>
+    setRules(
+      action,
+      rulesOf(action).map((rule, i) => (i === index ? update(rule) : rule)),
+    );
+
+  const editSubject = (
+    action: Action,
     index: number,
     update: (subject: Subject) => Subject,
   ) =>
-    setColumn(
-      action,
-      effect,
-      columnOf(action, effect).map((policy, i) =>
-        i === index ? formatPolicy(update(parsePolicy(policy))) : policy,
-      ),
-    );
+    editRule(action, index, (rule) => ({
+      ...rule,
+      policy: formatPolicy(update(parsePolicy(rule.policy))),
+    }));
+
+  /**
+   * Change what a clause does, keeping who it names where that still parses.
+   *
+   * The levels differ by effect — nobody owns a row anonymously, and a denial
+   * naming everybody leaves nothing behind — so a level the new effect cannot
+   * take falls back to the signed-in caller rather than being written out as
+   * something the server would reject.
+   */
+  const setEffect = (action: Action, index: number, effect: Effect) =>
+    editRule(action, index, (rule) => {
+      const subject = parsePolicy(rule.policy);
+      const level = LEVELS_BY_EFFECT[effect].includes(subject.level)
+        ? subject.level
+        : "authenticated";
+      return {
+        effect,
+        policy: formatPolicy({
+          ...subject,
+          level,
+          role: level === "role" ? subject.role || "admin" : "",
+        }),
+      };
+    });
+
+  /** A new clause repeats the one above it — most lists are a variation. */
+  const addRule = (action: Action) => {
+    const rules = rulesOf(action);
+    const previous = rules[rules.length - 1];
+    setRules(action, [...rules, previous ? { ...previous } : DEFAULT_CLAUSE]);
+  };
 
   const allRules = () => ACTIONS.flatMap((action) => rulesOf(action));
   const usesEffect = (effect: Effect) =>
@@ -911,150 +887,71 @@ function PermissionsTab(props: {
     <Card>
       <CardHeader
         title="Access policy"
-        hint="Evaluated after authentication. A caller named in no column is refused, and deny is consulted before the other two."
+        hint="Evaluated after authentication. A caller no clause names is refused, and deny is consulted before the rest."
       />
-      <PolicyVocabularyLists />
 
-      <div>
-        <div>
-          {/* Three columns is a wide statement, so below `lg` they stack and
-              each clause list carries its own heading instead — the headings
-              here would be too far from what they label to read. */}
-          <div class="hidden gap-3 border-b border-line px-4 py-3 lg:grid lg:grid-cols-[9rem_repeat(3,minmax(0,1fr))]">
-            <div />
-            <For each={EFFECT_COLUMNS}>
-              {(column) => (
-                <div>
-                  <p class={`text-[0.8125rem] font-medium ${column.tone}`}>
-                    {column.label}
+      <div class="divide-y divide-line">
+        <For each={ACTIONS}>
+          {(action) => (
+            <div class="px-4 py-3">
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <p class="text-[0.8125rem] font-medium capitalize text-ink">
+                  {action}
+                </p>
+                <p class="font-mono text-[0.6875rem] text-faint">
+                  {ACTION_ENDPOINT[action].replace(
+                    "{res}",
+                    `${props.basePath}/${props.resource.name}`,
+                  )}
+                </p>
+                <Show when={isPrivate(action)}>
+                  <p class="text-[0.6875rem] text-faint">
+                    — 404, and left out of the docs.
                   </p>
-                  <p class="mt-0.5 text-[0.6875rem] leading-relaxed text-faint">
-                    {column.hint}
+                </Show>
+              </div>
+
+              {/* Keyed by position, not by value: a clause *is* its policy
+                  string, so `For` would tear the line down on every edit and
+                  take the open control with it. */}
+              <For each={rulesOf(action)} keyed={false}>
+                {(rule, index) => (
+                  <ClauseLine
+                    rule={rule()}
+                    onSubject={(update) => editSubject(action, index, update)}
+                    onEffect={(effect) => setEffect(action, index, effect)}
+                    onRemove={() =>
+                      setRules(
+                        action,
+                        rulesOf(action).filter((_, i) => i !== index),
+                      )
+                    }
+                  />
+                )}
+              </For>
+
+              {/* A warning, not an error: every one of these loads and runs.
+                  It sits under the action it is about and nowhere else — a
+                  second copy at the top of the page would move the clause you
+                  are editing out from under the pointer. */}
+              <For each={permissionConflicts(rulesOf(action))}>
+                {(issue) => (
+                  <p class="mt-1 text-[0.6875rem] leading-relaxed text-warn">
+                    {issue}
                   </p>
-                </div>
-              )}
-            </For>
-          </div>
+                )}
+              </For>
 
-          <div class="divide-y divide-line">
-            <For each={ACTIONS}>
-              {(action) => (
-                <div class="grid gap-3 px-4 py-3 lg:grid-cols-[9rem_repeat(3,minmax(0,1fr))]">
-                  <div class="pt-1">
-                    <p class="text-[0.8125rem] font-medium capitalize text-ink">
-                      {action}
-                    </p>
-                    <p class="font-mono text-[0.6875rem] leading-relaxed text-faint">
-                      {ACTION_ENDPOINT[action].replace(
-                        "{res}",
-                        `${props.basePath}/${props.resource.name}`,
-                      )}
-                    </p>
-                    <Show when={isPrivate(action)}>
-                      <p class="mt-1 text-[0.6875rem] leading-relaxed text-faint">
-                        Not exposed: 404, and left out of the docs.
-                      </p>
-                    </Show>
-                  </div>
-
-                  <For each={EFFECT_COLUMNS}>
-                    {(column) => (
-                      <div class="flex flex-col gap-1.5">
-                        <div class="lg:hidden">
-                          <p
-                            class={`text-[0.8125rem] font-medium ${column.tone}`}
-                          >
-                            {column.label}
-                          </p>
-                          <p class="mt-0.5 text-[0.6875rem] leading-relaxed text-faint">
-                            {column.hint}
-                          </p>
-                        </div>
-                        {/* Keyed by position, not by value: a clause *is* its
-                            policy string, so `For` would tear the row down on
-                            every keystroke and take the caret with it. */}
-                        <For
-                          each={columnOf(action, column.effect)}
-                          keyed={false}
-                        >
-                          {(policy, index) => (
-                            <ClauseRow
-                              subject={parsePolicy(policy())}
-                              effect={column.effect}
-                              onChange={(update) =>
-                                editClause(action, column.effect, index, update)
-                              }
-                              onRemove={() =>
-                                setColumn(
-                                  action,
-                                  column.effect,
-                                  columnOf(action, column.effect).filter(
-                                    (_, i) => i !== index,
-                                  ),
-                                )
-                              }
-                              // An `owner` clause allowed outright is this
-                              // column's statement written the old way; moving
-                              // it says the same thing where it can be read.
-                              onMoveToOwn={
-                                column.effect === "allow" &&
-                                parsePolicy(policy()).level === "owner"
-                                  ? () =>
-                                      props.onEdit((draft) => {
-                                        const current = policy();
-                                        const kept = rulesOf(action).filter(
-                                          (rule) =>
-                                            !(
-                                              rule.effect === "allow" &&
-                                              rule.policy === current
-                                            ),
-                                        );
-                                        const moved = formatPolicy({
-                                          ...parsePolicy(current),
-                                          level: "authenticated",
-                                        });
-                                        draft.permissions[action] = kept
-                                          .filter(
-                                            (rule) =>
-                                              !(
-                                                rule.effect === "own" &&
-                                                rule.policy === moved
-                                              ),
-                                          )
-                                          .concat({
-                                            policy: moved,
-                                            effect: "own",
-                                          });
-                                      })
-                                  : undefined
-                              }
-                            />
-                          )}
-                        </For>
-                        <div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              setColumn(action, column.effect, [
-                                ...columnOf(action, column.effect),
-                                column.effect === "deny"
-                                  ? "role:suspended"
-                                  : "role:admin",
-                              ])
-                            }
-                          >
-                            + Add
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
+              <button
+                type="button"
+                class="mt-1 text-[0.6875rem] text-faint transition-colors hover:text-accent"
+                onClick={() => addRule(action)}
+              >
+                + add a clause
+              </button>
+            </div>
+          )}
+        </For>
       </div>
 
       <div class="border-t border-line px-4 py-3 text-[0.6875rem] leading-relaxed text-faint">
@@ -1092,130 +989,63 @@ function PermissionsTab(props: {
   );
 }
 
-/** One clause: who it names, with the level, role and class edited separately. */
-function ClauseRow(props: {
-  subject: Subject;
-  /** The column it sits in, which decides what it may name. */
-  effect: Effect;
-  onChange: (update: (subject: Subject) => Subject) => void;
+/** One clause, read as a sentence, with the remove control on the same line. */
+function ClauseLine(props: {
+  rule: PermissionRule;
+  onSubject: (update: (subject: Subject) => Subject) => void;
+  onEffect: (effect: Effect) => void;
   onRemove: () => void;
-  /** Present only on a legacy `owner` clause sitting in the Allow column. */
-  onMoveToOwn?: () => void;
 }) {
-  // The class is a narrowing most clauses never use, so it reads as a line of
-  // small print under the clause — never a field competing with the two that
-  // say who the caller is.
-  const classes = createMemo(() => policyVocabulary().classes);
+  const subject = () => parsePolicy(props.rule.policy);
 
-  const setClass = (value: string) => {
-    props.onChange((subject) => ({ ...subject, orgClass: value.trim() }));
-  };
+  /** A legacy `owner` level allowed outright is this clause's own effect. */
+  const legacyOwner = () =>
+    props.rule.effect === "allow" && subject().level === "owner";
 
   return (
-    <div class="rounded-lg border border-line bg-surface px-1.5 py-1.5">
-      <div class="flex flex-wrap items-center gap-1.5">
-        <Select
-          class="min-w-0 flex-1"
-          value={props.subject.level}
-          options={levelOptions(props.effect, props.subject.level)}
-          onChange={(value) =>
-            props.onChange((subject) => ({
-              ...subject,
-              level: value,
-              role: value === "role" ? subject.role || "admin" : "",
-            }))
-          }
+    <div class="group mt-0.5 flex items-start gap-1.5">
+      <span class="select-none pt-[0.3rem] text-[0.6875rem] leading-none text-faint">
+        —
+      </span>
+      <div class="min-w-0 flex-1">
+        <PolicyPhrase
+          subject={subject()}
+          onChange={props.onSubject}
+          effect={props.rule.effect}
+          onEffectChange={props.onEffect}
+          levels={LEVELS_BY_EFFECT[props.rule.effect]}
         />
-        <Show when={props.subject.level === "role"}>
-          <TextInput
-            mono
-            lowercase
-            list="policy-roles"
-            class="max-w-[7rem]"
-            placeholder="admin"
-            value={props.subject.role}
-            onInput={(value) =>
-              props.onChange((subject) => ({ ...subject, role: value }))
-            }
-          />
-        </Show>
-        <Button
-          variant="ghost"
-          size="sm"
-          title="Remove this clause"
-          onClick={props.onRemove}
-        >
-          ×
-        </Button>
-      </div>
-
-      <Show when={props.onMoveToOwn}>
-        {(move) => (
-          <p class="mt-1 pl-0.5 text-[0.6875rem] leading-relaxed text-faint">
-            Same as the next column —{" "}
+        <Show when={legacyOwner()}>
+          <p class="text-[0.6875rem] leading-relaxed text-faint">
+            Written the old way —{" "}
             <button
               type="button"
               class="text-accent underline decoration-dotted underline-offset-2 hover:text-ink"
-              onClick={() => move()()}
+              onClick={() => {
+                props.onSubject((current) => ({
+                  ...current,
+                  level: "authenticated",
+                }));
+                props.onEffect("own");
+              }}
             >
-              move it there
+              say it as an ownership clause
             </button>
           </p>
-        )}
-      </Show>
-
-      <div class="mt-1 flex flex-wrap items-center gap-1.5 pl-0.5">
-        <span class="text-[0.6875rem] text-faint">in organisation with</span>
-        <Show
-          when={classes().length}
-          fallback={
-            <TextInput
-              mono
-              lowercase
-              list="policy-classes"
-              class="max-w-[7rem]"
-              placeholder="any"
-              value={props.subject.orgClass}
-              onInput={setClass}
-            />
-          }
-        >
-          <Select
-            class="max-w-[9rem] py-0.5 text-[0.6875rem]"
-            value={props.subject.orgClass}
-            options={[
-              { value: "", label: "any" },
-              ...classes().map((name) => ({ value: name, label: name })),
-            ]}
-            onChange={setClass}
-          />
         </Show>
-        <span class="text-[0.6875rem] text-faint">class</span>
       </div>
+      <button
+        type="button"
+        class="shrink-0 rounded px-1.5 text-faint transition-colors hover:text-danger"
+        title="Remove this clause"
+        onClick={props.onRemove}
+      >
+        ×
+      </button>
     </div>
   );
 }
 
-/**
- * Role and class names the project already spells somewhere, offered as
- * completions. Neither is declared anywhere — a role is membership data — so
- * the only way to catch `role:manger` is to show what the project does use.
- */
-function PolicyVocabularyLists() {
-  const vocabulary = createMemo(() => policyVocabulary());
-  return (
-    <>
-      <datalist id="policy-roles">
-        <For each={vocabulary().roles}>{(role) => <option value={role} />}</For>
-      </datalist>
-      <datalist id="policy-classes">
-        <For each={vocabulary().classes}>
-          {(name) => <option value={name} />}
-        </For>
-      </datalist>
-    </>
-  );
-}
 
 // ---- hooks ------------------------------------------------------------------
 

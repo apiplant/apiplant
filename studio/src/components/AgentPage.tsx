@@ -19,25 +19,21 @@ import {
   TextInput,
 } from "./ui";
 import { hasComments } from "../lib/toml";
+import { formatPolicy, parsePolicy } from "../lib/permissions";
+import { PolicyPhrase } from "./PolicyPhrase";
 
 type TabId = "settings" | "permissions" | "prompt" | "tools" | "ai" | "toml";
 
-const CHAT_OPTIONS = [
-  { value: "public", label: "public — anyone" },
-  { value: "authenticated", label: "authenticated — any signed-in caller" },
-  { value: "member", label: "member — of the active organisation" },
-  { value: "role", label: "role:… — a named org role" },
-  { value: "private", label: "private — not exposed" },
-] as const;
+const CHAT_LEVELS = ["public", "authenticated", "member", "role", "private"];
 
-const HISTORY_OPTIONS = [
-  { value: "public", label: "public — anyone" },
-  { value: "authenticated", label: "authenticated — any signed-in caller" },
-  { value: "member", label: "member — of the active organisation" },
-  { value: "owner", label: "owner — only their own threads" },
-  { value: "role", label: "role:… — a named org role" },
-  { value: "private", label: "private — not browsable" },
-] as const;
+const HISTORY_LEVELS = [
+  "public",
+  "authenticated",
+  "member",
+  "owner",
+  "role",
+  "private",
+];
 
 const AI_PROVIDER_OPTIONS = [
   { value: "", label: "inherit global provider" },
@@ -46,14 +42,6 @@ const AI_PROVIDER_OPTIONS = [
   { value: "anthropic", label: "anthropic" },
   { value: "custom", label: "custom" },
 ] as const;
-
-function levelOf(value: string) {
-  return value.startsWith("role:") ? "role" : value;
-}
-
-function roleOf(value: string) {
-  return value.startsWith("role:") ? value.slice(5) : "";
-}
 
 function parsePositiveInteger(value: string): number | undefined {
   const parsed = Number.parseInt(value, 10);
@@ -310,7 +298,7 @@ function PermissionsTab(props: {
         <PermissionRow
           label="chat"
           value={props.entry.chat}
-          options={CHAT_OPTIONS}
+          levels={CHAT_LEVELS}
           hint="The route itself: POST /ai/agents/<name>/chat."
           onChange={(value) =>
             props.onEdit((draft) => {
@@ -321,7 +309,7 @@ function PermissionsTab(props: {
         <PermissionRow
           label="history"
           value={props.entry.history}
-          options={HISTORY_OPTIONS}
+          levels={HISTORY_LEVELS}
           hint={
             props.entry.storageEnabled
               ? "Read access to generated ai_<name>_thread and ai_<name>_message resources."
@@ -341,31 +329,24 @@ function PermissionsTab(props: {
 function PermissionRow(props: {
   label: string;
   value: string;
-  options: readonly { value: string; label: string }[];
+  levels: readonly string[];
   hint: string;
   onChange: (value: string) => void;
 }) {
   return (
-    <div class="flex flex-wrap items-center gap-3 px-4 py-3">
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
       <div class="w-40 shrink-0">
         <p class="text-[0.8125rem] font-medium capitalize text-ink">{props.label}</p>
         <p class="text-[0.6875rem] text-faint">{props.hint}</p>
       </div>
-      <Select
-        class="max-w-sm flex-1"
-        value={levelOf(props.value)}
-        options={props.options}
-        onChange={(value) => props.onChange(value === "role" ? `role:${roleOf(props.value) || "admin"}` : value)}
+      <PolicyPhrase
+        class="min-w-0 flex-1"
+        subject={parsePolicy(props.value || "private")}
+        levels={props.levels}
+        onChange={(update) =>
+          props.onChange(formatPolicy(update(parsePolicy(props.value || "private"))))
+        }
       />
-      <Show when={levelOf(props.value) === "role"}>
-        <TextInput
-          mono
-          class="max-w-[10rem]"
-          value={roleOf(props.value)}
-          placeholder="admin"
-          onInput={(value) => props.onChange(`role:${value}`)}
-        />
-      </Show>
     </div>
   );
 }
