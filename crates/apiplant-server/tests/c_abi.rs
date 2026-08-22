@@ -790,6 +790,7 @@ fn compile_go(dir: &Path, source: &str) -> Option<PathBuf> {
     let output = Command::new(std::env::var("GO").unwrap_or_else(|_| "go".into()))
         .current_dir(dir)
         .arg("build")
+        .arg("-buildvcs=false")
         .arg("-buildmode=c-shared")
         .arg("-o")
         .arg("libfixture.so")
