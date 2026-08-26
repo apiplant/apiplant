@@ -13,7 +13,7 @@
 
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { basename } from "node:path";
-import { dismissToasts, shoot } from "./helpers";
+import { dismissToasts, shoot, SHOTS_THEME } from "./helpers";
 import { installFileSystemAccess, readTree } from "./fs-access-shim";
 import { STUDIO_APP } from "../studio-screenshots.config";
 
@@ -27,7 +27,7 @@ async function studioContext(browser: Browser, appDir: string): Promise<BrowserC
   const ctx = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
-    colorScheme: "light",
+    colorScheme: SHOTS_THEME,
   });
   await ctx.addInitScript(installFileSystemAccess, {
     name: basename(appDir),

@@ -11,6 +11,19 @@ import { fileURLToPath } from "node:url";
 /** Where the pictures land: the directory `docs/*.md` links them from. */
 export const SHOTS_DIR = fileURLToPath(new URL("../../docs/images", import.meta.url));
 
+/**
+ * Which palette this run photographs, from `SHOTS_THEME`.
+ *
+ * Both apps default to dark and fall back to `prefers-color-scheme` until a
+ * choice is stored, so the configs emulate the media query and the file name
+ * carries the answer: `admin-home.png` is the light pass, `admin-home-dark.png`
+ * the dark one. The website's screenshot widget pairs them by that suffix.
+ */
+export const SHOTS_THEME: "light" | "dark" = process.env.SHOTS_THEME === "dark" ? "dark" : "light";
+
+/** Appended to every name a dark run writes; empty for the light run. */
+export const SHOT_SUFFIX = SHOTS_THEME === "dark" ? "-dark" : "";
+
 /** Every seeded account in the examples uses this. */
 export const SEED_PASSWORD = "password";
 
@@ -30,7 +43,7 @@ export async function shoot(page: Page, name: string, fullPage = false): Promise
     for (const element of document.querySelectorAll("nav, aside, main")) element.scrollTop = 0;
   });
   await page.screenshot({
-    path: join(SHOTS_DIR, `${name}.png`),
+    path: join(SHOTS_DIR, `${name}${SHOT_SUFFIX}.png`),
     fullPage,
     animations: "disabled",
     caret: "hide",
@@ -46,7 +59,7 @@ export async function shoot(page: Page, name: string, fullPage = false): Promise
  * repaint is done, so the loop takes frames until that happens.
  */
 export async function shootStable(page: Page, name: string, fullPage = false): Promise<void> {
-  const path = join(SHOTS_DIR, `${name}.png`);
+  const path = join(SHOTS_DIR, `${name}${SHOT_SUFFIX}.png`);
   let previous: Buffer | undefined;
   for (let attempt = 0; attempt < 20; attempt++) {
     await page.waitForLoadState("networkidle");

@@ -8,6 +8,7 @@
  */
 
 import { defineConfig, devices } from "@playwright/test";
+import { SHOTS_THEME } from "./shots/helpers";
 import { fileURLToPath } from "node:url";
 
 const ORIGIN = process.env.STUDIO_ORIGIN ?? "http://localhost:5273";
@@ -32,7 +33,7 @@ export default defineConfig({
     headless: true,
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
-    colorScheme: "light",
+    colorScheme: SHOTS_THEME,
   },
 
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

@@ -9,6 +9,7 @@
  */
 
 import { defineConfig, devices } from "@playwright/test";
+import { SHOTS_THEME } from "./shots/helpers";
 
 /**
  * `13-real-world` is the example with enough furniture to photograph: nineteen
@@ -36,7 +37,7 @@ export default defineConfig({
     // 2× device pixel ratio so the PNG survives a retina screen.
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
-    colorScheme: "light",
+    colorScheme: SHOTS_THEME,
   },
 
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

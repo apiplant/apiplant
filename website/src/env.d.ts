@@ -8,3 +8,9 @@ declare module "virtual:search-index" {
   const raw: string;
   export default raw;
 }
+
+/** The file names in `docs/images/`, listed by `build/docs-images.ts`. */
+declare module "virtual:docs-images" {
+  const names: string[];
+  export default names;
+}

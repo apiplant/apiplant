@@ -382,14 +382,33 @@ Some things that follow, none of them optional:
   borrowed account exactly as it would be for its owner.
 
 Neither endpoint is mounted when both doors are shut, so an app that wants
-none of this has none of it to probe. In the [dashboard](admin.md), **Act as**
-appears on the team screen beside each member an admin may borrow — and, for a
-global admin, on every row of the `user` list as well as on the record, since
+none of this has none of it to probe. In the [dashboard](admin.md), the whole of
+it is four screens.
+
+**The first door** is the team screen, where **Act as** sits beside each member
+an organisation's admin may borrow — and beside nobody else, since the button
+asks the same question the server would:
+
+![The team screen: Act as beside each member this organisation's admin may borrow](images/admin-impersonation-team.png)
+
+**The second door** is the `user` list, which only a global admin has. It holds
+every account in the deployment, whichever organisation it belongs to, because
 they may reach people they share no organisation with whichever organisation
-they are standing in. A strip across the top of every screen says whose account is
-in use and holds the way out:
+they are standing in:
+
+![The Users screen: every account in the deployment, with Act as on each row](images/admin-impersonation-users.png)
+
+**The borrowed session** says so on every screen. A strip across the top names
+whose account is in use and holds the way out, and the header keeps a badge
+saying the same thing in less room for the screens the strip has scrolled off:
 
 ![A borrowed account: the strip says whose it is, and holds the way out](images/admin-impersonation.png)
+
+**The way back** needs no password: the session is minted from the borrowed
+token's own actor claim, so one click returns the operator to their own account
+and their own organisations.
+
+![Back on the operator's own account, the strip gone](images/admin-impersonation-ended.png)
 
 The [console](cli.md#acting-as-somebody-else) has
 the same two doors on `I`, from the Team screen and from the `user` table, with

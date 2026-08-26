@@ -9,6 +9,7 @@
  */
 
 import MarkdownIt from "markdown-it";
+import DOCS_IMAGE_NAMES from "virtual:docs-images";
 import anchor from "markdown-it-anchor";
 import { fromHighlighter } from "@shikijs/markdown-it/core";
 import { createHighlighterCore } from "shiki/core";
@@ -178,11 +179,11 @@ const DOC_CLASSES: Record<string, string> = {
   strong: "font-semibold text-ink",
   em: "italic",
   hr: "my-8 border-0 border-t border-line",
-  // The screenshots are of a light-background application, so they need a
-  // border of their own to keep an edge against the page in either theme.
+  // A screenshot needs a border of its own to keep an edge against the page in
+  // either theme, whichever palette the picture itself was taken in.
   // A screenshot is unreadable at column width, so clicking one opens it full
   // screen — the article's click handler picks it up by the `zoom` marker.
-  img: "my-5 max-w-full rounded-lg border border-line cursor-zoom-in",
+  img: "max-w-full rounded-lg border border-line cursor-zoom-in",
   // Not `whitespace-nowrap`: a long path or symbol in prose would otherwise
   // push the whole page wider than a phone screen.
   code_inline:
@@ -419,7 +420,17 @@ function markdown(): Promise<MarkdownIt> {
       // is never above the fold — so none of them is worth blocking paint.
       token.attrSet("loading", "lazy");
       token.attrSet("decoding", "async");
-      return defaultImage(tokens, index, options, env, self);
+
+      // A screenshot photographed in both palettes carries both URLs, and the
+      // article swaps between them; `Docs.tsx` finds these by the attributes.
+      const pair = src ? shotPair(src) : null;
+      if (pair) {
+        token.attrSet("data-shot-light", pair.light);
+        token.attrSet("data-shot-dark", pair.dark);
+      }
+      const image = defaultImage(tokens, index, options, env, self);
+      if (!pair) return `<span class="my-5 inline-block">${image}</span>`;
+      return `<span class="group relative my-5 inline-block">${image}${SHOT_TOGGLE_HTML}</span>`;
     };
 
     // Links: `configuration.md#tls` is a route on this site, anything that
@@ -461,6 +472,52 @@ function markdown(): Promise<MarkdownIt> {
  * the images are published under one absolute prefix instead, by
  * `build/docs-images.ts`.
  */
+/** The screenshots available, as the plugin lists them. */
+const DOCS_IMAGE_SET = new Set(DOCS_IMAGE_NAMES);
+
+/**
+ * The light and dark URLs for one screenshot, or `null` when only one palette
+ * was photographed.
+ *
+ * The pass that takes the pictures writes the dark one beside the light one
+ * with a `-dark` suffix (`e2e/shots/helpers.ts`), so a pair is a file name and
+ * that file name with the suffix — but only the guides' application shots have
+ * both, which is why the answer comes from the published list rather than from
+ * string surgery alone.
+ */
+export function shotPair(src: string): { light: string; dark: string } | null {
+  const url = rewriteImageSrc(src);
+  if (!url.startsWith(DOCS_IMAGE_BASE)) return null;
+  const name = url.slice(DOCS_IMAGE_BASE.length);
+  const match = /^(.*)\.png$/.exec(name);
+  if (!match || match[1].endsWith("-dark")) return null;
+  const dark = `${match[1]}-dark.png`;
+  if (!DOCS_IMAGE_SET.has(name) || !DOCS_IMAGE_SET.has(dark)) return null;
+  return { light: url, dark: DOCS_IMAGE_BASE + dark };
+}
+
+/**
+ * The button drawn over a screenshot that has both palettes: two monochrome
+ * glyphs — a sun and a moon, drawn in `currentColor` — of which the article
+ * shows the one for the palette the click would switch *to*.
+ */
+export const SHOT_TOGGLE_HTML =
+  '<button type="button" data-shot-toggle aria-label="Show this screenshot in dark mode" ' +
+  'class="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-lg ' +
+  'border border-line bg-surface/90 text-muted opacity-0 backdrop-blur-sm transition ' +
+  // A phone has no hover, and a tap on the picture opens it full screen — so
+  // below the breakpoint the button is simply always there.
+  'max-sm:opacity-100 ' +
+  'hover:text-ink focus-visible:opacity-100 group-hover:opacity-100">' +
+  '<svg data-shot-icon="dark" viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M20 13.5A8 8 0 0 1 10.5 4a8 8 0 1 0 9.5 9.5Z"/></svg>' +
+  '<svg data-shot-icon="light" viewBox="0 0 24 24" class="hidden h-4 w-4" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="12" cy="12" r="4"/>' +
+  '<path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>' +
+  '</svg></button>';
+
 export function rewriteImageSrc(src: string): string {
   if (/^(https?:|data:|\/)/.test(src)) return src;
   return DOCS_IMAGE_BASE + src.replace(/^(\.\/)?images\//, "");

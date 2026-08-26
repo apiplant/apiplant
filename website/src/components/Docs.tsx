@@ -12,6 +12,7 @@ import { useLocation, useNavigate, useParams } from "@solidjs/router";
 import { DOCS, DOC_GROUPS, findDoc, loadDoc, neighbours, type DocMeta } from "../lib/docs";
 import { highlightParts, searchDocs, warmSearch, type SearchHit } from "../lib/search";
 import { GITHUB_URL, STUDIO_URL } from "../lib/links";
+import { shotTheme, toggleShotTheme } from "../lib/shots";
 
 /**
  * The results of a full-text query, section by section. The index is the one
@@ -252,11 +253,45 @@ function Pager(props: { slug: string }) {
 }
 
 /**
+ * The two monochrome glyphs the screenshot toggles wear — no emoji, so they
+ * take the colour of the control they sit in and match the close button beside
+ * them. `lib/docs.ts` has the same two paths as markup, for the buttons that
+ * are rendered into the guides' HTML rather than by Solid.
+ */
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 13.5A8 8 0 0 1 10.5 4a8 8 0 1 0 9.5 9.5Z" />
+    </svg>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4" />
+    </svg>
+  );
+}
+
+/**
  * A screenshot, full screen. The guides show them at column width, which is
  * narrower than the application they picture, so every one of them is worth a
  * closer look; Escape, or a click anywhere, closes it again.
  */
-function Lightbox(props: { src: string; alt: string; onClose: () => void }) {
+function Lightbox(props: {
+  src: string;
+  alt: string;
+  /** The other palette of the same screenshot, when it was photographed twice. */
+  dark?: string;
+  light?: string;
+  onClose: () => void;
+}) {
+  /** Full screen follows the same page-wide choice the article does. */
+  const source = () =>
+    props.light && props.dark ? (shotTheme() === "dark" ? props.dark : props.light) : props.src;
+
   createEffect(
     () => props.src,
     () => {
@@ -277,10 +312,26 @@ function Lightbox(props: { src: string; alt: string; onClose: () => void }) {
       aria-label={props.alt || "Screenshot"}
     >
       <img
-        src={props.src}
+        src={source()}
         alt={props.alt}
         class="max-h-full max-w-full rounded-lg border border-line shadow-2xl"
       />
+      <Show when={props.light && props.dark}>
+        <button
+          type="button"
+          onClick={(event) => {
+            // The backdrop closes on click; the toggle must not.
+            event.stopPropagation();
+            toggleShotTheme();
+          }}
+          aria-label={`Show this screenshot in ${shotTheme() === "dark" ? "light" : "dark"} mode`}
+          class="absolute right-16 top-4 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-line bg-surface text-muted hover:text-ink"
+        >
+          <Show when={shotTheme() === "dark"} fallback={<MoonIcon />}>
+            <SunIcon />
+          </Show>
+        </button>
+      </Show>
       <button
         type="button"
         onClick={props.onClose}
@@ -298,7 +349,11 @@ function Lightbox(props: { src: string; alt: string; onClose: () => void }) {
 function Article(props: { slug: string }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [zoomed, setZoomed] = createSignal<{ src: string; alt: string } | null>(null);
+  const [zoomed, setZoomed] = createSignal<
+    { src: string; alt: string; light?: string; dark?: string } | null
+  >(null);
+  /** The element holding the rendered guide, for the screenshot swap below. */
+  let body: HTMLDivElement | undefined;
   const docResource = createMemo(async () => loadDoc(props.slug));
   const doc = () => latest(docResource);
 
@@ -310,10 +365,22 @@ function Article(props: { slug: string }) {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey)
       return;
     const target = event.target as HTMLElement;
+    // The palette button sits on top of the screenshot, so it is tested first:
+    // otherwise every attempt to flip a picture would open it full screen.
+    if (target.closest("[data-shot-toggle]")) {
+      event.preventDefault();
+      toggleShotTheme();
+      return;
+    }
     // A screenshot outside a link opens full screen instead of navigating.
     if (target instanceof HTMLImageElement && !target.closest("a")) {
       event.preventDefault();
-      setZoomed({ src: target.currentSrc || target.src, alt: target.alt });
+      setZoomed({
+        src: target.currentSrc || target.src,
+        alt: target.alt,
+        light: target.dataset.shotLight,
+        dark: target.dataset.shotDark,
+      });
       return;
     }
     const anchor = target.closest("a");
@@ -348,6 +415,33 @@ function Article(props: { slug: string }) {
       };
       settle(0);
       return () => cancelAnimationFrame(frame);
+    },
+  );
+
+  /**
+   * Show every twice-photographed screenshot in the chosen palette.
+   *
+   * The guide's HTML is markdown-it's, inserted with `innerHTML`, so these
+   * pictures and their buttons are outside Solid's reach — the swap is a pass
+   * over the DOM whenever the document or the choice changes.
+   */
+  createEffect(
+    () => [doc(), shotTheme()] as const,
+    ([loaded, palette]) => {
+      if (!loaded || !body) return;
+      const dark = palette === "dark";
+      for (const image of body.querySelectorAll<HTMLImageElement>("img[data-shot-dark]")) {
+        const next = dark ? image.dataset.shotDark : image.dataset.shotLight;
+        if (next && !image.src.endsWith(next)) image.src = next;
+      }
+      for (const button of body.querySelectorAll<HTMLElement>("[data-shot-toggle]")) {
+        button.setAttribute(
+          "aria-label",
+          `Show this screenshot in ${dark ? "light" : "dark"} mode`,
+        );
+        for (const icon of button.querySelectorAll<SVGElement>("[data-shot-icon]"))
+          icon.classList.toggle("hidden", (icon.dataset.shotIcon === "light") !== dark);
+      }
     },
   );
 
@@ -404,6 +498,7 @@ function Article(props: { slug: string }) {
               </div>
 
               <div
+                ref={body}
                 class="max-w-none text-[0.9375rem] leading-7 text-muted"
                 onClick={intercept}
                 innerHTML={loaded().html}
@@ -434,7 +529,13 @@ function Article(props: { slug: string }) {
 
       <Show when={zoomed()}>
         {(image) => (
-          <Lightbox src={image().src} alt={image().alt} onClose={() => setZoomed(null)} />
+          <Lightbox
+            src={image().src}
+            alt={image().alt}
+            light={image().light}
+            dark={image().dark}
+            onClose={() => setZoomed(null)}
+          />
         )}
       </Show>
     </div>

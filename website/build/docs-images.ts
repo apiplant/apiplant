@@ -17,6 +17,16 @@ import { fileURLToPath } from "node:url";
 import { extname, join } from "node:path";
 import type { Plugin } from "vite";
 
+/**
+ * The names in `docs/images/`, published to the browser as
+ * `virtual:docs-images`. The renderer needs the list because a screenshot's
+ * dark twin is a sibling file (`admin-home-dark.png`) rather than something a
+ * URL can be derived blindly from: the CLI casts have no dark pass, and an
+ * `<img>` pointing at a file that is not there is a broken picture.
+ */
+const VIRTUAL_ID = "virtual:docs-images";
+const RESOLVED_ID = "\0" + VIRTUAL_ID;
+
 /** The URL prefix. Must match `DOCS_IMAGE_BASE` in `src/lib/docs.ts`. */
 export const DOCS_IMAGE_BASE = "/docs-images/";
 
@@ -44,6 +54,15 @@ function imageNames(): string[] {
 export function docsImagesPlugin(): Plugin {
   return {
     name: "apiplant-docs-images",
+
+    resolveId(id) {
+      return id === VIRTUAL_ID ? RESOLVED_ID : null;
+    },
+
+    load(id) {
+      if (id !== RESOLVED_ID) return null;
+      return `export default ${JSON.stringify(imageNames())};\n`;
+    },
 
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
