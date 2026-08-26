@@ -398,6 +398,11 @@ they are standing in:
 
 ![The Users screen: every account in the deployment, with Act as on each row](images/admin-impersonation-users.png)
 
+The account's own record carries the same button, for the person a global admin
+reached by searching rather than by scrolling:
+
+![A user record, with Act as this user beside it](images/admin-impersonation-user.png)
+
 **The borrowed session** says so on every screen. A strip across the top names
 whose account is in use and holds the way out, and the header keeps a badge
 saying the same thing in less room for the screens the strip has scrolled off:

@@ -33,8 +33,9 @@ async fn asset(req: HttpRequest) -> HttpResponse {
 }
 
 pub async fn serve(host: &str, port: u16) -> anyhow::Result<()> {
+    let (listener, port) = apiplant_server::bind::listener(host, port)?;
     let addr = format!("{host}:{port}");
-    let server = HttpServer::new(|| WebApp::new().default_service(web::to(asset))).bind(&addr)?;
+    let server = HttpServer::new(|| WebApp::new().default_service(web::to(asset))).listen(listener)?;
 
     println!("apiplant studio -> http://{addr}/");
     server.run().await?;

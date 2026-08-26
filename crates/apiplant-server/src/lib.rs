@@ -366,6 +366,7 @@ mod ai_routes;
 mod auth_routes;
 mod banner;
 mod billing;
+pub mod bind;
 pub mod builtins;
 pub mod cabi;
 pub mod call;
@@ -991,11 +992,15 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
         server = server.workers(w);
     }
 
+    // The socket is claimed here rather than through `bind` so that a port
+    // collision can be reported by name — and another port offered — instead of
+    // surfacing as a bare `Address already in use`.
+    let (listener, port) = bind::listener(&host, port)?;
     let addr = format!("{host}:{port}");
     let scheme = if tls.is_some() { "https" } else { "http" };
     let server = match tls {
-        Some(paths) => server.bind_rustls(&addr, load_tls(&paths)?)?,
-        None => server.bind(&addr)?,
+        Some(paths) => server.listen_rustls(listener, load_tls(&paths)?)?,
+        None => server.listen(listener)?,
     };
 
     tracing::info!("apiplant listening on {scheme}://{addr}{base_path_log}");

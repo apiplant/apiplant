@@ -95,16 +95,20 @@ test("the back office's door", async () => {
   await expect(page.getByRole("button", { name: /^Act as$/i }).first()).toBeVisible();
   await settle(page);
   await shoot(page, "admin-impersonation-users");
+
+  // The same door from the other side: opening the account shows Act as this
+  // user on the record, which is where a global admin lands after searching for
+  // somebody rather than scrolling to them.
+  await page.getByRole("button", { name: /nina@northwind\.example/ }).first().click();
+  await expect(page.getByRole("button", { name: /Act as this user/i })).toBeVisible();
+  await settle(page);
+  await shoot(page, "admin-impersonation-user");
 });
 
 test("a borrowed account", async () => {
   // Nina belongs to Northwind, which Rae belongs to not at all — the reach
   // only a global admin has.
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: "nina@northwind.example" })
-    .getByRole("button", { name: /^Act as$/i })
-    .click();
+  await page.getByRole("button", { name: /Act as this user/i }).click();
 
   // The strip says whose account is in use; the header chip says it again for
   // the screens the strip does not reach. Waiting on both is waiting on the

@@ -32,6 +32,7 @@ import {
   readableFields,
   recordLabel,
 } from "../fields";
+import type { ApiError } from "../store";
 import type { DraftError } from "../fields";
 import { MarkupView } from "../markup";
 import {
@@ -530,6 +531,14 @@ function SortArrow(props: { direction: "asc" | "desc" | null }) {
 
 // --- record ----------------------------------------------------------------
 
+/** What one record read came back with: the row, or the status that refused it. */
+type LoadedRecord = { record: ApiRecord | null; failed?: number; message?: string };
+
+/** An error's own words, since a bare status is not a sentence. */
+function messageOf(failure: unknown): string {
+  return failure instanceof Error ? failure.message : String(failure);
+}
+
 export function RecordPage(props: { resource: ResourceManifest; id: string | null }) {
   const isNew = () => props.id === null;
   const [saving, setSaving] = createSignal(false);
@@ -538,23 +547,47 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
   const [errors, setErrors] = createSignal<DraftError[]>([]);
   const draft = createDraftStore();
 
-  const recordResource = createMemo(async () => {
+  /**
+   * The record, or the status that refused it.
+   *
+   * Tagged rather than thrown, and for the same reason the related lists are:
+   * the loaded row is read all over this screen — the heading above, the
+   * permission memos, the effect that fills the form — and several of those
+   * reads happen outside any boundary. An async read that rejects with nobody
+   * to catch it does not just blank the screen: it halts the application's
+   * reactivity, and the whole dashboard stops answering navigation. So the
+   * failure is a value, and every reader sees an empty record instead.
+   */
+  const recordResource = createMemo(async (): Promise<LoadedRecord> => {
     const key = { name: props.resource.name, id: props.id, org: session.organizationId };
-    if (!key.id) return null;
+    if (!key.id) return { record: null };
     const resource = resourceByName(key.name);
-    if (!resource) return null;
+    if (!resource) return { record: null };
     const expand = expandParam(resource);
     const query = expand ? `?expand=${encodeURIComponent(expand)}` : "";
-    return asRecord(
-      await api(`/${resource.name}/${encodeURIComponent(key.id)}${query}`, {
-        org: includeOrgContext(resource, "read"),
-      }),
-    );
+    try {
+      return {
+        record: asRecord(
+          await api(`/${resource.name}/${encodeURIComponent(key.id)}${query}`, {
+            org: includeOrgContext(resource, "read"),
+          }),
+        ),
+      };
+    } catch (failure) {
+      return { record: null, failed: (failure as ApiError).status ?? 0, message: messageOf(failure) };
+    }
   });
 
-  const record = () => latest(recordResource) ?? null;
+  const record = () => latest(recordResource)?.record ?? null;
   const recordLoading = () => isPending(recordResource);
   const refetch = () => refresh(recordResource);
+  /** Set when the read was refused for a reason worth naming — anything but the
+   *  plain "it is not there", which the empty state below already says better. */
+  const loadFailure = () => {
+    const loaded = latest(recordResource);
+    if (!loaded?.failed || loaded.failed === 404) return null;
+    return loaded.message ?? "That did not work.";
+  };
 
   // Reset the form whenever the record or the resource changes underneath it.
   // The apply phase is untracked, so writing the draft cannot feed back into
@@ -691,6 +724,25 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
         </Show>
       </PageTitle>
 
+      {/*
+        The boundary is the second line of defence: the read itself no longer
+        rejects, so what reaches here is whatever else this screen's children
+        might throw — and none of it should be able to halt the dashboard.
+      */}
+      <Errored
+        fallback={(error, reset) => (
+          <EmptyState title="That record could not be loaded" description={messageOf(error())}>
+            <Button
+              onClick={() => {
+                refetch();
+                reset();
+              }}
+            >
+              Try again
+            </Button>
+          </EmptyState>
+        )}
+      >
       <Show
         when={isNew() || !recordLoading()}
         fallback={
@@ -699,6 +751,14 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
           </div>
         }
       >
+        <Show
+          when={!loadFailure()}
+          fallback={
+            <EmptyState title="That record could not be loaded" description={loadFailure() ?? ""}>
+              <Button onClick={refetch}>Try again</Button>
+            </EmptyState>
+          }
+        >
         <Show
           when={isNew() || record()}
           fallback={
@@ -763,7 +823,9 @@ export function RecordPage(props: { resource: ResourceManifest; id: string | nul
             </div>
           </div>
         </Show>
+        </Show>
       </Show>
+      </Errored>
 
       <ConfirmDialog
         open={confirmDelete()}
@@ -854,6 +916,9 @@ function RecordSummary(props: { resource: ResourceManifest; record: ApiRecord })
   );
 }
 
+/** What one related list came back with: its rows, or the status that refused them. */
+type RelatedRows = { rows: ApiRecord[]; failed?: number };
+
 /**
  * Records that reference this one, such as an order's lines or a customer's
  * orders. Shown inline, since related records are a primary reason to open a
@@ -868,7 +933,18 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
       resource()?.relations.find((relation) => relation.field === props.child.field)?.target ?? null,
   );
 
-  const rowsResource = createMemo(async () => {
+  /**
+   * The rows, or why there are none to show.
+   *
+   * A record lists every child the manifest names, and not all of them answer
+   * for every caller: a nested collection whose child is `private` is not
+   * mounted at all (404), and one the session may not list is refused (403).
+   * Neither is an error the operator can act on, and neither may be allowed to
+   * reject: this runs on a record screen that draws several of these at once,
+   * so one unreadable collection would otherwise take the whole screen — and,
+   * unhandled, the application's reactivity with it.
+   */
+  const rowsResource = createMemo(async (): Promise<RelatedRows> => {
       const key = {
         parent: props.parentId,
         parentName: parentName(),
@@ -876,25 +952,38 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
         org: session.organizationId,
       };
       const child = resourceByName(key.child);
-      if (!child || !key.parentName) return [];
+      if (!child || !key.parentName) return { rows: [] };
       // `via` selects which reference to follow, which matters when the child
       // references the same parent more than once, as with billing and shipping
       // addresses.
       const params = new URLSearchParams({ limit: "10", via: props.child.field });
       const expand = expandParam(child);
       if (expand) params.set("expand", expand);
-      return asRecords(
-        await api(
-          `/${key.parentName}/${encodeURIComponent(key.parent)}/${child.name}?${params.toString()}`,
-          // The nested endpoint authorizes the *child*'s list policy, so the
-          // header it needs is the child's, not the parent's.
-          { org: includeOrgContext(child, "list") },
-        ),
-      );
+      try {
+        return {
+          rows: asRecords(
+            await api(
+              `/${key.parentName}/${encodeURIComponent(key.parent)}/${child.name}?${params.toString()}`,
+              // The nested endpoint authorizes the *child*'s list policy, so the
+              // header it needs is the child's, not the parent's.
+              { org: includeOrgContext(child, "list") },
+            ),
+          ),
+        };
+      } catch (failure) {
+        return { rows: [], failed: (failure as ApiError).status ?? 0 };
+      }
   });
 
-  const rows = () => latest(rowsResource) ?? [];
+  const rows = () => latest(rowsResource)?.rows ?? [];
   const rowsLoading = () => isPending(rowsResource);
+  /** A collection this caller cannot read here is not shown at all: an empty
+   *  card would claim there are none, which is a different statement. */
+  const hidden = () => {
+    const status = latest(rowsResource)?.failed;
+    return status === 403 || status === 404;
+  };
+  const failed = () => Boolean(latest(rowsResource)?.failed) && !hidden();
 
   const columns = createMemo(() => {
     const child = resource();
@@ -907,7 +996,7 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
   });
 
   return (
-    <Show when={resource()}>
+    <Show when={hidden() ? null : resource()}>
       {(child) => (
         <Card class="overflow-hidden">
           <CardHeader title={props.child.label}>
@@ -921,6 +1010,17 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
             when={!rowsLoading()}
             fallback={<p class="px-5 py-4 text-xs text-faint">Loading…</p>}
           >
+            <Show
+              when={!failed()}
+              fallback={
+                <div class="flex flex-wrap items-center gap-3 px-5 py-4">
+                  <p class="text-xs text-faint">These could not be loaded.</p>
+                  <Button size="sm" variant="ghost" onClick={() => refresh(rowsResource)}>
+                    Try again
+                  </Button>
+                </div>
+              }
+            >
             <Show
               when={rows().length}
               fallback={
@@ -955,6 +1055,7 @@ function RelatedList(props: { parentId: string; child: ChildManifest }) {
                   </Button>
                 </div>
               </Show>
+            </Show>
             </Show>
           </Show>
         </Card>
