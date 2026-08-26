@@ -11,7 +11,7 @@
       "strict": false,
       "skills": ["./skills/apiplant-app"],
       "description": "Build apiplant apps: the framework's full documentation, its example apps, and the workflow for turning a description into a working app directory.",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "tags": ["api", "rest", "postgres", "rust", "toml", "backend"]
     }
