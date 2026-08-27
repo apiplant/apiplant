@@ -6,20 +6,15 @@
 //! are, where the dashboard is — so it is printed to stdout as a block, after
 //! the log lines, rather than buried among them.
 //!
+//! The drawing itself lives in [`crate::term`], which every other command
+//! prints through too.
+//!
 //! When `[server] domain` names one or more hosts the server only answers those
 //! hosts, so there is a box per domain, each with that domain's own links. With
 //! no domain configured the server answers for any host and there is one box,
 //! titled with the address it is bound to.
 
-use std::io::IsTerminal;
-
-const ART: &str = r" █████╗ ██████╗ ██╗██████╗ ██╗      █████╗ ███╗   ██╗████████╗
-██╔══██╗██╔══██╗██║██╔══██╗██║     ██╔══██╗████╗  ██║╚══██╔══╝
-███████║██████╔╝██║██████╔╝██║     ███████║██╔██╗ ██║   ██║
-██╔══██║██╔═══╝ ██║██╔═══╝ ██║     ██╔══██║██║╚██╗██║   ██║
-██║  ██║██║     ██║██║     ███████╗██║  ██║██║ ╚████║   ██║
-╚═╝  ╚═╝╚═╝     ╚═╝╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝
-";
+use crate::term;
 
 /// What the banner needs to know about the app it is announcing.
 pub(crate) struct Banner {
@@ -42,24 +37,18 @@ pub(crate) struct Banner {
 }
 
 impl Banner {
-    /// Print the art, the app's name, and one box per host.
+    /// Print the wordmark, the app's name, and one box per host.
     pub(crate) fn print(&self) {
-        let s = Style::detect();
-        println!();
-        for line in ART.lines() {
-            println!("{}{line}{}", s.blue, s.reset);
-        }
-        println!();
-        println!("  {}{}{}", s.bold, self.name, s.reset);
-        println!();
+        term::wordmark();
+        term::heading(&self.name, None);
 
         // With no domain configured the server answers for any host, so the
         // single box is titled with the address it is bound to instead.
         if self.domains.is_empty() {
-            self.print_box(&self.addr, &s);
+            term::links(&self.addr, &self.links(&self.addr));
         } else {
             for domain in &self.domains {
-                self.print_box(domain, &s);
+                term::links(domain, &self.links(domain));
             }
         }
         println!();
@@ -79,71 +68,6 @@ impl Banner {
             links.push(("Site", format!("{}://{host}/", self.scheme)));
         }
         links
-    }
-
-    /// One host's links, drawn in a box titled with that host.
-    fn print_box(&self, host: &str, s: &Style) {
-        let links = self.links(host);
-        let rows: Vec<String> = links
-            .iter()
-            .map(|(label, url)| format!("{label:<7}{url}"))
-            .collect();
-        // The box is as wide as its widest content — title included, since the
-        // title sits on the top border.
-        let inner = rows
-            .iter()
-            .map(|r| r.chars().count())
-            .chain(std::iter::once(host.chars().count() + 3))
-            .max()
-            .unwrap_or(0)
-            + 2;
-
-        let title_fill = inner - host.chars().count() - 3;
-        println!(
-            "  {d}┌─{r} {b}{host}{r} {d}{}┐{r}",
-            "─".repeat(title_fill),
-            d = s.dim,
-            b = s.blue,
-            r = s.reset
-        );
-        for (row, (label, url)) in rows.iter().zip(&links) {
-            let pad = inner - row.chars().count() - 1;
-            println!(
-                "  {d}│{r} {d}{label:<7}{r}{url}{}{d}│{r}",
-                " ".repeat(pad),
-                d = s.dim,
-                r = s.reset
-            );
-        }
-        println!("  {d}└{}┘{r}", "─".repeat(inner), d = s.dim, r = s.reset);
-    }
-}
-
-/// ANSI escapes, or empty strings when stdout is not a terminal.
-struct Style {
-    bold: &'static str,
-    blue: &'static str,
-    dim: &'static str,
-    reset: &'static str,
-}
-
-impl Style {
-    fn detect() -> Self {
-        if std::io::stdout().is_terminal() {
-            Style {
-                bold: "\x1b[1m",
-                blue: "\x1b[34m",
-                dim: "\x1b[2m",
-                reset: "\x1b[0m",
-            }
-        } else {
-            Style {
-                bold: "",
-                blue: "",
-                dim: "",
-                reset: "",
-            }
-        }
     }
 }
 

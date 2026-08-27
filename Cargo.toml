@@ -43,7 +43,10 @@ apiplant-payments = { path = "crates/apiplant-payments", version = "0.9.1" }
 apiplant-oauth = { path = "crates/apiplant-oauth", version = "0.9.1" }
 apiplant-ai = { path = "crates/apiplant-ai", version = "0.9.1" }
 apiplant-js = { path = "crates/apiplant-js", version = "0.9.1" }
-apiplant-server = { path = "crates/apiplant-server", version = "0.9.1" }
+# `default-features = false` here so that `crates/apiplant` can decide: its own
+# `typescript` feature turns the server's back on. Cargo ignores a member's
+# `default-features` unless the workspace declaration states one too.
+apiplant-server = { path = "crates/apiplant-server", version = "0.9.1", default-features = false }
 
 # Stable ABI for dynamically loaded functions
 abi_stable = "0.11"
@@ -166,6 +169,11 @@ rustls = "0.23"
 rustls-pemfile = "2"
 
 # Terminal user interface (the `apiplant cli` console)
+# The command line is generated from `crates/apiplant/src/cli.usage.kdl`
+# rather than parsed by hand. `default-features = false` drops the manpage,
+# markdown and tera renderers, which are for `usage`'s own CLI; `cli-help` is
+# the one that renders `--help`.
+usage-lib = { version = "6", default-features = false, features = ["cli-help"] }
 ratatui = "0.29"
 crossterm = "0.28"
 

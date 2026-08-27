@@ -1,0 +1,122 @@
+// The command line, as a usage spec (https://usage.jdx.dev).
+//
+// The parser is generated from this file rather than written out by hand, so
+// the help text and the parse can never disagree: a flag that is not here does
+// not exist, and one that is here is documented by construction.
+//
+// `unknown_flags "error"` is the important setting. apiplant owns every flag it
+// accepts — nothing here forwards options to another program — so a misspelled
+// `--relase` should be a mistake and not a directory name.
+//
+// This file is read at BUILD time, not at run time: `build.rs` parses it and
+// emits the finished spec as Rust, because reading it costs ~0.4us per byte and
+// none of it can change between compiling the binary and running it. Editing
+// this file rebuilds the crate. A test parses it the slow way and compares the
+// two field for field, so the emitter cannot fall behind what is written here.
+
+name "apiplant"
+bin "apiplant"
+about "point it at an app directory and it serves an API"
+unknown_flags "error"
+
+cmd "init" help="write a new app directory (or clone one)" display_order=1 {
+  flag "--from" help="clone this git repository instead of the sample app" {
+    arg "<repo>"
+  }
+  flag "--branch" help="branch, tag or commit to clone (with --from)" {
+    arg "<ref>"
+  }
+  flag "--name" help="the app's name in main.toml (default: the directory)" {
+    arg "<name>"
+  }
+  arg "<app_dir>" help="the directory to create (default: `.`)" required=#false
+  // Both `init <repo>` and `init <dir> <repo>` are what people type, so the
+  // repository is a positional as well as a flag; which of the two a lone
+  // argument is gets decided in `main.rs`, where a git URL can be recognised.
+  arg "<repo>" help="a git repository to clone instead of --from" required=#false
+}
+
+cmd "run" help="serve the app in APP_DIR" display_order=2 {
+  after_long_help """
+`--watch` is the development loop: it starts the server as a child process and
+restarts it — rebuilding first — whenever anything under the app directory is
+written. A restart, rather than a reload, because a built function is a shared
+library the server has already loaded and cannot put back. Changes are found by
+polling, so it also works over a container bind mount.
+"""
+  flag "--build" help="compile any out-of-date function sources first"
+  flag "--watch" help="rebuild and restart whenever the app directory changes"
+  flag "--seed" help="load the app's seed/ directory after migrating"
+  arg "<app_dir>" help="the app to serve (default: `.`)" required=#false
+}
+
+cmd "build" help="compile functions/* into loadable libraries" display_order=3 {
+  after_long_help """
+`build` shells out to a toolchain per language — cargo for .rs, cc for .c, zig
+for .zig, go for .go — so whichever your functions use must be on PATH.
+TypeScript is the exception: .ts is transpiled in-process, so it needs nothing.
+"""
+  flag "--release" help="compile with optimisations"
+  flag "--force" help="accepted and ignored: `build` always rebuilds" hide=#true
+  arg "<app_dir>" required=#false
+}
+
+cmd "check" help="load and validate the app, then exit" display_order=4 {
+  arg "<app_dir>" required=#false
+}
+
+cmd "seed" help="migrate, then load seed/ into the database" display_order=5 {
+  arg "<app_dir>" required=#false
+}
+
+cmd "call" help="run one function and print what it returned" display_order=6 {
+  after_long_help """
+`call` runs one of the app's functions the way an HTTP request to
+`/functions/<NAME>` would — same database, same email/cache/payments/AI — but
+with no server and no access check, which is what makes it the thing to put in
+a Kubernetes CronJob: schedule this binary against the same image and config.
+Private functions can be called too. It does not migrate. The result goes to
+stdout and anything the function emits goes to stderr, so a job's output is
+still parseable while its progress stays visible in the logs.
+"""
+  flag "--input" help="the function's input — JSON, `@file`, or `@-` for stdin" {
+    arg "<json>"
+  }
+  flag "--as" help="the user id the function sees as its caller" {
+    arg "<user_id>"
+  }
+  flag "--quiet" help="drop what the function emits instead of relaying it"
+  arg "<name>" help="the function to run"
+  arg "<app_dir>" required=#false
+}
+
+cmd "admin" help="bake a static admin panel to host elsewhere" display_order=7 {
+  after_long_help """
+Every served app gets the admin dashboard at `/admin/` — it is built into this
+binary and describes whichever app is being served, so you only need `admin` to
+host a copy on another origin. Switch the built-in one off with
+`[admin] enabled = false` in main.toml.
+"""
+  flag "--api" help="API domain or full base URL the panel talks to" required=#true {
+    arg "<url>"
+  }
+  flag "--out" help="where to write it (default: APP_DIR/admin)" {
+    arg "<dir>"
+  }
+  arg "<app_dir>" required=#false
+}
+
+cmd "cli" help="interactive console for a running app" display_order=8 {
+  arg "<server_or_dir>" help="a URL or host, or an app directory (default: `.`)" required=#false
+}
+
+cmd "studio" help="serve the visual editor from this binary" display_order=9 {
+  flag "--host" help="interface to bind (default 127.0.0.1)" {
+    arg "<addr>"
+  }
+  flag "--port" help="port to listen on (default 5273)" {
+    arg "<port>"
+  }
+}
+
+cmd "version" help="print the version and exit" display_order=10

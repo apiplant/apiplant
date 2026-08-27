@@ -6,6 +6,16 @@
 #   docker build -t apiplant .
 #   docker run --rm -p 8080:8080 -v "$PWD:/app" apiplant run /app
 #
+# There are two images here. The default is the full one. `--target slim` builds
+# without TypeScript support, which is what links V8 — two thirds of the binary,
+# and so most of this image:
+#
+#   docker build --target slim -t apiplant:slim .
+#
+# Everything else is identical, including the binary's name and path, so the
+# slim image is a drop-in for any app whose functions are compiled languages.
+# One that has a `.ts` in `functions/` will refuse to load it and say so.
+#
 # Debian rather than Alpine because V8 (via deno_core) ships prebuilt static
 # libraries for glibc targets only.
 
@@ -32,7 +42,16 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # The V8 build downloads its prebuilt library over HTTPS; nothing else here
 # needs a system package that the rust image does not already carry.
 COPY . .
+
+# Two binaries out of one source tree and one dependency layer. `--no-default-
+# features` turns off `typescript`, which is what pulls `apiplant-js` and with
+# it deno_core and V8. The recipe above cooked the full set of dependencies, so
+# the slim build here only has to link a subset of what is already compiled.
+FROM builder AS builder-full
 RUN cargo build --release --locked --bin apiplant
+
+FROM builder AS builder-slim
+RUN cargo build --release --locked --bin apiplant --no-default-features
 
 
 # The runtime is glibc, libgcc and this binary. Distroless rather than
@@ -48,16 +67,16 @@ RUN cargo build --release --locked --bin apiplant
 # glibc, and it brings the CA store and the NSS modules with it, so outbound
 # HTTPS and resolving a database host by name both work. Swap the tag for
 # `:debug` to get a busybox shell in there when something needs poking at.
-FROM gcr.io/distroless/cc-debian12
-
-COPY --from=builder /src/target/release/apiplant /usr/local/bin/apiplant
+FROM gcr.io/distroless/cc-debian12 AS runtime
 
 # What this image cannot do, both because there is no shell and no toolchain:
 #
 #   * `apiplant build` on `.rs`, `.c`, `.zig` or `.go` — those shell out to
 #     cargo, cc, zig and go. Build the app in a stage that has them and copy the
-#     libraries in (see `examples/21-docker`), or write functions in TypeScript,
-#     which is transpiled in-process and needs nothing.
+#     libraries in (see `examples/21-docker`), or — in the full image only —
+#     write functions in TypeScript, which is transpiled in-process and needs
+#     no toolchain at all. The slim image has no TypeScript, so there the
+#     compiled languages are the only option.
 #   * `apiplant init --from <repo>` — that runs `git clone`, and git is not
 #     here. Scaffold on the host; the image is for running an app, not
 #     for starting one.
@@ -69,3 +88,13 @@ EXPOSE 8080
 
 ENTRYPOINT ["apiplant"]
 CMD ["run", "/app"]
+
+
+# The two images differ by one COPY. `slim` is declared first so that the full
+# image stays the last stage, and therefore the one a plain `docker build`
+# produces.
+FROM runtime AS slim
+COPY --from=builder-slim /src/target/release/apiplant /usr/local/bin/apiplant
+
+FROM runtime AS full
+COPY --from=builder-full /src/target/release/apiplant /usr/local/bin/apiplant

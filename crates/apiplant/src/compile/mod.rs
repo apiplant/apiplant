@@ -75,6 +75,12 @@
 mod native;
 mod rust;
 mod source;
+// The slim build swaps in a stand-in that refuses rather than compiles, so the
+// dispatch further down stays one shape. See `typescript_absent.rs`.
+#[cfg(feature = "typescript")]
+mod typescript;
+#[cfg(not(feature = "typescript"))]
+#[path = "typescript_absent.rs"]
 mod typescript;
 
 use native::{compile_c, compile_go, compile_zig};
@@ -86,6 +92,31 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
+
+/// Stop a slim build before it starts compiling anything.
+///
+/// A per-file error would come out halfway through a build that had already
+/// produced half an app's libraries; this names every TypeScript source at once
+/// and produces nothing. The full build compiles them, so this is a no-op.
+#[cfg(feature = "typescript")]
+fn refuse_typescript(_sources: &[Source]) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(feature = "typescript"))]
+fn refuse_typescript(sources: &[Source]) -> Result<()> {
+    let names: Vec<String> = sources
+        .iter()
+        .filter(|s| s.language == Language::TypeScript)
+        .map(|s| s.path.display().to_string())
+        .collect();
+    bail!(
+        "this is a slim build of apiplant, which has no TypeScript support, and \
+         these functions are TypeScript:\n  {}\n\
+         Use a full build to compile them, or take them out of functions/.",
+        names.join("\n  ")
+    )
+}
 
 /// Where the scaffolding and cargo's target directory live, inside the app.
 const BUILD_DIR: &str = ".apiplant-build";
@@ -199,6 +230,7 @@ pub fn build(app_dir: &Path, options: Options) -> Result<Vec<String>> {
     // Editors need the `ctx` types before anything is built, so this is written
     // whether or not a function turned out to be stale.
     if sources.iter().any(|s| s.language == Language::TypeScript) {
+        refuse_typescript(&sources)?;
         write_declarations(&functions_dir)?;
     }
 
@@ -560,6 +592,7 @@ mod tests {
 
     /// TypeScript is the one language whose artifact is not a shared library, so
     /// staleness, loading and `apiplant build`'s output all key off a `.js`.
+    #[cfg(feature = "typescript")]
     #[test]
     fn a_typescript_source_builds_a_js_beside_it() {
         let dir = temp_dir("typescript");
@@ -616,6 +649,7 @@ mod tests {
 
     /// A `.ts` that cannot be transpiled fails the build with the file named,
     /// rather than producing a `.js` that fails at boot.
+    #[cfg(feature = "typescript")]
     #[test]
     fn a_broken_typescript_source_fails_the_build() {
         let dir = temp_dir("typescript-broken");
@@ -670,6 +704,7 @@ mod tests {
 
     /// Where the bundle is looked for. `module` wins because a package that
     /// distinguishes the two puts its ESM build there, and the isolate loads ESM.
+    #[cfg(feature = "typescript")]
     #[test]
     fn the_bundle_is_found_where_the_package_says() {
         use super::typescript::bundle_path;
@@ -694,6 +729,7 @@ mod tests {
 
     /// The package manager comes from the lockfile the project already has, so
     /// there is nothing to configure and nothing to get out of step.
+    #[cfg(feature = "typescript")]
     #[test]
     fn the_package_manager_is_read_from_the_lockfile() {
         use super::typescript::PackageManager;

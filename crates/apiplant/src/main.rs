@@ -8,7 +8,7 @@
 //! apiplant seed [APP_DIR]      # load seed/ into the database
 //! apiplant call NAME [APP_DIR] # run one function and print what it returned
 //! apiplant admin [APP_DIR]     # bake a static admin panel to host elsewhere
-//! apiplant cli [SERVER|DIR]   # interactive console for a running app
+//! apiplant cli [SERVER|DIR]    # interactive console for a running app
 //! apiplant studio              # serve the visual editor from this binary
 //! apiplant version             # print the version and exit
 //! ```
@@ -20,6 +20,10 @@
 //! enable TLS — an
 //! `https/` directory with a certificate and key. Every piece is optional; an
 //! empty directory is a valid (if bare) app.
+//!
+//! The command line itself is declared in `cli.usage.kdl` and parsed from it at
+//! start-up; everything printed goes through [`apiplant_server::term`], so a
+//! one-shot command and the server's own banner look like the same program.
 
 mod cli;
 mod compile;
@@ -29,64 +33,38 @@ mod watch;
 
 use apiplant_core::App;
 use apiplant_server::admin;
+use apiplant_server::term;
 
-const USAGE: &str = "\
-usage:
-  apiplant init [APP_DIR]      write a new app directory (default dir `.`)
-  apiplant run [APP_DIR]       serve the app (default dir `.`)
-  apiplant build [APP_DIR]     compile functions/* into loadable libraries
-  apiplant check [APP_DIR]     load and validate the app, then exit
-  apiplant seed [APP_DIR]      migrate, then load seed/ into the database
-  apiplant call NAME [APP_DIR] run one function and print what it returned
-  apiplant admin [APP_DIR]     bake a static admin panel to host elsewhere
-  apiplant cli [SERVER|DIR]    interactive console for a running server
-                               (a URL or host; or an app directory, default `.`)
-  apiplant studio              serve the visual editor on http://127.0.0.1:5273
-  apiplant version             print the version and exit
+// The command line, as data.
+//
+// Parsing it by hand was a hundred lines of `if flag.is_some()` deciding which
+// flags belonged to which command, and the help text was a second copy of the
+// same knowledge that had to be kept in step by hand. The spec is now the only
+// copy: `usage` reads it, scopes each flag to the command that declared it, and
+// renders `--help` from the same tree it parses with.
+//
+// It is read at *build* time. `build.rs` parses `cli.usage.kdl` and writes the
+// finished `usage::Spec` out as Rust, which this includes — reading the KDL on
+// every start cost 1.9ms to rebuild something that was already decided when the
+// binary was compiled. `generated_spec` is that emitted function.
+include!(concat!(env!("OUT_DIR"), "/spec.rs"));
 
-options:
-  --from <REPO>     (init) clone this git repository instead of the sample app
-  --branch <REF>    (init) branch, tag or commit to clone (with --from)
-  --name <NAME>     (init) the app's name in main.toml (default: the directory)
-  --build           (run) compile any out-of-date function sources first
-  --watch           (run) rebuild and restart whenever the app directory changes
-  --seed            (run) load the app's seed/ directory after migrating
-  --release         (build) compile with optimisations
-  --force           (build) accepted and ignored: `build` always rebuilds
-  --api <URL>       (admin) API domain or full base URL the panel talks to
-  --out <DIR>       (admin) where to write it (default: APP_DIR/admin)
-  --host <ADDR>     (studio) interface to bind (default 127.0.0.1)
-  --port <PORT>     (studio) port to listen on (default 5273)
-  --input <JSON>    (call) the function's input — JSON, `@file`, or `@-` for
-                    stdin (default: `{}`)
-  --as <USER_ID>    (call) the user id the function sees as its caller
-  --quiet           (call) drop what the function emits instead of relaying it
-  -h, --help        show this message
-  -V, --version     show the version
+/// The KDL the spec is generated from.
+///
+/// Only the tests read it: they parse it the slow way and check the generated
+/// spec against the result, so the emitter cannot quietly drop a field.
+#[cfg(test)]
+const SPEC: &str = include_str!("cli.usage.kdl");
 
-`call` runs one of the app's functions the way an HTTP request to
-`/functions/<NAME>` would — same database, same email/cache/payments/AI — but
-with no server and no access check, which is what makes it the thing to put in
-a Kubernetes CronJob: schedule this binary against the same image and config.
-Private functions can be called too. It does not migrate. The result goes to
-stdout and anything the function emits goes to stderr, so a job's output is
-still parseable while its progress stays visible in the logs.
-
-Every served app gets the admin dashboard at `/admin/` — it is built into this
-binary and describes whichever app is being served, so you only need `admin` to
-host a copy on another origin. Switch the built-in one off with
-`[admin] enabled = false` in main.toml.
-
-`run --watch` is the development loop: it starts the server as a child process
-and restarts it — rebuilding first — whenever anything under the app directory
-is written. A restart, rather than a reload, because a built function is a
-shared library the server has already loaded and cannot put back. Changes are
-found by polling, so it also works over a container bind mount.
-
-`build` shells out to a toolchain per language — cargo for .rs, cc for .c, zig
-for .zig, go for .go — so whichever your functions use must be on PATH.
-TypeScript is the exception: .ts is transpiled in-process, so it needs nothing.
-";
+/// The spec, with the version filled in from the crate.
+///
+/// Kept out of the spec file because it would be a second place to bump on
+/// every release, and this one cannot drift.
+fn spec() -> usage::Spec {
+    let mut spec = generated_spec();
+    spec.version = Some(env!("CARGO_PKG_VERSION").to_string());
+    spec
+}
 
 /// What the user asked for.
 #[derive(Debug)]
@@ -142,315 +120,248 @@ impl Args {
     }
 }
 
+/// The outcome of reading the command line: something to do, or something to
+/// say and then stop.
+#[derive(Debug)]
+enum Parsed {
+    /// Run this.
+    Do(Args),
+    /// Print this to stdout and exit 0 — `--help` and `--version`.
+    Say(String),
+}
+
+/// The values one parse produced, looked up by the names in the spec.
+struct Values(usage::parse::ParseOutput);
+
+impl Values {
+    /// The innermost command that was named, or `""` for a bare `apiplant`.
+    fn command(&self) -> &str {
+        match self.0.cmds.len() {
+            0 | 1 => "",
+            _ => &self.0.cmds[self.0.cmds.len() - 1].name,
+        }
+    }
+
+    /// A positional argument's value.
+    fn arg(&self, name: &str) -> Option<String> {
+        self.0
+            .args
+            .iter()
+            .find(|(arg, _)| arg.name == name)
+            .and_then(|(_, value)| value.clone().try_as_string())
+    }
+
+    /// A `--flag <value>`'s value.
+    fn opt(&self, name: &str) -> Option<String> {
+        self.flag_value(name).and_then(|v| v.try_as_string())
+    }
+
+    /// Whether a boolean `--flag` was given.
+    fn on(&self, name: &str) -> bool {
+        self.flag_value(name)
+            .and_then(|v| v.try_as_bool())
+            .unwrap_or(false)
+    }
+
+    fn flag_value(&self, name: &str) -> Option<usage::parse::ParseValue> {
+        self.0
+            .flags
+            .iter()
+            .find(|(flag, _)| flag.long.iter().any(|long| long == name))
+            .map(|(_, value)| value.clone())
+    }
+}
+
 /// Parse the command line.
 ///
 /// The command is required and comes first: `apiplant ./my-app` is an error,
 /// not a shorthand for `run`, because a typo'd directory should never quietly
 /// start a server. The directory after it is optional and defaults to `.`.
-fn parse(argv: Vec<String>) -> Result<Option<Args>, String> {
-    // A bare `apiplant` asks what it can do rather than doing something.
-    if argv.is_empty() {
-        return Ok(None);
-    }
+fn parse(argv: Vec<String>) -> Result<Parsed, String> {
+    let spec = spec();
 
-    let mut command = None;
-    let mut dir = None;
-    let mut build_first = false;
-    let mut seed = false;
-    let mut watch = false;
-    let mut release = false;
-    let mut force = false;
-    let mut quiet = false;
-    let mut input = None;
-    let mut principal = None;
-    let mut api = None;
-    let mut out = None;
-    let mut host = None;
-    let mut port = None;
-    let mut extra = None;
-    let mut from = None;
-    let mut branch = None;
-    let mut name = None;
-    let mut expecting: Option<&str> = None;
+    // `apiplant --check ./app` is how this was invoked before there were
+    // subcommands, and it is in enough scripts to be worth a line.
+    let argv: Vec<String> = argv
+        .into_iter()
+        .map(|arg| {
+            if arg == "--check" {
+                "check".to_string()
+            } else {
+                arg
+            }
+        })
+        .collect();
 
-    for arg in argv {
-        if let Some(flag) = expecting.take() {
-            match flag {
-                "--api" => {
-                    api = Some(arg);
-                    continue;
-                }
-                "--out" => {
-                    out = Some(arg);
-                    continue;
-                }
-                "--host" => {
-                    host = Some(arg);
-                    continue;
-                }
-                "--from" => {
-                    from = Some(arg);
-                    continue;
-                }
-                "--branch" => {
-                    branch = Some(arg);
-                    continue;
-                }
-                "--name" => {
-                    name = Some(arg);
-                    continue;
-                }
-                "--input" => {
-                    input = Some(arg);
-                    continue;
-                }
-                "--as" => {
-                    principal = Some(arg);
-                    continue;
-                }
-                "--port" => {
-                    port = Some(
-                        arg.parse::<u16>()
-                            .map_err(|_| format!("`--port` needs a port number, got `{arg}`"))?,
-                    );
-                    continue;
-                }
-                _ => return Err(format!("unknown pending option `{flag}`")),
-            }
-        }
-
-        match arg.as_str() {
-            "-h" | "--help" => return Ok(None),
-            // Like `--help`, this answers rather than does: nothing else on the
-            // line is validated. The bare word only counts in command position,
-            // so a directory called `version` still works as `apiplant run
-            // version`.
-            "-V" | "--version" => return Ok(Some(Args::version())),
-            "version" if command.is_none() && dir.is_none() => return Ok(Some(Args::version())),
-            "--build" => build_first = true,
-            "--watch" => watch = true,
-            "--seed" => seed = true,
-            "--release" => release = true,
-            "--force" => force = true,
-            "--quiet" => quiet = true,
-            "--input" => expecting = Some("--input"),
-            "--as" => expecting = Some("--as"),
-            "--api" => expecting = Some("--api"),
-            "--out" => expecting = Some("--out"),
-            "--host" => expecting = Some("--host"),
-            "--port" => expecting = Some("--port"),
-            "--from" => expecting = Some("--from"),
-            "--branch" => expecting = Some("--branch"),
-            "--name" => expecting = Some("--name"),
-            // Kept for compatibility with the original flag-style invocation.
-            "--check" => command = Some("check"),
-            "init" | "run" | "build" | "check" | "seed" | "call" | "admin" | "cli" | "studio"
-                if command.is_none() && dir.is_none() =>
-            {
-                command = Some(match arg.as_str() {
-                    "init" => "init",
-                    "run" => "run",
-                    "build" => "build",
-                    "seed" => "seed",
-                    "call" => "call",
-                    "admin" => "admin",
-                    "cli" => "cli",
-                    "studio" => "studio",
-                    _ => "check",
-                });
-            }
-            flag if flag.starts_with('-') => return Err(format!("unknown option `{flag}`")),
-            other if command.is_none() => {
-                return Err(format!(
-                    "`{other}` is not a command — did you mean `apiplant run {other}`?"
-                ))
-            }
-            other if dir.is_none() => dir = Some(other.to_string()),
-            // `apiplant init my-app <repo-url>` — the second positional is the
-            // template, so the common form needs no flag at all. For `call` it
-            // is the app directory, the function name having taken the first.
-            other if matches!(command, Some("init") | Some("call")) && extra.is_none() => {
-                extra = Some(other.to_string())
-            }
-            other => return Err(format!("unexpected argument `{other}`")),
+    // A first word that is not a command is a typo, and the parser's own
+    // "unexpected word" does not say what to do about it.
+    if let Some(first) = argv.first() {
+        if !first.starts_with('-') && !spec.cmd.subcommands.contains_key(first.as_str()) {
+            return Err(format!(
+                "`{first}` is not a command — did you mean `apiplant run {first}`?"
+            ));
         }
     }
 
-    if let Some(flag) = expecting {
-        return Err(format!("missing value for `{flag}`"));
-    }
+    // `usage` reads argv as the shell hands it over, program name and all.
+    let mut input = vec!["apiplant".to_string()];
+    input.extend(argv);
 
-    let Some(command) = command else {
-        return Err("a command is required".into());
+    // `Parser::explain` rather than `usage::parse`, because the latter renders
+    // every outcome — including `--help` and `--version` — into one error
+    // string, and those two are not errors: they are the whole point of the
+    // invocation, and belong on stdout with a zero exit code.
+    let output = match usage::Parser::new(&spec).explain(&input) {
+        Ok(output) => match first_message(&output.errors)? {
+            Some(message) => return Ok(message),
+            None => output,
+        },
+        Err(error) => return Err(error.to_string()),
     };
-    if !matches!(command, "init" | "call") && extra.is_some() {
-        return Err(format!("`{command}` takes at most one directory"));
-    }
-    if command != "call" && (input.is_some() || principal.is_some() || quiet) {
-        return Err("`--input`, `--as` and `--quiet` only apply to `call`".into());
+
+    let values = Values(output);
+    // A bare `apiplant` asks what it can do rather than doing something.
+    if values.command().is_empty() {
+        return Ok(Parsed::Say(help(&spec)));
     }
 
-    let command = match command {
+    let mut dir = values.arg("app_dir");
+    let command = match values.command() {
+        "version" => return Ok(Parsed::Do(Args::version())),
+
         "init" => {
-            if build_first || seed || watch || release || force || api.is_some() || out.is_some() {
-                return Err("`init` does not take run/build/admin flags".into());
-            }
-            if host.is_some() || port.is_some() {
-                return Err("`--host` and `--port` only apply to `studio`".into());
-            }
+            let (from, branch, name) =
+                (values.opt("from"), values.opt("branch"), values.opt("name"));
             // Both `apiplant init <repo>` and `apiplant init <dir> <repo>` are
             // what people type; a git URL cannot be a directory name, so
             // spotting one is unambiguous.
-            if let Some(second) = extra {
-                if !looks_like_a_repository(&second) {
-                    return Err(format!(
-                        "`{second}` is not a repository URL — `init` takes a directory \
-                         and optionally a git URL to clone"
-                    ));
+            let from = match values.arg("repo") {
+                Some(second) => {
+                    if !looks_like_a_repository(&second) {
+                        return Err(format!(
+                            "`{second}` is not a repository URL — `init` takes a directory \
+                             and optionally a git URL to clone"
+                        ));
+                    }
+                    if from.is_some() {
+                        return Err(
+                            "give the repository once: as `--from` or as an argument".into()
+                        );
+                    }
+                    Some(second)
                 }
-                if from.is_some() {
-                    return Err("give the repository once: as `--from` or as an argument".into());
+                None if from.is_none() && dir.as_deref().is_some_and(looks_like_a_repository) => {
+                    dir.take()
                 }
-                from = Some(second);
-            } else if from.is_none() && dir.as_deref().is_some_and(looks_like_a_repository) {
-                from = dir.take();
-            }
+                None => from,
+            };
             Command::Init { from, branch, name }
         }
-        "build" => {
-            if from.is_some() || branch.is_some() || name.is_some() {
-                return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
-            }
-            if build_first || seed || watch {
-                return Err("`--build`, `--watch` and `--seed` only apply to `run`".into());
-            }
-            if api.is_some() || out.is_some() {
-                return Err("`--api` and `--out` only apply to `admin`".into());
-            }
-            if host.is_some() || port.is_some() {
-                return Err("`--host` and `--port` only apply to `studio`".into());
-            }
-            // `--force` is still accepted, but an explicit `build` is always a
-            // full rebuild: someone typing it wants fresh libraries, and
-            // timestamp staleness misses edits a build script or a dependency
-            // made. The cached path is for the implicit builds (`run --build`).
-            Command::Build { release }
-        }
-        "check" | "seed" => {
-            if from.is_some() || branch.is_some() || name.is_some() {
-                return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
-            }
-            if build_first
-                || seed
-                || watch
-                || release
-                || force
-                || api.is_some()
-                || out.is_some()
-                || host.is_some()
-                || port.is_some()
-            {
-                return Err(format!(
-                    "`{command}` does not take run/build/admin/studio flags"
-                ));
-            }
-            if command == "seed" {
-                Command::Seed
-            } else {
-                Command::Check
-            }
-        }
-        "call" => {
-            if from.is_some() || branch.is_some() || name.is_some() {
-                return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
-            }
-            if build_first || seed || watch || release || force || api.is_some() || out.is_some() {
-                return Err("`call` does not take run/build/admin flags".into());
-            }
-            if host.is_some() || port.is_some() {
-                return Err("`--host` and `--port` only apply to `studio`".into());
-            }
-            // The first positional is the function; the app directory follows
-            // it, so `dir` has to be shuffled along by one.
-            let Some(function) = dir.take() else {
-                return Err("`call` needs a function name: `apiplant call <NAME>`".into());
-            };
-            dir = extra.take();
-            Command::Call {
-                name: function,
-                input,
-                principal,
-                quiet,
-            }
-        }
-        "admin" => {
-            if from.is_some() || branch.is_some() || name.is_some() {
-                return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
-            }
-            if build_first || seed || watch || release || force {
-                return Err("`admin` does not take run/build flags".into());
-            }
-            if host.is_some() || port.is_some() {
-                return Err("`--host` and `--port` only apply to `studio`".into());
-            }
-            Command::Admin {
-                api: api.ok_or_else(|| "`admin` requires `--api <URL>`".to_string())?,
-                out,
-            }
-        }
-        "cli" => {
-            if from.is_some() || branch.is_some() || name.is_some() {
-                return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
-            }
-            if build_first || seed || watch || release || force || api.is_some() || out.is_some() {
-                return Err("`cli` takes a server address or an app directory".into());
-            }
-            if host.is_some() || port.is_some() {
-                return Err("`--host` and `--port` only apply to `studio`".into());
-            }
-            // The positional argument is a server first and a directory
-            // second, so `dir` is spoken for and the app directory the other
-            // commands default to is not read at all.
-            Command::Cli {
-                target: cli::Target::parse(dir.as_deref().unwrap_or(".")),
-            }
-        }
+
+        "run" => Command::Run {
+            build_first: values.on("build"),
+            seed: values.on("seed"),
+            watch: values.on("watch"),
+        },
+
+        // `--force` is still accepted, but an explicit `build` is always a full
+        // rebuild: someone typing it wants fresh libraries, and timestamp
+        // staleness misses edits a build script or a dependency made. The
+        // cached path is for the implicit builds (`run --build`).
+        "build" => Command::Build {
+            release: values.on("release"),
+        },
+
+        "check" => Command::Check,
+        "seed" => Command::Seed,
+
+        "call" => Command::Call {
+            name: values.arg("name").ok_or_else(|| {
+                "`call` needs a function name: `apiplant call <NAME>`".to_string()
+            })?,
+            input: values.opt("input"),
+            principal: values.opt("as"),
+            quiet: values.on("quiet"),
+        },
+
+        "admin" => Command::Admin {
+            api: values
+                .opt("api")
+                .ok_or_else(|| "`admin` requires `--api <URL>`".to_string())?,
+            out: values.opt("out"),
+        },
+
+        // The positional argument is a server first and a directory second, so
+        // the app directory the other commands default to is not read at all.
+        "cli" => Command::Cli {
+            target: cli::Target::parse(values.arg("server_or_dir").as_deref().unwrap_or(".")),
+        },
+
         "studio" => {
-            if from.is_some() || branch.is_some() || name.is_some() {
-                return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
-            }
-            if build_first || seed || watch || release || force || api.is_some() || out.is_some() {
-                return Err("`studio` only takes `--host` and `--port`".into());
-            }
+            let port = match values.opt("port") {
+                Some(port) => port
+                    .parse::<u16>()
+                    .map_err(|_| format!("`--port` needs a port number, got `{port}`"))?,
+                None => studio::DEFAULT_PORT,
+            };
             Command::Studio {
-                host: host.unwrap_or_else(|| studio::DEFAULT_HOST.to_string()),
-                port: port.unwrap_or(studio::DEFAULT_PORT),
+                host: values
+                    .opt("host")
+                    .unwrap_or_else(|| studio::DEFAULT_HOST.to_string()),
+                port,
             }
         }
-        _ => {
-            if from.is_some() || branch.is_some() || name.is_some() {
-                return Err("`--from`, `--branch` and `--name` only apply to `init`".into());
-            }
-            if release
-                || force
-                || api.is_some()
-                || out.is_some()
-                || host.is_some()
-                || port.is_some()
-            {
-                return Err("`run` only takes `--build`, `--watch` and `--seed`".into());
-            }
-            Command::Run {
-                build_first,
-                seed,
-                watch,
-            }
-        }
+
+        other => return Err(format!("unknown command `{other}`")),
     };
-    Ok(Some(Args {
+
+    Ok(Parsed::Do(Args {
         command,
         dir: dir.unwrap_or_else(|| ".".to_string()),
     }))
+}
+
+/// What `--version` prints.
+///
+/// The slim build says so. Two binaries with the same name and version that
+/// disagree about whether `functions/greet.ts` works is exactly the thing a bug
+/// report has to be able to state, so it is in the first line of output rather
+/// than something you deduce from a failure.
+fn version() -> String {
+    format!("apiplant {}{BUILD}", env!("CARGO_PKG_VERSION"))
+}
+
+/// The suffix naming this build — empty for the full one.
+const BUILD: &str = if cfg!(feature = "typescript") {
+    ""
+} else {
+    " (slim)"
+};
+
+/// The first thing a finished parse has to say, if it is not the parse itself.
+///
+/// `--help` and `--version` arrive here as "errors" because that is how the
+/// parser stops early; the rest genuinely are, and the first one is the one
+/// worth showing.
+fn first_message(errors: &[usage::error::UsageErr]) -> Result<Option<Parsed>, String> {
+    match errors.first() {
+        None => Ok(None),
+        Some(usage::error::UsageErr::Help(text)) => Ok(Some(Parsed::Say(text.clone()))),
+        Some(usage::error::UsageErr::Version(_)) => Ok(Some(Parsed::Say(version()))),
+        Some(first) => Err(first.to_string()),
+    }
+}
+
+/// What a bare `apiplant` prints — the same text `--help` renders.
+fn help(spec: &usage::Spec) -> String {
+    let input = ["apiplant".to_string(), "--help".to_string()];
+    match usage::Parser::new(spec).explain(&input) {
+        Ok(output) => match output.errors.first() {
+            Some(usage::error::UsageErr::Help(text)) => text.clone(),
+            _ => spec.usage.clone(),
+        },
+        Err(_) => spec.usage.clone(),
+    }
 }
 
 /// Whether an argument is a git repository rather than a directory.
@@ -465,20 +376,24 @@ fn looks_like_a_repository(argument: &str) -> bool {
 #[ntex::main]
 async fn main() -> anyhow::Result<()> {
     let args = match parse(std::env::args().skip(1).collect()) {
-        Ok(Some(args)) => args,
-        Ok(None) => {
-            print!("{USAGE}");
+        Ok(Parsed::Do(args)) => args,
+        Ok(Parsed::Say(text)) => {
+            println!("{}", text.trim_end());
             return Ok(());
         }
         Err(message) => {
-            eprintln!("{message}\n\n{USAGE}");
+            // The spec renders the help; repeating it under every mistake
+            // buries the one line that says what was wrong.
+            term::fail(&message);
+            eprintln!("    try `apiplant --help`");
+            eprintln!();
             std::process::exit(2);
         }
     };
     // Answered before anything touches the filesystem: a broken app directory
     // is often exactly why someone is asking which version they are running.
     if matches!(args.command, Command::Version) {
-        println!("apiplant {}", env!("CARGO_PKG_VERSION"));
+        println!("{}", version());
         return Ok(());
     }
 
@@ -494,7 +409,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Studio { .. } | Command::Cli { .. } | Command::Init { .. }
     ) && !dir.is_dir()
     {
-        eprintln!(
+        term::fail(&format!(
             "{}: {}",
             if dir.exists() {
                 "not a directory"
@@ -502,7 +417,8 @@ async fn main() -> anyhow::Result<()> {
                 "no such app directory"
             },
             dir.display()
-        );
+        ));
+        eprintln!();
         std::process::exit(2);
     }
 
@@ -539,22 +455,31 @@ async fn main() -> anyhow::Result<()> {
                     force: true,
                 },
             )?;
+            term::heading("build", Some(&args.dir));
+            for library in &built {
+                term::item(library);
+            }
             match built.len() {
-                0 => println!("nothing to build"),
-                n => println!(
+                0 => term::done("nothing to build"),
+                n => term::done(&format!(
                     "built {n} function librar{}",
                     if n == 1 { "y" } else { "ies" }
-                ),
+                )),
             }
             Ok(())
         }
 
         Command::Check => {
             let app = load(dir)?;
+            term::heading("check", Some(&args.dir));
             for name in app.resources.keys() {
-                println!("resource: {name}");
+                term::item(name);
             }
-            println!("ok");
+            term::done(&match app.resources.len() {
+                0 => "the app is valid — it defines no resources".to_string(),
+                1 => "the app is valid — 1 resource".to_string(),
+                n => format!("the app is valid — {n} resources"),
+            });
             Ok(())
         }
 
@@ -583,6 +508,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Command::Admin { api, out } => {
+            term::heading("admin", Some(&args.dir));
             let stale = compile::stale(dir);
             if !stale.is_empty() {
                 tracing::warn!(
@@ -597,7 +523,10 @@ async fn main() -> anyhow::Result<()> {
                     out: out.map(Into::into),
                 },
             )?;
-            println!("built static admin panel in {}", output.display());
+            term::done(&format!(
+                "built a static admin panel in {}",
+                output.display()
+            ));
             Ok(())
         }
 
@@ -623,6 +552,7 @@ async fn main() -> anyhow::Result<()> {
 
         Command::Seed => {
             let app = load(dir)?;
+            term::heading("seed", Some(&args.dir));
             seed_app(&app).await
         }
 
@@ -688,24 +618,24 @@ async fn seed_app(app: &App) -> anyhow::Result<()> {
     }
     let report = apiplant_db::seed::seed(db.connection(), app).await?;
     if report.is_empty() {
-        println!(
+        apiplant_server::term::done(&format!(
             "nothing to seed — {} has no seed/ directory",
             app.root.display()
-        );
+        ));
         return Ok(());
     }
     for file in &report.files {
-        println!(
-            "  {:<24} {} inserted, {} already there",
-            file.resource, file.inserted, file.skipped
+        apiplant_server::term::detail(
+            &file.resource,
+            &format!("{} inserted, {} already there", file.inserted, file.skipped),
         );
     }
-    println!(
+    apiplant_server::term::done(&format!(
         "seeded {} row{} ({} already there)",
         report.inserted(),
         if report.inserted() == 1 { "" } else { "s" },
         report.skipped()
-    );
+    ));
     Ok(())
 }
 
@@ -757,9 +687,158 @@ mod tests {
     use super::*;
 
     fn args(argv: &[&str]) -> Args {
+        match parse(argv.iter().map(|s| s.to_string()).collect()).unwrap() {
+            Parsed::Do(args) => args,
+            Parsed::Say(text) => panic!("expected a command, got a message: {text}"),
+        }
+    }
+
+    fn error(argv: &[&str]) -> String {
         parse(argv.iter().map(|s| s.to_string()).collect())
-            .unwrap()
-            .expect("not a help request")
+            .expect_err("expected this line to be rejected")
+    }
+
+    /// What `parse` printed instead of doing anything — help, or the version.
+    fn message(argv: &[&str]) -> String {
+        match parse(argv.iter().map(|s| s.to_string()).collect()).unwrap() {
+            Parsed::Say(text) => text,
+            Parsed::Do(args) => panic!("expected a message, got {:?}", args.command),
+        }
+    }
+
+    #[test]
+    fn the_spec_the_parser_is_generated_from_is_valid() {
+        // Every other test in here would fail with the same panic, but this one
+        // says why: the KDL, not the code around it.
+        let spec = spec();
+        assert_eq!(spec.bin, "apiplant");
+        assert_eq!(spec.version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        // Every documented command is declared, in the order help lists them.
+        for command in [
+            "init", "run", "build", "check", "seed", "call", "admin", "cli", "studio", "version",
+        ] {
+            assert!(
+                spec.cmd.subcommands.contains_key(command),
+                "`{command}` is missing from cli.usage.kdl"
+            );
+        }
+    }
+
+    #[test]
+    fn the_generated_spec_is_the_one_the_kdl_describes() {
+        // `build.rs` emits the fields this CLI uses, which is a subset of what
+        // a usage spec can hold — so the emitter could silently drop something
+        // and everything would still compile. This is the check that it did
+        // not: parse the KDL the slow way and compare the whole tree, field for
+        // field, via the representation `usage` itself serialises to.
+        //
+        // A failure here names the field that went missing. The fix is in
+        // `build.rs`, not here.
+        let parsed: usage::Spec = SPEC
+            .parse()
+            .expect("cli.usage.kdl is not a valid usage spec");
+        let generated = generated_spec();
+
+        // Flattened to `path = value` lines first: the whole tree printed twice
+        // is thousands of characters to read for what is usually one missing
+        // field, and this way the failure names it.
+        let mut want = Vec::new();
+        flatten(
+            &serde_json::to_value(&parsed).unwrap(),
+            String::new(),
+            &mut want,
+        );
+        let mut got = Vec::new();
+        flatten(
+            &serde_json::to_value(&generated).unwrap(),
+            String::new(),
+            &mut got,
+        );
+
+        let missing: Vec<&String> = want.iter().filter(|line| !got.contains(line)).collect();
+        let extra: Vec<&String> = got.iter().filter(|line| !want.contains(line)).collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "the generated spec and the KDL have drifted apart — fix the emitter in build.rs\n\
+             the KDL has, and the generated spec does not:\n  {}\n\
+             the generated spec has, and the KDL does not:\n  {}",
+            missing
+                .iter()
+                .map(|l| l.as_str())
+                .collect::<Vec<_>>()
+                .join("\n  "),
+            extra
+                .iter()
+                .map(|l| l.as_str())
+                .collect::<Vec<_>>()
+                .join("\n  "),
+        );
+    }
+
+    #[test]
+    fn the_generated_spec_parses_command_lines_identically() {
+        // The structural comparison above is the strict one; this is the one
+        // that would catch a difference `Serialize` cannot see, and it reads as
+        // what actually matters: the same command line means the same thing.
+        let parsed: usage::Spec = SPEC.parse().unwrap();
+        let generated = spec();
+        for argv in [
+            &["apiplant", "run", "--build", "--watch", "./app"][..],
+            &[
+                "apiplant", "init", "my-app", "--from", "x", "--branch", "v2",
+            ],
+            &[
+                "apiplant", "call", "nightly", "./app", "--input", "{}", "--quiet",
+            ],
+            &["apiplant", "admin", ".", "--api", "https://api.example.com"],
+            &["apiplant", "studio", "--host", "0.0.0.0", "--port", "9000"],
+            &["apiplant", "build", "--relase"],
+            &["apiplant", "seed", "--build"],
+        ] {
+            let input: Vec<String> = argv.iter().map(|a| a.to_string()).collect();
+            let one = describe(usage::Parser::new(&parsed).explain(&input));
+            let two = describe(usage::Parser::new(&generated).explain(&input));
+            assert_eq!(one, two, "{argv:?} parses differently");
+        }
+    }
+
+    /// Every leaf of a JSON tree as one `path = value` line.
+    fn flatten(value: &serde_json::Value, path: String, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, value) in fields {
+                    flatten(value, format!("{path}.{key}"), out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, value) in items.iter().enumerate() {
+                    flatten(value, format!("{path}[{index}]"), out);
+                }
+            }
+            leaf => out.push(format!("{path} = {leaf}")),
+        }
+    }
+
+    /// A parse outcome as a comparable string: what bound, and what went wrong.
+    fn describe(outcome: Result<usage::parse::ParseOutput, usage::miette::Error>) -> String {
+        match outcome {
+            Err(error) => format!("error: {error}"),
+            Ok(output) => {
+                let cmds: Vec<&str> = output.cmds.iter().map(|c| c.name.as_str()).collect();
+                let args: Vec<String> = output
+                    .args
+                    .iter()
+                    .map(|(a, v)| format!("{}={v:?}", a.name))
+                    .collect();
+                let flags: Vec<String> = output
+                    .flags
+                    .iter()
+                    .map(|(f, v)| format!("{}={v:?}", f.name))
+                    .collect();
+                let errors: Vec<String> = output.errors.iter().map(|e| e.to_string()).collect();
+                format!("{cmds:?} {args:?} {flags:?} {errors:?}")
+            }
+        }
     }
 
     #[test]
@@ -767,11 +846,13 @@ mod tests {
         // `apiplant ./my-app` used to serve; now it says what it should have
         // been, because guessing "run" from a stray argument is how a typo
         // becomes a running server.
-        let err = parse(vec!["./my-app".to_string()]).unwrap_err();
+        let err = error(&["./my-app"]);
         assert!(err.contains("apiplant run ./my-app"), "{err}");
 
         // No arguments at all is a request for the usage message.
-        assert!(parse(Vec::new()).unwrap().is_none());
+        let help = message(&[]);
+        assert!(help.contains("Usage: apiplant"), "{help}");
+        assert!(help.contains("studio"), "{help}");
 
         // The directory itself stays optional.
         assert_eq!(args(&["run"]).dir, ".");
@@ -811,24 +892,13 @@ mod tests {
         }
 
         // A second positional that is not a URL is a mistake, not a template.
-        let error = parse(
-            ["init", "my-app", "oops"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-        )
-        .unwrap_err();
-        assert!(error.contains("not a repository URL"), "{error}");
+        let message = error(&["init", "my-app", "oops"]);
+        assert!(message.contains("not a repository URL"), "{message}");
 
-        // And init's flags belong to init alone.
-        let error = parse(
-            ["run", "--from", "x"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-        )
-        .unwrap_err();
-        assert!(error.contains("only apply to `init`"), "{error}");
+        // And init's flags belong to init alone — the spec scopes them there, so
+        // `run` has never heard of `--from`.
+        let message = error(&["run", "--from", "x"]);
+        assert!(message.contains("--from"), "{message}");
     }
 
     #[test]
@@ -886,18 +956,12 @@ mod tests {
         }
 
         // A missing name is a mistake, not a call to a function named `.`.
-        let error = parse(vec!["call".to_string()]).unwrap_err();
-        assert!(error.contains("needs a function name"), "{error}");
+        let message = error(&["call"]);
+        assert!(message.contains("<name>"), "{message}");
 
         // And call's flags belong to call alone.
-        let error = parse(
-            ["run", "--input", "{}"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-        )
-        .unwrap_err();
-        assert!(error.contains("only apply to `call`"), "{error}");
+        let message = error(&["run", "--input", "{}"]);
+        assert!(message.contains("--input"), "{message}");
     }
 
     #[test]
@@ -969,8 +1033,8 @@ mod tests {
                 ..
             }
         ));
-        let err = parse(vec!["build".into(), "--watch".into()]).unwrap_err();
-        assert!(err.contains("only apply to `run`"), "{err}");
+        let err = error(&["build", "--watch"]);
+        assert!(err.contains("--watch"), "{err}");
         assert!(parse(vec!["check".into(), "--watch".into()]).is_err());
         assert!(matches!(args(&["seed", "."]).command, Command::Seed));
         // `--seed` loads a fixture into a database a server is about to use;
@@ -1025,22 +1089,21 @@ mod tests {
         }
 
         // `--api` is gone: the address is the argument.
-        let err = parse(
-            ["cli", "--api", "https://api.example.com"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-        )
-        .unwrap_err();
-        assert!(err.contains("server address"), "{err}");
+        let err = error(&["cli", "--api", "https://api.example.com"]);
+        assert!(err.contains("--api"), "{err}");
     }
 
     #[test]
     fn version_is_a_word_and_a_flag() {
-        for argv in [&["version"][..], &["-V"], &["--version"]] {
+        assert!(matches!(args(&["version"]).command, Command::Version));
+        // As flags it never reaches a command: the parser answers on the spot,
+        // and it answers with the name as well as the number.
+        for argv in [&["-V"][..], &["--version"]] {
+            // `starts_with`, because a slim build appends "(slim)" to it.
             assert!(
-                matches!(args(argv).command, Command::Version),
-                "expected version command for {argv:?}"
+                message(argv).starts_with(&format!("apiplant {}", env!("CARGO_PKG_VERSION"))),
+                "{}",
+                message(argv)
             );
         }
         // But a directory called `version` is still a directory.
@@ -1068,14 +1131,8 @@ mod tests {
             other => panic!("expected studio command, got {other:?}"),
         }
 
-        let err = parse(
-            ["studio", "--port", "nope"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-        )
-        .unwrap_err();
-        assert!(err.contains("port number"));
+        let err = error(&["studio", "--port", "nope"]);
+        assert!(err.contains("port number"), "{err}");
     }
 
     #[test]
@@ -1086,8 +1143,14 @@ mod tests {
         ));
         assert_eq!(args(&["--check", "./app"]).dir, "./app");
 
-        let argv = vec!["--help".to_string()];
-        assert!(parse(argv).unwrap().is_none());
+        let help = message(&["--help"]);
+        assert!(help.contains("Usage: apiplant"), "{help}");
+
+        // Each command's own help carries the prose that belongs to it, from
+        // the spec rather than from a second copy kept in the source.
+        let help = message(&["call", "--help"]);
+        assert!(help.contains("Kubernetes CronJob"), "{help}");
+        assert!(help.contains("--quiet"), "{help}");
     }
 
     #[test]
@@ -1106,15 +1169,19 @@ mod tests {
 
     #[test]
     fn unknown_options_are_rejected() {
-        let err = parse(vec!["--wat".to_string()]).unwrap_err();
-        assert!(err.contains("--wat"));
+        // At the top level and, because the spec says `unknown_flags "error"`,
+        // inside a command too — where a lenient parser would quietly file
+        // `--relase` away as the app directory.
+        assert!(error(&["--wat"]).contains("--wat"));
+        let err = error(&["build", "--relase"]);
+        assert!(err.contains("--relase"), "{err}");
     }
 
     #[test]
     fn admin_requires_api_flag() {
         // The static panel is hosted away from the API, so it has to be told
         // which origin to talk to — there is no sensible default.
-        let err = parse(vec!["admin".to_string(), ".".to_string()]).unwrap_err();
-        assert!(err.contains("--api"));
+        let err = error(&["admin", "."]);
+        assert!(err.contains("--api"), "{err}");
     }
 }

@@ -42,6 +42,34 @@ enum Body {
     Builtin(BuiltinHandler),
 }
 
+/// The extension of a TypeScript function's build output.
+///
+/// Named here rather than taken from `apiplant_js`, because a build without
+/// TypeScript support still has to recognise the file in order to say what is
+/// wrong with it — see [`load_javascript`].
+const JS_EXTENSION: &str = "js";
+
+/// Hand a `.js` to the V8 isolate that runs it.
+#[cfg(feature = "typescript")]
+fn load_javascript(path: &Path) -> Result<abi_stable::std_types::RVec<BoxedFunction>, String> {
+    debug_assert_eq!(JS_EXTENSION, apiplant_js::EXTENSION);
+    Ok(apiplant_js::load(path)?.into())
+}
+
+/// The slim build's answer: there is no isolate to run it in.
+///
+/// The file is still found and still reported, one error per function, because
+/// the alternative is an app that starts cleanly and 404s on endpoints whose
+/// sources its author can see sitting in `functions/`.
+#[cfg(not(feature = "typescript"))]
+fn load_javascript(path: &Path) -> Result<abi_stable::std_types::RVec<BoxedFunction>, String> {
+    Err(format!(
+        "{} is a TypeScript function, and this build of apiplant was made without \
+         TypeScript support — use a full build, or drop the function",
+        path.display()
+    ))
+}
+
 /// One loaded function plus its resolved config.
 pub struct LoadedFunction {
     pub manifest: FunctionManifest,
@@ -180,7 +208,7 @@ impl FunctionRegistry {
             // the only place the difference shows.
             let loadable = matches!(
                 path.extension().and_then(|e| e.to_str()),
-                Some("so") | Some("dylib") | Some("dll") | Some(apiplant_js::EXTENSION)
+                Some("so") | Some("dylib") | Some("dll") | Some(JS_EXTENSION)
             );
             if !loadable {
                 continue;
@@ -217,9 +245,8 @@ impl FunctionRegistry {
         // A `.js` never speaks either native ABI: it is a module for a V8
         // isolate, and `apiplant_js` gives back the same `BoxedFunction`s, so
         // everything below this line is shared with the compiled languages.
-        let exported = if path.extension().and_then(|e| e.to_str()) == Some(apiplant_js::EXTENSION)
-        {
-            apiplant_js::load(path)?.into()
+        let exported = if path.extension().and_then(|e| e.to_str()) == Some(JS_EXTENSION) {
+            load_javascript(path)?
         } else {
             Self::load_native(path)?
         };
@@ -700,5 +727,37 @@ fn template_vars(request: &str) -> liquid::Object {
     match value.get("vars") {
         Some(vars) => liquid::model::to_object(vars).unwrap_or_default(),
         None => liquid::Object::new(),
+    }
+}
+
+#[cfg(test)]
+mod slim_tests {
+    use super::*;
+
+    /// A `.js` is still recognised as something to load, in both builds.
+    ///
+    /// This is the half of the slim behaviour that matters at boot: the file
+    /// has to be picked up in order to be complained about, and an extension
+    /// list that quietly stopped matching it would produce an app missing an
+    /// endpoint with nothing in the log.
+    #[test]
+    fn javascript_is_always_a_loadable_artifact() {
+        assert_eq!(JS_EXTENSION, "js");
+        #[cfg(feature = "typescript")]
+        assert_eq!(JS_EXTENSION, apiplant_js::EXTENSION);
+    }
+
+    /// Without TypeScript support, loading one fails by name.
+    #[cfg(not(feature = "typescript"))]
+    #[test]
+    fn a_slim_build_refuses_javascript_and_says_why() {
+        // `unwrap_err` is out: the success type is a boxed FFI trait object
+        // with no `Debug`, so the error has to be taken by hand.
+        let error = match load_javascript(Path::new("/app/functions/greet.js")) {
+            Err(error) => error,
+            Ok(_) => panic!("a slim build has no isolate to run it in"),
+        };
+        assert!(error.contains("greet.js"), "{error}");
+        assert!(error.contains("TypeScript support"), "{error}");
     }
 }

@@ -35,9 +35,16 @@ async fn asset(req: HttpRequest) -> HttpResponse {
 pub async fn serve(host: &str, port: u16) -> anyhow::Result<()> {
     let (listener, port) = apiplant_server::bind::listener(host, port)?;
     let addr = format!("{host}:{port}");
-    let server = HttpServer::new(|| WebApp::new().default_service(web::to(asset))).listen(listener)?;
+    let server =
+        HttpServer::new(|| WebApp::new().default_service(web::to(asset))).listen(listener)?;
 
-    println!("apiplant studio -> http://{addr}/");
+    // The same wordmark-and-box the server prints, because `studio` is the
+    // other command that starts something and then sits there: what the user
+    // needs on screen is the address, in the place they already look for it.
+    apiplant_server::term::wordmark();
+    apiplant_server::term::heading("studio", None);
+    apiplant_server::term::links(&addr, &[("Studio", format!("http://{addr}/"))]);
+    println!();
     server.run().await?;
     Ok(())
 }

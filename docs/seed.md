@@ -116,10 +116,13 @@ NOTHING`:
 `apiplant seed` reports both counts:
 
 ```
-  organization             2 inserted, 0 already there
-  user                     3 inserted, 0 already there
-  product                  0 inserted, 4 already there
-seeded 5 rows (4 already there)
+  seed ./my-app
+
+    organization            2 inserted, 0 already there
+    user                    3 inserted, 0 already there
+    product                 0 inserted, 4 already there
+
+  ✓ seeded 5 rows (4 already there)
 ```
 
 ## Passwords

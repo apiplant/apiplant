@@ -59,7 +59,10 @@ pub async fn supervise(dir: &Path, seed: bool) -> Result<()> {
     let interrupted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     watch_for_interrupt(std::sync::Arc::clone(&interrupted));
 
-    println!("watching {} — edit anything to restart", dir.display());
+    apiplant_server::term::note(&format!(
+        "watching {} — edit anything to restart",
+        dir.display()
+    ));
 
     let mut fingerprint = fingerprint(&dir);
     loop {
@@ -67,7 +70,10 @@ pub async fn supervise(dir: &Path, seed: bool) -> Result<()> {
         let outcome = wait_for_change(&dir, &mut fingerprint, &mut child, &interrupted).await;
         stop(child);
         match outcome {
-            Outcome::Changed => println!("\nchange detected — restarting"),
+            Outcome::Changed => {
+                println!();
+                apiplant_server::term::note("change detected — restarting");
+            }
             Outcome::Interrupted => {
                 println!();
                 return Ok(());

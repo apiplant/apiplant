@@ -8,6 +8,16 @@ repository.workspace = true
 authors.workspace = true
 description = "apiplant HTTP server: CRUD routing, function endpoints and TLS on ntex"
 
+[features]
+default = ["typescript"]
+# TypeScript functions. On, the server embeds V8 (via `apiplant-js`) and can
+# load the `.js` that `apiplant build` produces from a `.ts`. Off — the "slim"
+# build — it serves compiled functions only and V8 is not linked at all, which
+# is most of the binary. A `.js` in `functions/` is still recognised and
+# reported, rather than silently ignored: an app that is quietly missing half
+# its endpoints is worse than one that says why.
+typescript = ["dep:apiplant-js"]
+
 [dependencies]
 apiplant-core.workspace = true
 apiplant-db.workspace = true
@@ -23,7 +33,7 @@ apiplant-storage.workspace = true
 apiplant-queue.workspace = true
 apiplant-abi = { workspace = true, features = ["manifest-json"] }
 apiplant-assets.workspace = true
-apiplant-js.workspace = true
+apiplant-js = { workspace = true, optional = true }
 abi_stable.workspace = true
 libloading.workspace = true
 ntex.workspace = true

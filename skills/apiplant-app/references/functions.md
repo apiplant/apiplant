@@ -790,6 +790,11 @@ so it works in two stages:
 | `apiplant build` | parses `greet.ts`, strips the type annotations, writes `greet.js` beside it |
 | `apiplant run` | loads `greet.js` into a pool of V8 isolates and calls into it per request |
 
+> **The slim build has no TypeScript.** `apiplant --version` says `(slim)` if
+> you have it. There, `apiplant build` refuses a `.ts` by name rather than
+> compiling it, and `apiplant run` reports any `.js` in `functions/` as a
+> function it cannot load — an app is never quietly served missing an endpoint.
+
 Nothing is installed: the transpiler is built into `apiplant build`, so there is
 no node, deno, bun, `package.json` or `node_modules`. Nothing is
 type-*checked* either, which matches the behaviour of `deno run --no-check` and

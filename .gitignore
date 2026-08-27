@@ -55,3 +55,6 @@ typescript/apiplant.d.ts
 # docs/images/ are the artefact, the raw terminal streams are scratch.
 e2e/.cli-shots/
 __pycache__/
+
+### mutants testing
+mutants.out

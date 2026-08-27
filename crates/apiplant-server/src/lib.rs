@@ -388,6 +388,7 @@ mod sse;
 mod state;
 mod storage_routes;
 pub mod telemetry;
+pub mod term;
 #[cfg(test)]
 mod tests;
 

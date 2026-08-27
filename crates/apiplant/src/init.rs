@@ -35,15 +35,24 @@ pub fn init(dir: &Path, options: Options) -> anyhow::Result<()> {
             if options.branch.is_some() {
                 bail!("`--branch` only applies with `--from <REPO>`");
             }
-            scaffold(dir, &app_name(dir, options.name.as_deref()))?;
+            let name = app_name(dir, options.name.as_deref());
+            apiplant_server::term::heading("init", Some(&name));
+            scaffold(dir, &name)?;
         }
     }
 
     let shown = dir.display();
-    println!("\nCreated an apiplant app in {shown}\n");
-    println!("Next:");
-    println!("  apiplant seed {shown}     # create the tables and the first rows");
-    println!("  apiplant run  {shown}     # serve it, with the dashboard at /admin/");
+    apiplant_server::term::done(&format!("created an apiplant app in {shown}"));
+    apiplant_server::term::next(&[
+        (
+            format!("apiplant seed {shown}"),
+            "create the tables and the first rows",
+        ),
+        (
+            format!("apiplant run  {shown}"),
+            "serve it, with the dashboard at /admin/",
+        ),
+    ]);
     Ok(())
 }
 
@@ -87,7 +96,7 @@ fn ensure_empty(dir: &Path) -> anyhow::Result<()> {
 
 /// `--from <REPO>`: shallow-clone a template and make it the user's own.
 fn clone(dir: &Path, repo: &str, branch: Option<&str>) -> anyhow::Result<()> {
-    println!("cloning {repo}");
+    apiplant_server::term::heading("init", Some(repo));
 
     let mut command = std::process::Command::new("git");
     command.arg("clone").arg("--depth").arg("1");
@@ -119,10 +128,10 @@ fn clone(dir: &Path, repo: &str, branch: Option<&str>) -> anyhow::Result<()> {
     if !dir.join("main.toml").exists() && !dir.join("resources").is_dir() {
         // Not fatal: a template may be bare on purpose, and the clone already
         // succeeded. Saying so beats the user finding out from `run`.
-        println!(
-            "note: {} has no main.toml and no resources/ — it may not be an app directory",
+        apiplant_server::term::note(&format!(
+            "{} has no main.toml and no resources/ — it may not be an app directory",
             dir.display()
-        );
+        ));
     }
     Ok(())
 }
@@ -165,7 +174,7 @@ fn write(dir: &Path, relative: &str, contents: &str) -> anyhow::Result<()> {
             .with_context(|| format!("creating {}", parent.display()))?;
     }
     std::fs::write(&path, contents).with_context(|| format!("writing {}", path.display()))?;
-    println!("  {relative}");
+    apiplant_server::term::item(relative);
     Ok(())
 }
 

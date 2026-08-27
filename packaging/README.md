@@ -1,6 +1,7 @@
 # Packaging
 
-Four package definitions live here. The `packages`, `homebrew`, `apt` and
+Seven package definitions live here — each of the four formats, plus an
+`apiplant-slim` variant of the three that name a package. The `packages`, `homebrew`, `apt` and
 `pacman` jobs in
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) substitute
 the `@VERSION@`, `@SHA_*@` and `@ARCH@` placeholders with the tag's version and
@@ -12,12 +13,35 @@ and the release byte-identical.
 | File | Publishes to | Installs |
 | --- | --- | --- |
 | `homebrew/apiplant.rb` | `apiplant/homebrew-tap`, as `Formula/apiplant.rb` | macOS arm64, Linux x86_64 and aarch64 |
+| `homebrew/apiplant-slim.rb` | the same tap, as `Formula/apiplant-slim.rb` | the same platforms, slim |
 | `pacman/PKGBUILD` | the release itself, as a `.pkg.tar.zst` asset, and `apiplant/pacman` | Arch Linux x86_64 |
+| `pacman/PKGBUILD-slim` | the same two places, as `apiplant-slim` | Arch Linux x86_64, slim |
 | `debian/control` | the release itself, as `.deb` assets | Debian/Ubuntu amd64 and arm64 |
-| `apt/apt-ftparchive.conf` | `apiplant/apt`, served at `apt.apiplant.com` | the same `.deb`s, over `apt install` |
+| `debian/control-slim` | the same, as `apiplant-slim` `.deb`s | Debian/Ubuntu amd64 and arm64, slim |
+| `apt/apt-ftparchive.conf` | `apiplant/apt`, served at `apt.apiplant.com` | all four `.deb`s, over `apt install` |
+
+## The slim packages
+
+`apiplant-slim` is the same release compiled without TypeScript support, and so
+without V8 — two thirds of the binary. It installs the same
+`/usr/bin/apiplant`, which is the whole reason the pairs need to know about
+each other:
+
+| Format | Full declares | Slim declares |
+| --- | --- | --- |
+| Debian | `Conflicts`/`Replaces: apiplant-slim` | `Provides`/`Conflicts`/`Replaces: apiplant` |
+| Arch | `conflicts=('apiplant-slim')` | `provides=('apiplant')`, `conflicts=('apiplant')` |
+| Homebrew | `conflicts_with "apiplant-slim"` | `conflicts_with "apiplant"` |
+
+`Provides: apiplant` on the slim side is what keeps anything depending on
+`apiplant` satisfied by it; the `Conflicts`/`Replaces` pair is what makes the
+package manager swap one for the other instead of refusing over the shared
+path. The `Check` step in the `packages` job asserts all of this on the built
+packages, and installs one over the other on the runner to prove the swap
+works rather than trusting the metadata.
 
 The order is: build every package, publish the release, then publish to every
-repository. The `packages` job builds both `.deb`s and the pacman package —
+repository. The `packages` job builds all four `.deb`s and both pacman packages —
 they carry the binary rather than pointing at it, so none of them needs the
 release to exist yet — and `release` attaches all of them alongside the
 archives. It needs no credential and always runs. Only then do `homebrew`,
@@ -27,30 +51,9 @@ the release itself does not have. Each publish job is guarded on its credential
 being present, so a fork — or this repository before the setup below is done —
 skips it rather than failing the release.
 
-The pacman package is x86_64 only. The aarch64 build is deliberately off: it
+The pacman packages are x86_64 only. The aarch64 build is deliberately off: it
 would need an arm runner or emulation, and the Arch repository has no aarch64
 audience. The `.deb`s and the plain archives still cover Linux arm64.
-
-For one-off builds outside CI, run [`local-release.sh`](local-release.sh). It
-compiles apiplant for the host platform, writes release-shaped artifacts into
-`dist/local-release/`, uploads any missing assets to the tagged GitHub release,
-and, when the matching credentials are present, syncs the package repository
-that serves that platform:
-
-```bash
-./packaging/local-release.sh
-```
-
-On macOS it builds the release archive for the host CPU and, if the tag exists
-and `HOMEBREW_TAP_TOKEN` is set, uploads the archive and rewrites the tap
-formula from the release's available assets — which is how an extra platform
-such as macOS Intel can be added without waiting for CI support.
-
-On Linux x86_64 and aarch64 it also builds the `.deb` and, on x86_64, the
-pacman package for the host architecture, uploads the `.deb` to the GitHub release, and, if the
-version is not already present, updates `apt.apiplant.com` and
-`apiplant.github.io/pacman` using `APT_REPO_TOKEN` / `APT_GPG_PRIVATE_KEY` and
-`PACMAN_REPO_TOKEN` / `PACMAN_GPG_PRIVATE_KEY`.
 
 ## One-time setup
 
@@ -65,9 +68,9 @@ this repository only.
 **AUR.** Publishing is disabled. The AUR is rejecting package updates while
 under attack, so the workflow pushes neither `PKGBUILD` nor `.SRCINFO` there.
 `pacman/PKGBUILD` is written for the pacman repository rather than the AUR: the
-package is named `apiplant` (not `apiplant-bin`) and carries no
-`provides`/`conflicts` pair. Re-enabling AUR publishing means adding a second,
-AUR-shaped manifest — not pushing this one.
+package is named `apiplant` (not `apiplant-bin`), and its only `conflicts` is
+the one pairing it with `apiplant-slim`. Re-enabling AUR publishing means
+adding a second, AUR-shaped manifest — not pushing this one.
 
 **pacman repo.** Create a public repository `apiplant/pacman` and serve it as
 static files — GitHub Pages is enough. The workflow pushes to it when the
@@ -222,9 +225,10 @@ package at all.
 
 ### The pool grows
 
-Every release adds two ~22MB packages to a pool nothing prunes, and GitHub
-Pages stops publishing a site over 1GB — roughly twenty releases of headroom.
-The job warns from 700MB. When it does, either drop old versions from
+Every release adds four packages to a pool nothing prunes — two ~22MB full and
+two ~8MB slim, so about 60MB a release — and GitHub Pages stops publishing a
+site over 1GB, which is roughly sixteen releases of headroom. The job warns
+from 700MB. When it does, either drop old versions from
 `apiplant/apt` (keeping the newest few, then letting the next release
 regenerate the indices over what is left) or move the pool to object storage
 and leave only `dists/` on Pages.

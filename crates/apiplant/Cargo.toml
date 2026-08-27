@@ -12,13 +12,23 @@ description = "The apiplant server executable: point it at an app directory and 
 name = "apiplant"
 path = "src/main.rs"
 
+[features]
+default = ["typescript"]
+# See `apiplant-server`'s feature of the same name. Here it additionally pulls
+# in the TypeScript front end, which is what `apiplant build` uses to turn a
+# `.ts` into the `.js` the server runs.
+#
+#   cargo build --release --bin apiplant                        # everything
+#   cargo build --release --bin apiplant --no-default-features  # slim: no V8
+typescript = ["dep:apiplant-js", "apiplant-server/typescript"]
+
 [dependencies]
 apiplant-abi.workspace = true
 apiplant-assets.workspace = true
 apiplant-core.workspace = true
 apiplant-db.workspace = true
 apiplant-server.workspace = true
-apiplant-js = { workspace = true, features = ["transpile"] }
+apiplant-js = { workspace = true, features = ["transpile"], optional = true }
 ntex.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -27,8 +37,13 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
+usage-lib.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
+
+[build-dependencies]
+# The spec is read here, at build time, and emitted as Rust — see build.rs.
+usage-lib.workspace = true
 
 [dev-dependencies]
 toml.workspace = true

@@ -3,7 +3,12 @@
 # Built by the release workflow, which fills in the version and checksum and
 # publishes the resulting package to apiplant.github.io/pacman. It is not an
 # AUR manifest: AUR publishing is paused, so the package is named `apiplant`
-# rather than `apiplant-bin` and carries no `provides`/`conflicts` pair.
+# rather than `apiplant-bin`.
+#
+# `PKGBUILD-slim` beside this one builds `apiplant-slim` from the same release:
+# the same program without TypeScript support, installing the same
+# /usr/bin/apiplant. The `conflicts` below is what makes pacman swap them
+# rather than refuse over the shared file.
 pkgname=apiplant
 pkgver=@VERSION@
 pkgrel=1
@@ -11,6 +16,7 @@ pkgdesc="Point it at an app directory and it serves an API"
 arch=('x86_64')
 url="https://github.com/apiplant/apiplant"
 license=('MIT' 'Apache-2.0')
+conflicts=('apiplant-slim')
 # The release archive holding the binary and the README. The workflow builds
 # the package before the release exists and drops the archive next to this
 # file, which makepkg picks up instead of downloading; the URL is what makes

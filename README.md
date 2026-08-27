@@ -33,6 +33,9 @@ brew tap apiplant/tap
 brew install apiplant/tap/apiplant
 ```
 
+For the [slim build](#the-slim-build), `brew install apiplant/tap/apiplant-slim`
+— the two formulae conflict, since both install `bin/apiplant`.
+
 On Arch Linux (x86_64), from the pacman repository:
 
 ```bash
@@ -47,6 +50,9 @@ printf '\n[apiplant]\nSigLevel = Required DatabaseOptional\nServer = https://api
 sudo pacman -Sy apiplant
 ```
 
+For the [slim build](#the-slim-build), `sudo pacman -Sy apiplant-slim`. It
+provides and conflicts with `apiplant`, so pacman swaps one for the other.
+
 On Debian or Ubuntu, from the apt repository — `amd64` and `arm64`, and it
 depends on nothing:
 
@@ -58,6 +64,10 @@ echo "deb [signed-by=/usr/share/keyrings/apiplant.gpg] https://apt.apiplant.com 
 
 sudo apt update && sudo apt install apiplant
 ```
+
+For the [slim build](#the-slim-build), `sudo apt install apiplant-slim`. It
+`Provides: apiplant` and conflicts with it, so apt replaces one with the other
+and anything depending on `apiplant` stays satisfied.
 
 `apt upgrade` picks up releases from then on. The suite is `stable` on every
 Debian and Ubuntu — one package serves both, so the line survives a
@@ -87,8 +97,36 @@ curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplan
 sudo mv apiplant /usr/local/bin/
 ```
 
-Or run the container image, which is published to the GitHub registry for
-`linux/amd64` and `linux/arm64`:
+### The slim build
+
+Every release also ships a **slim** build: the same thing without TypeScript
+support, and so without V8 — which is two thirds of the binary. 97MB becomes
+33MB. The command is still `apiplant`, the archives are `apiplant-slim-…`, and
+the image tags carry a `-slim` suffix:
+
+```bash
+curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-slim-v0.9.1-x86_64-unknown-linux-gnu.tar.gz \
+  | tar xz --strip-components=1
+
+docker pull ghcr.io/apiplant/apiplant:0.9.1-slim   # or :0.9-slim, or :latest-slim
+```
+
+An app whose functions are Rust, C, Zig or Go behaves identically — same
+routes, same dashboard, same everything. An app with a `.ts` in `functions/`
+does not: `apiplant build` refuses to compile it, and `apiplant run` reports the
+`.js` it cannot load rather than starting up quietly missing an endpoint.
+`apiplant --version` prints `(slim)` so there is never any doubt which one is
+installed.
+
+Every package has a slim counterpart: `apiplant-slim` on apt, pacman and
+Homebrew, and `.deb`s in the release. Each declares a conflict with its full
+twin, since both install the same `/usr/bin/apiplant`, so installing either
+replaces the other rather than failing over the shared path.
+
+### The container image
+
+The image is published to the GitHub registry for `linux/amd64` and
+`linux/arm64`:
 
 The image tags carry no `v` prefix — `0.9.1`, `0.9`, or `latest`:
 
@@ -103,13 +141,24 @@ There is no shell and no package manager in it, so compiling `functions/*`
 happens elsewhere: run `apiplant build` before mounting the directory, or build
 in a stage that has the toolchain and copy the libraries in (see
 [`examples/21-docker`](examples/21-docker)). TypeScript functions need nothing,
-they are transpiled and run in-process. `apiplant init --from <repo>` is the
-other thing the image cannot do — it clones with `git`, which is not in there.
+they are transpiled and run in-process — in the full image; the slim one has no
+TypeScript at all. `apiplant init --from <repo>` is the other thing the image
+cannot do — it clones with `git`, which is not in there.
 
 Or build it yourself, which is the same thing the release does:
 
 ```bash
-cargo build --release --bin apiplant
+cargo build --release --bin apiplant                        # the full build
+cargo build --release --bin apiplant --no-default-features  # slim: no TypeScript, no V8
+```
+
+The `typescript` feature is what draws in `apiplant-js`, and with it deno_core
+and V8. Turning it off is the whole difference between the two. The same two
+targets exist in the Dockerfile:
+
+```bash
+docker build -t apiplant .
+docker build --target slim -t apiplant:slim .
 ```
 
 ## Documentation
@@ -942,7 +991,13 @@ a domain — or, failing that, an app directory whose `main.toml` names one;
 
 The command is always spelled out — `apiplant ./my-app` is an error that tells
 you to write `apiplant run ./my-app` — and an app directory that doesn't exist
-is refused rather than served as an empty app.
+is refused rather than served as an empty app. A flag belongs to the command
+that declares it, so `apiplant build --watch` is a mistake rather than a
+directory called `--watch`; `apiplant --help` and `apiplant <command> --help`
+are generated from the same spec the parser is built from
+([`cli.usage.kdl`](crates/apiplant/src/cli.usage.kdl)), so they cannot drift
+from what it accepts. The spec is read at build time and compiled in, so no
+part of that costs anything at startup.
 
 ### The development loop
 

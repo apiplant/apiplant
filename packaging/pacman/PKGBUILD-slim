@@ -1,0 +1,33 @@
+# Maintainer: Federico Rampazzo <federico@apiplant.com>
+#
+# The slim build: apiplant without TypeScript support, and so without V8 — two
+# thirds of the binary. Built by the release workflow, which fills in the
+# version and checksum and publishes the result to apiplant.github.io/pacman.
+#
+# `provides`/`conflicts` rather than an alternatives mechanism, because both
+# packages install the same /usr/bin/apiplant: anything depending on `apiplant`
+# is satisfied by this, and pacman replaces one with the other.
+pkgname=apiplant-slim
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="apiplant without TypeScript support (no V8)"
+arch=('x86_64')
+url="https://github.com/apiplant/apiplant"
+license=('MIT' 'Apache-2.0')
+provides=('apiplant')
+conflicts=('apiplant')
+# The release archive holding the binary and the README. The workflow builds
+# the package before the release exists and drops the archive next to this
+# file, which makepkg picks up instead of downloading; the URL is what makes
+# the PKGBUILD work on its own once the release is published.
+source=("$pkgname-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/apiplant-slim-v$pkgver-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums=('@SHA_LINUX_X86_64@')
+# The release profile already strips symbols, and makepkg's strip pass on an
+# LTO'd binary buys nothing.
+options=('!strip' '!debug')
+
+package() {
+  local src="$srcdir/apiplant-slim-v$pkgver-x86_64-unknown-linux-gnu"
+  install -Dm755 "$src/apiplant" "$pkgdir/usr/bin/apiplant"
+  install -Dm644 "$src/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

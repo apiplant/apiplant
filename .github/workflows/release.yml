@@ -7,6 +7,13 @@ name: release
 # That builds the `apiplant` binary for every supported platform, publishes a
 # multi-arch image to ghcr.io/apiplant/apiplant, and attaches the archives and
 # their checksums to the GitHub release.
+#
+# Two variants of everything are produced. The full build is the default; the
+# slim one is compiled with `--no-default-features`, which drops TypeScript
+# support and with it V8 — most of the binary. Slim archives are named
+# `apiplant-slim-<tag>-<target>.tar.gz` and slim images are tagged with a
+# `-slim` suffix. The binary inside is still called `apiplant`, so the two are
+# interchangeable for any app whose functions are compiled languages.
 on:
   push:
     tags:
@@ -56,6 +63,15 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      # Slim first, and moved aside: both builds write
+      # `target/<triple>/release/apiplant`, and the steps below — signing in
+      # particular — expect the full binary to be the one sitting there.
+      - name: Build (slim)
+        run: |
+          cargo build --release --locked --bin apiplant --target ${{ matrix.target }} \
+            --no-default-features
+          mv "target/${{ matrix.target }}/release/apiplant" apiplant-slim
+
       - name: Build
         run: cargo build --release --locked --bin apiplant --target ${{ matrix.target }}
 
@@ -94,27 +110,35 @@ jobs:
       #     TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       #     PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
       #   run: |
-      #     binary="target/${{ matrix.target }}/release/apiplant"
-      #     codesign --force --sign "$IDENTITY" --options runtime --timestamp "$binary"
-      #     codesign --verify --strict --verbose=2 "$binary"
+      #     # Both variants are shipped, so both are signed and submitted.
+      #     for binary in "target/${{ matrix.target }}/release/apiplant" apiplant-slim; do
+      #       codesign --force --sign "$IDENTITY" --options runtime --timestamp "$binary"
+      #       codesign --verify --strict --verbose=2 "$binary"
       #
-      #     ditto -c -k "$binary" notarize.zip
-      #     xcrun notarytool submit notarize.zip \
-      #       --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$PASSWORD" \
-      #       --wait --timeout 30m
-      #     rm notarize.zip
+      #       ditto -c -k "$binary" notarize.zip
+      #       xcrun notarytool submit notarize.zip \
+      #         --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$PASSWORD" \
+      #         --wait --timeout 30m
+      #       rm notarize.zip
+      #     done
 
-      # One archive per target, named after it, holding the binary and the
-      # README — enough to unpack anywhere and run.
+      # One archive per target per variant, named after both, holding the binary
+      # and the README — enough to unpack anywhere and run. The binary inside is
+      # `apiplant` in both, so unpacking either gives the same command.
       - name: Package
         shell: bash
         run: |
-          name="apiplant-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir "$name"
-          cp "target/${{ matrix.target }}/release/apiplant" "$name/"
-          cp README.md "$name/"
-          tar czf "$name.tar.gz" "$name"
-          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          package() { # <archive prefix> <built binary>
+            local name="$1-${GITHUB_REF_NAME}-${{ matrix.target }}" binary="$2"
+            mkdir "$name"
+            cp "$binary" "$name/apiplant"
+            cp README.md "$name/"
+            tar czf "$name.tar.gz" "$name"
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          }
+
+          package apiplant "target/${{ matrix.target }}/release/apiplant"
+          package apiplant-slim apiplant-slim
 
       - uses: actions/upload-artifact@v4
         with:
@@ -127,19 +151,30 @@ jobs:
   # Each architecture is built on a runner of that architecture: emulating the
   # other one under QEMU turns a long V8 link into an unusable one.
   image:
-    name: image (${{ matrix.platform }})
+    name: image (${{ matrix.variant }}, ${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
+      # Four builds: two architectures times the full and slim Dockerfile
+      # targets. The cache scope keys on both, since the two variants link
+      # different things and would otherwise evict each other.
       matrix:
         include:
           - platform: linux/amd64
             os: ubuntu-22.04
+            variant: full
           - platform: linux/arm64
             os: ubuntu-22.04-arm
+            variant: full
+          - platform: linux/amd64
+            os: ubuntu-22.04
+            variant: slim
+          - platform: linux/arm64
+            os: ubuntu-22.04-arm
+            variant: slim
     steps:
       - uses: actions/checkout@v4
 
@@ -158,9 +193,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: ${{ matrix.variant }}
           platforms: ${{ matrix.platform }}
-          cache-from: type=gha,scope=${{ matrix.platform }}
-          cache-to: type=gha,scope=${{ matrix.platform }},mode=max
+          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.variant }}-${{ matrix.platform }},mode=max
           outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -170,24 +206,40 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
 
+      # Named by variant so the manifest job can gather each variant's digests
+      # on their own: one manifest list per variant, not one holding all four.
       - uses: actions/upload-artifact@v4
         with:
-          name: digest-${{ strategy.job-index }}
+          name: digest-${{ matrix.variant }}-${{ strategy.job-index }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
   manifest:
-    name: image manifest
+    name: image manifest (${{ matrix.variant }})
     needs: image
     runs-on: ubuntu-latest
     permissions:
       packages: write
+    # One manifest list per variant. The full one takes the plain tags; the slim
+    # one takes the same tags with `-slim` appended, so `:latest` and
+    # `:latest-slim` sit beside each other and `:0.9-slim` tracks `:0.9`.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            suffix: ""
+          - variant: slim
+            suffix: "-slim"
     steps:
+      # Only this variant's digests: merged across architectures, not across
+      # variants, or the list would claim a slim image as one of the full one's
+      # architectures.
       - uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digest-*
+          pattern: digest-${{ matrix.variant }}-*
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3
@@ -208,6 +260,10 @@ jobs:
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
             type=sha,enable=${{ !startsWith(github.ref, 'refs/tags/v') }}
+          # `latest` is a tag like any other here, so it takes the suffix too:
+          # the slim list must not be allowed to claim the bare `:latest`.
+          flavor: |
+            suffix=${{ matrix.suffix }},onlatest=true
 
       # `imagetools create` fails outright with no `-t`, so a tag list that came
       # back empty is a workflow bug rather than something to push past.
@@ -226,7 +282,7 @@ jobs:
           docker buildx imagetools create "${args[@]}" \
             $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
 
-  # Repackaging, not building: both .debs and the pacman package are assembled
+  # Repackaging, not building: the four .debs and both pacman packages are assembled
   # on one runner from the archives the `binaries` job produced, because
   # putting an already-built binary into an ar or zst archive is
   # architecture-independent work.
@@ -243,19 +299,24 @@ jobs:
           pattern: binary-*
           merge-multiple: true
 
+      # Four .debs: two architectures times the full and slim builds. The two
+      # packages install the same /usr/bin/apiplant and declare
+      # Conflicts/Replaces against each other, so apt swaps one for the other
+      # rather than refusing over the shared path.
       - name: Build the Debian packages
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p debs
 
-          build() { # <debian arch> <rust target>
-            local arch="$1" triple="$2" root="stage/$arch"
+          build() { # <debian arch> <rust target> <package> <archive prefix> <control>
+            local arch="$1" triple="$2" package="$3" prefix="$4" control="$5"
+            local root="stage/$package-$arch"
 
-            tar xzf "dist/apiplant-${GITHUB_REF_NAME}-$triple.tar.gz"
-            local src="apiplant-${GITHUB_REF_NAME}-$triple"
+            tar xzf "dist/$prefix-${GITHUB_REF_NAME}-$triple.tar.gz"
+            local src="$prefix-${GITHUB_REF_NAME}-$triple"
 
             install -Dm755 "$src/apiplant" "$root/usr/bin/apiplant"
-            install -Dm644 "$src/README.md" "$root/usr/share/doc/apiplant/README.md"
+            install -Dm644 "$src/README.md" "$root/usr/share/doc/$package/README.md"
 
             # dpkg reports installed size in KiB, and dpkg-deb does not work it
             # out on its own — a missing or wrong value is what makes `apt`
@@ -267,7 +328,7 @@ jobs:
             sed -e "s/@VERSION@/$version/" \
                 -e "s/@ARCH@/$arch/" \
                 -e "s/@INSTALLED_SIZE@/$size/" \
-                packaging/debian/control > "$root/DEBIAN/control"
+                "packaging/debian/$control" > "$root/DEBIAN/control"
 
             if grep -qE '@[A-Z_]+@' "$root/DEBIAN/control"; then
               echo "::error::unsubstituted placeholder in the control file" >&2
@@ -276,11 +337,13 @@ jobs:
 
             # Everything ships as root:root regardless of who the runner is.
             dpkg-deb --root-owner-group --build "$root" \
-              "debs/apiplant_${version}-1_${arch}.deb"
+              "debs/${package}_${version}-1_${arch}.deb"
           }
 
-          build amd64 x86_64-unknown-linux-gnu
-          build arm64 aarch64-unknown-linux-gnu
+          build amd64 x86_64-unknown-linux-gnu  apiplant      apiplant      control
+          build arm64 aarch64-unknown-linux-gnu apiplant      apiplant      control
+          build amd64 x86_64-unknown-linux-gnu  apiplant-slim apiplant-slim control-slim
+          build arm64 aarch64-unknown-linux-gnu apiplant-slim apiplant-slim control-slim
 
           cd debs
           for deb in *.deb; do shasum -a 256 "$deb" > "$deb.sha256"; done
@@ -289,28 +352,42 @@ jobs:
       # aarch64 package would need either an arm runner or emulation for no
       # audience. The Arch tooling comes from a container rather than the
       # runner, so this stays a step in the same job as the .debs.
-      - name: Build the pacman package
+      - name: Build the pacman packages
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p pkg
-          sha=$(sha256sum "dist/apiplant-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)
 
-          sed \
-            -e "s/@VERSION@/$version/g" \
-            -e "s/@SHA_LINUX_X86_64@/$sha/" \
-            packaging/pacman/PKGBUILD > pkg/PKGBUILD
+          # Each package builds in its own directory: makepkg works in the
+          # directory holding the PKGBUILD, and --cleanbuild would clear the
+          # other one's sources out from under it.
+          stage() { # <package> <archive prefix> <PKGBUILD>
+            local package="$1" prefix="$2" recipe="$3"
+            # Separate statements: `local` expands all of its arguments before
+            # assigning any of them, so a `dir=...$package` on the line above
+            # would silently be `pkg/` and both recipes would land together.
+            local dir="pkg/$package"
+            local archive="dist/$prefix-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
 
-          if grep -qE '@[A-Z_]+@' pkg/PKGBUILD; then
-            echo "::error::unsubstituted placeholder in the PKGBUILD" >&2
-            grep -nE '@[A-Z_]+@' pkg/PKGBUILD >&2
-            exit 1
-          fi
+            mkdir -p "$dir"
+            sed \
+              -e "s/@VERSION@/$version/g" \
+              -e "s/@SHA_LINUX_X86_64@/$(sha256sum "$archive" | cut -d' ' -f1)/" \
+              "packaging/pacman/$recipe" > "$dir/PKGBUILD"
 
-          # The release does not exist yet, so the archive is placed under the
-          # name the source line gives it: makepkg checksums what is already
-          # there instead of fetching the URL.
-          cp "dist/apiplant-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" \
-             "pkg/apiplant-$version-x86_64.tar.gz"
+            if grep -qE '@[A-Z_]+@' "$dir/PKGBUILD"; then
+              echo "::error::unsubstituted placeholder in $recipe" >&2
+              grep -nE '@[A-Z_]+@' "$dir/PKGBUILD" >&2
+              exit 1
+            fi
+
+            # The release does not exist yet, so the archive is placed under the
+            # name the source line gives it: makepkg checksums what is already
+            # there instead of fetching the URL.
+            cp "$archive" "$dir/$package-$version-x86_64.tar.gz"
+          }
+
+          stage apiplant      apiplant      PKGBUILD
+          stage apiplant-slim apiplant-slim PKGBUILD-slim
 
           # makepkg refuses to run as root, so the build runs as an unprivileged
           # user inside the container — and the tree is handed back to the
@@ -320,39 +397,70 @@ jobs:
               set -eu
               useradd -m builder
               chown -R builder /pkg
-              su builder -c "cd /pkg && makepkg --cleanbuild --force --nodeps"
+              for dir in /pkg/*/; do
+                su builder -c "cd \"$dir\" && makepkg --cleanbuild --force --nodeps"
+              done
               chown -R "$OWNER" /pkg
             '
 
-          [ -f "pkg/apiplant-$version-1-x86_64.pkg.tar.zst" ]
+          # Flattened, because everything downstream — the release assets and
+          # the pacman repository — wants one directory of packages.
+          for package in apiplant apiplant-slim; do
+            built="pkg/$package/$package-$version-1-x86_64.pkg.tar.zst"
+            [ -f "$built" ]
+            mv "$built" pkg/
+          done
+
           cd pkg
-          shasum -a 256 "apiplant-$version-1-x86_64.pkg.tar.zst" \
-            > "apiplant-$version-1-x86_64.pkg.tar.zst.sha256"
+          for p in *.pkg.tar.zst; do shasum -a 256 "$p" > "$p.sha256"; done
 
       # A package that installs but declares the wrong architecture, or that
       # quietly lost the binary, is worth catching before it is a release asset.
       - name: Check
         run: |
           version="${GITHUB_REF_NAME#v}"
-          dpkg-deb --info "debs/apiplant_${version}-1_amd64.deb"
-          dpkg-deb --contents "debs/apiplant_${version}-1_amd64.deb" | grep -q './usr/bin/apiplant'
-          [ "$(dpkg-deb --field "debs/apiplant_${version}-1_arm64.deb" Architecture)" = arm64 ]
 
-          # The runner is amd64, so only that one can actually be installed and
+          for package in apiplant apiplant-slim; do
+            dpkg-deb --info "debs/${package}_${version}-1_amd64.deb"
+            dpkg-deb --contents "debs/${package}_${version}-1_amd64.deb" \
+              | grep -q './usr/bin/apiplant'
+            [ "$(dpkg-deb --field "debs/${package}_${version}-1_arm64.deb" Architecture)" = arm64 ]
+          done
+
+          # The slim package stands in for the full one, and says so — a
+          # missing Provides is what would make `apt install apiplant-slim`
+          # break something that depends on `apiplant`.
+          slim="debs/apiplant-slim_${version}-1_amd64.deb"
+          [ "$(dpkg-deb --field "$slim" Provides)" = apiplant ]
+          [ "$(dpkg-deb --field "$slim" Conflicts)" = apiplant ]
+          [ "$(dpkg-deb --field "debs/apiplant_${version}-1_amd64.deb" Conflicts)" = apiplant-slim ]
+
+          # The runner is amd64, so only those can actually be installed and
           # run — which is the check that matters: `version` proves the binary
-          # survived the round trip.
+          # survived the round trip, and tells the two builds apart.
           sudo dpkg -i "debs/apiplant_${version}-1_amd64.deb"
           [ "$(apiplant version)" = "apiplant $version" ]
-          sudo dpkg -r apiplant
 
-          # The pacman package cannot be installed on the runner, but its
-          # metadata and contents can be read back out of the archive.
+          # Installing one over the other has to work, not stop at the shared
+          # /usr/bin/apiplant. dpkg needs both named at once to honour
+          # Conflicts/Replaces; apt does this for you.
+          sudo dpkg -i --auto-deconfigure "$slim"
+          [ "$(apiplant version)" = "apiplant $version (slim)" ]
+          sudo dpkg -r apiplant-slim
+
+          # The pacman packages cannot be installed on the runner, but their
+          # metadata and contents can be read back out of the archives.
           docker run --rm -v "$PWD/pkg:/pkg" archlinux:base-devel bash -c "
             set -eu
-            pkg=/pkg/apiplant-$version-1-x86_64.pkg.tar.zst
-            bsdtar -xOf \"\$pkg\" .PKGINFO | grep -qx 'pkgname = apiplant'
-            bsdtar -xOf \"\$pkg\" .PKGINFO | grep -qx 'pkgver = $version-1'
-            bsdtar -tf \"\$pkg\" | grep -qx 'usr/bin/apiplant'
+            for package in apiplant apiplant-slim; do
+              pkg=/pkg/\$package-$version-1-x86_64.pkg.tar.zst
+              bsdtar -xOf \"\$pkg\" .PKGINFO | grep -qx \"pkgname = \$package\"
+              bsdtar -xOf \"\$pkg\" .PKGINFO | grep -qx 'pkgver = $version-1'
+              bsdtar -tf \"\$pkg\" | grep -qx 'usr/bin/apiplant'
+            done
+            slim=/pkg/apiplant-slim-$version-1-x86_64.pkg.tar.zst
+            bsdtar -xOf \"\$slim\" .PKGINFO | grep -qx 'provides = apiplant'
+            bsdtar -xOf \"\$slim\" .PKGINFO | grep -qx 'conflict = apiplant'
           "
 
       # Two artifacts rather than one: the `apt` job wants only the .debs and
@@ -423,6 +531,41 @@ jobs:
             | Linux aarch64 | `apiplant-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz` |
             | macOS Apple silicon | `apiplant-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz` |
 
+            ## Slim binaries
+
+            The same release without TypeScript support, and so without V8 —
+            two thirds of the binary, so 97MB becomes 33MB. Everything else is
+            identical: the
+            command is still `apiplant`, and an app whose functions are Rust, C,
+            Zig or Go behaves exactly the same. An app with a `.ts` in
+            `functions/` will not load it, and says so rather than starting up
+            missing an endpoint. `apiplant --version` reports `(slim)`.
+
+            ```
+            docker pull ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}-slim
+            ```
+
+            | platform | archive |
+            | --- | --- |
+            | Linux x86_64 | `apiplant-slim-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux aarch64 | `apiplant-slim-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz` |
+            | macOS Apple silicon | `apiplant-slim-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz` |
+
+            | platform | package |
+            | --- | --- |
+            | Debian/Ubuntu amd64 | `apiplant-slim_${{ steps.version.outputs.version }}-1_amd64.deb` |
+            | Debian/Ubuntu arm64 | `apiplant-slim_${{ steps.version.outputs.version }}-1_arm64.deb` |
+            | Arch Linux x86_64 | `apiplant-slim-${{ steps.version.outputs.version }}-1-x86_64.pkg.tar.zst` |
+
+            ```
+            sudo apt install apiplant-slim
+            sudo pacman -Sy apiplant-slim
+            brew install apiplant/tap/apiplant-slim
+            ```
+
+            Each conflicts with its full twin — both install the same
+            `/usr/bin/apiplant` — so installing either replaces the other.
+
             ## Debian packages
 
             ```
@@ -478,27 +621,44 @@ jobs:
           pattern: binary-*
           merge-multiple: true
 
-      - name: Render the formula
+      - name: Render the formulae
         if: env.TAP_TOKEN != ''
         run: |
           version="${GITHUB_REF_NAME#v}"
-          sha() { shasum -a 256 "dist/apiplant-${GITHUB_REF_NAME}-$1.tar.gz" | cut -d' ' -f1; }
 
-          sed \
-            -e "s/@VERSION@/$version/g" \
-            -e "s/@SHA_LINUX_X86_64@/$(sha x86_64-unknown-linux-gnu)/" \
-            -e "s/@SHA_LINUX_ARM64@/$(sha aarch64-unknown-linux-gnu)/" \
-            -e "s/@SHA_DARWIN_ARM64@/$(sha aarch64-apple-darwin)/" \
-            packaging/homebrew/apiplant.rb > /tmp/apiplant.rb
+          render() { # <formula> <archive prefix>
+            local formula="$1" prefix="$2"
+            # `$1` inside is the triple, not `render`'s; `$prefix` resolves to
+            # the enclosing call's local, which is what bash scoping gives us.
+            sha() { shasum -a 256 "dist/$prefix-${GITHUB_REF_NAME}-$1.tar.gz" | cut -d' ' -f1; }
 
-          # A leftover placeholder means an archive was missing and `sha`
-          # returned nothing — publishing that formula would break `brew
-          # install` for everyone on that platform.
-          if grep -qE '@[A-Z_]+@' /tmp/apiplant.rb; then
-            echo "::error::unsubstituted placeholder in the formula" >&2
-            grep -nE '@[A-Z_]+@' /tmp/apiplant.rb >&2
-            exit 1
-          fi
+            sed \
+              -e "s/@VERSION@/$version/g" \
+              -e "s/@SHA_LINUX_X86_64@/$(sha x86_64-unknown-linux-gnu)/" \
+              -e "s/@SHA_LINUX_ARM64@/$(sha aarch64-unknown-linux-gnu)/" \
+              -e "s/@SHA_DARWIN_ARM64@/$(sha aarch64-apple-darwin)/" \
+              "packaging/homebrew/$formula" > "/tmp/$formula"
+
+            if grep -qE '@[A-Z_]+@' "/tmp/$formula"; then
+              echo "::error::unsubstituted placeholder in $formula" >&2
+              grep -nE '@[A-Z_]+@' "/tmp/$formula" >&2
+              exit 1
+            fi
+
+            # And an *empty* one, which is what a missing archive actually
+            # produces: `sha` writes nothing to stdout, sed substitutes the
+            # empty string, and no placeholder is left for the check above to
+            # find. A formula with `sha256 ""` installs nothing and fails at
+            # the download for everyone on that platform.
+            if grep -qE 'sha256 ""' "/tmp/$formula"; then
+              echo "::error::$formula has an empty sha256 — an archive is missing" >&2
+              grep -nE 'sha256 ""' "/tmp/$formula" >&2
+              exit 1
+            fi
+          }
+
+          render apiplant.rb      apiplant
+          render apiplant-slim.rb apiplant-slim
 
       - name: Push to apiplant/homebrew-tap
         if: env.TAP_TOKEN != ''
@@ -507,14 +667,16 @@ jobs:
           git clone --depth 1 \
             "https://x-access-token:${TAP_TOKEN}@github.com/apiplant/homebrew-tap.git" tap
           mkdir -p tap/Formula
-          cp /tmp/apiplant.rb tap/Formula/apiplant.rb
+          cp /tmp/apiplant.rb /tmp/apiplant-slim.rb tap/Formula/
 
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/apiplant.rb
+          git add Formula/apiplant.rb Formula/apiplant-slim.rb
           # Re-running a release for the same tag is a no-op rather than an error.
           git diff --cached --quiet && exit 0
+          # Both formulae in one commit: they conflict with each other, so a tap
+          # carrying two different versions of them is a state worth not having.
           git commit -m "apiplant $version"
           git push
 
@@ -570,15 +732,22 @@ jobs:
           git clone --depth 1 \
             "https://x-access-token:${APT_REPO_TOKEN}@github.com/apiplant/apt.git" repo
 
-          # `pool/main/a/apiplant/` is the layout apt expects: component, then
-          # the first letter of the source package, then the package.
-          mkdir -p repo/pool/main/a/apiplant
-          cp debs/*.deb repo/pool/main/a/apiplant/
+          # `pool/main/a/<package>/` is the layout apt expects: component, then
+          # the first letter of the source package, then the package. The two
+          # packages get a directory each, matching their names.
+          mkdir -p repo/pool/main/a/apiplant repo/pool/main/a/apiplant-slim
+          for deb in debs/*.deb; do
+            case "$(basename "$deb")" in
+              apiplant-slim_*) cp "$deb" repo/pool/main/a/apiplant-slim/ ;;
+              *)               cp "$deb" repo/pool/main/a/apiplant/ ;;
+            esac
+          done
 
-          # GitHub Pages stops publishing at 1GB, and every release adds two
-          # ~22MB packages to a pool that is never pruned. Said out loud well
-          # before it is reached, because the fix — dropping old versions, or
-          # moving the pool off Pages — is not one to discover at the limit.
+          # GitHub Pages stops publishing at 1GB, and every release adds four
+          # packages — two ~22MB full and two ~8MB slim — to a pool that is
+          # never pruned. Said out loud well before it is reached, because the
+          # fix — dropping old versions, or moving the pool off Pages — is not
+          # one to discover at the limit.
           size=$(du -sm repo/pool | cut -f1)
           if [ "$size" -gt 700 ]; then
             echo "::warning::the apt pool is ${size}MB; GitHub Pages stops at 1GB." \

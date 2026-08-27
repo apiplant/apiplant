@@ -6,10 +6,16 @@ Homepage: https://github.com/apiplant/apiplant
 Section: web
 Priority: optional
 Installed-Size: @INSTALLED_SIZE@
+Conflicts: apiplant-slim
+Replaces: apiplant-slim
 Description: Point it at an app directory and it serves an API
  apiplant reads an app directory - resource definitions, functions, an optional
  main.toml - and serves it as an HTTP API, with an admin dashboard, a terminal
  console and a visual editor built into the same binary.
+ .
+ There is an apiplant-slim package built from the same release, without
+ TypeScript support and so without V8. The two install the same
+ /usr/bin/apiplant and replace one another.
  .
  The package declares no dependencies: the binary links only libc, libm and
  libgcc_s, which are part of every Debian installation. It is built against
