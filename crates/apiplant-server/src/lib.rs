@@ -921,7 +921,11 @@ pub async fn run_with(app: App, options: Options) -> anyhow::Result<()> {
     // not parse was written to be used, and an app that boots without it sends
     // the built-in message instead, which looks exactly like the override
     // working until somebody reads their mail.
-    let email_templates = Arc::new(email_templates::EmailTemplates::load(&app.root)?);
+    let brand = emails::Links::from_app(&app);
+    let email_templates = Arc::new(
+        email_templates::EmailTemplates::load(&app.root)?
+            .with_brand(&brand.app_name, brand.logo_url.as_deref()),
+    );
     if !email_templates.names().is_empty() {
         tracing::info!("  emails -> {}", email_templates.names().join(", "));
     }

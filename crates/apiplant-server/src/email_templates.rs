@@ -79,6 +79,12 @@ struct Template {
 #[derive(Default)]
 pub struct EmailTemplates {
     by_name: BTreeMap<String, Template>,
+    /// The facts every message gets whoever sends it — `app_name` and
+    /// `logo_url`. They belong to the app rather than to any one message, so
+    /// they are filled in here instead of being something each caller has to
+    /// remember: a function naming a template gets the same banner the
+    /// framework's own messages get.
+    brand: liquid::Object,
 }
 
 /// A compiled template has nothing readable in it, so the names are the whole
@@ -168,7 +174,22 @@ impl EmailTemplates {
                 },
             );
         }
-        Ok(EmailTemplates { by_name })
+        Ok(EmailTemplates {
+            by_name,
+            brand: liquid::Object::new(),
+        })
+    }
+
+    /// Carry the app-level variables every render should have in scope.
+    ///
+    /// A caller that passes one of these itself keeps its own value: the
+    /// brand is a default, not an override.
+    pub fn with_brand(mut self, app_name: &str, logo_url: Option<&str>) -> EmailTemplates {
+        self.brand = liquid::object!({
+            "app_name": app_name.to_string(),
+            "logo_url": logo_url.unwrap_or_default().to_string(),
+        });
+        self
     }
 
     /// Whether the app supplied a template by this name.
@@ -197,6 +218,12 @@ impl EmailTemplates {
             .by_name
             .get(name)
             .with_context(|| format!("no email template `{name}` in {TEMPLATE_DIR}/"))?;
+
+        // `vars` last so that a caller which passed `app_name` — the framework's
+        // own messages do — keeps the value it chose.
+        let mut merged = self.brand.clone();
+        merged.extend(vars.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let vars = &merged;
 
         let html = template
             .html
@@ -412,6 +439,42 @@ mod tests {
             .unwrap();
         assert_eq!(rendered.subject, "Reset your password");
         assert_eq!(rendered.html.trim(), "<p>Reset it.</p>");
+    }
+
+    #[test]
+    fn the_brand_is_in_scope_for_a_template_nobody_passed_it_to() {
+        // A function naming one of its own templates hands over the facts that
+        // message needs, not the ones the app has anyway. Without the brand
+        // filled in here, `{{ app_name }}` in an app's own template is an
+        // unknown variable and the send fails — which is not what
+        // docs/email.md promises ("app_name: every message").
+        let root = temp("brand");
+        write(
+            &root,
+            "welcome.liquid",
+            "---\nsubject = \"Welcome to {{ app_name }}, {{ name }}\"\n---\n<img src=\"{{ logo_url }}\"><p>Hi {{ name }}</p>",
+        );
+        let templates = EmailTemplates::load(&root)
+            .unwrap()
+            .with_brand("Acme", Some("https://acme.test/logo.png"));
+        let rendered = templates
+            .render("welcome", &liquid::object!({ "name": "Bo" }), "fallback")
+            .unwrap();
+        assert_eq!(rendered.subject, "Welcome to Acme, Bo");
+        assert!(rendered.html.contains("https://acme.test/logo.png"));
+    }
+
+    #[test]
+    fn a_caller_that_passes_a_brand_variable_keeps_its_own_value() {
+        // The brand is a default. The framework's own messages pass `app_name`
+        // themselves, and those must not be second-guessed here.
+        let root = temp("brandwins");
+        write(&root, "welcome.liquid", "<p>{{ app_name }}</p>");
+        let templates = EmailTemplates::load(&root).unwrap().with_brand("Acme", None);
+        let rendered = templates
+            .render("welcome", &liquid::object!({ "app_name": "Other" }), "s")
+            .unwrap();
+        assert_eq!(rendered.html, "<p>Other</p>");
     }
 
     #[test]

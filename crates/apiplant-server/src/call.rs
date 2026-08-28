@@ -70,8 +70,11 @@ pub async fn call(app: &App, name: &str, options: Options) -> anyhow::Result<Str
     .await?;
 
     let mailer = apiplant_email::Mailer::from_config(&app.config.email)?;
-    let email_templates =
-        std::sync::Arc::new(crate::email_templates::EmailTemplates::load(&app.root)?);
+    let brand = crate::emails::Links::from_app(app);
+    let email_templates = std::sync::Arc::new(
+        crate::email_templates::EmailTemplates::load(&app.root)?
+            .with_brand(&brand.app_name, brand.logo_url.as_deref()),
+    );
     let cache = apiplant_cache::Cache::connect(&app.config.cache).await?;
     let ai = apiplant_ai::Ai::from_config(&app.config.ai)?;
     let payments = apiplant_payments::Payments::from_config(

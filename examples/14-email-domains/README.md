@@ -103,6 +103,10 @@ Change either and restart — config is read at boot, no rebuild needed.
 
 ## Try it
 
+Every account is created with a [personal organisation](../../docs/multitenancy.md#the-personal-organisation)
+it administers, so nobody here has exactly one membership and every org-scoped
+call names the one it means with `X-Organization`.
+
 ```bash
 API=http://127.0.0.1:8099/api
 
@@ -110,10 +114,11 @@ API=http://127.0.0.1:8099/api
 # Creating an organisation makes you its admin, so she gets in the normal way.
 FT=$(curl -s -XPOST $API/auth/register -H 'content-type: application/json' \
   -d '{"email":"ana@acme.com","password":"pw"}' | jq -r .token)
-curl -s -XPOST $API/organization -H "authorization: Bearer $FT" \
+ACME=$(curl -s -XPOST $API/organization -H "authorization: Bearer $FT" \
   -H 'content-type: application/json' \
-  -d '{"name":"Acme","slug":"acme","domain":"acme.com"}'
+  -d '{"name":"Acme","slug":"acme","domain":"acme.com"}' | jq -r .id)
 curl -s -XPOST $API/note -H "authorization: Bearer $FT" \
+  -H "X-Organization: $ACME" \
   -H 'content-type: application/json' -d '{"body":"Q3 roadmap"}'
 
 # Ben registers. Nobody invited him.
@@ -121,8 +126,9 @@ BT=$(curl -s -XPOST $API/auth/register -H 'content-type: application/json' \
   -d '{"email":"ben@acme.com","password":"pw"}' | jq -r .token)
 
 curl -s $API/organization -H "authorization: Bearer $BT"
-# → [{"name":"Acme","domain":"acme.com", …}]        he is already a member
-curl -s $API/note -H "authorization: Bearer $BT"
+# → [{"name":"ben", …}, {"name":"Acme","domain":"acme.com", …}]
+#   his own, and Acme — he is already a member of it
+curl -s $API/note -H "authorization: Bearer $BT" -H "X-Organization: $ACME"
 # → [{"body":"Q3 roadmap", …}]                      and Acme's data is his data
 ```
 
@@ -132,8 +138,9 @@ The log says what happened:
 INFO apiplant::function: ben@acme.com joined Acme as member via its acme.com domain
 ```
 
-Ben belongs to exactly one organisation, so he never needs the
-`X-Organization` header — his sole membership *is* the active org.
+Ben is Acme's `member` and his own organisation's `admin`, which is the whole
+of what the hook decided: matching a domain got him in, it did not give him
+authority once inside.
 
 Nobody else gets in:
 
@@ -142,11 +149,11 @@ Nobody else gets in:
 ZT=$(curl -s -XPOST $API/auth/register -H 'content-type: application/json' \
   -d '{"email":"zoe@other.com","password":"pw"}' | jq -r .token)
 curl -s $API/organization -H "authorization: Bearer $ZT"
-# → []
-curl -s $API/note -H "authorization: Bearer $ZT"
+# → [{"name":"zoe", …}]      her own, and nothing else
+curl -s $API/note -H "authorization: Bearer $ZT" -H "X-Organization: $ACME"
 # → 403 {"error":"select an organisation with the X-Organization header"}
-#   no memberships means no active organisation — Zoe needs an invite, or an
-#   organisation of her own.
+#   naming an org you are not in is the same as naming none: Acme is not hers
+#   to read, and she needs an invite
 
 # and a free-mail address, even if someone claims the domain
 curl -s -XPOST $API/organization -H "authorization: Bearer $FT" \
@@ -154,7 +161,8 @@ curl -s -XPOST $API/organization -H "authorization: Bearer $FT" \
 CT=$(curl -s -XPOST $API/auth/register -H 'content-type: application/json' \
   -d '{"email":"cal@gmail.com","password":"pw"}' | jq -r .token)
 curl -s $API/organization -H "authorization: Bearer $CT"
-# → []      INFO apiplant::function: gmail.com is a public mail domain; not auto-joining
+# → [{"name":"cal", …}]      his own — not Free
+#   INFO apiplant::function: gmail.com is a public mail domain; not auto-joining
 ```
 
 ## What this example is not

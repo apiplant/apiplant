@@ -11,7 +11,9 @@ changing it changes nothing else.
 ├── emails/
 │   ├── welcome.liquid            # this app's own message, sent by the hook
 │   ├── welcome.text.liquid       # …its plain-text half, written rather than derived
-│   └── verification.liquid       # replaces the framework's "confirm your address"
+│   ├── verification.liquid       # replaces the framework's "confirm your address"
+│   ├── invitation.liquid         # …and its "you're invited", which names the org
+│   └── invitation.text.liquid    # …its plain-text half
 ├── public/
 │   └── thank-you.html            # where a confirmed address lands, served at /
 ├── resources/
@@ -119,6 +121,36 @@ An override is given facts, not prose: `app_name`, `logo_url`, `url` and
 `expires_in` (plus `organization` and `inviter` for an invitation). The link and
 how long it lasts stay the framework's to decide — they are not the template's
 to get wrong — while every sentence around them is yours.
+
+`emails/invitation.liquid` is the second override here, and the one with
+something extra to say: only this message knows which organisation is being
+joined and who did the asking, so it is the only one that can put both in the
+subject line.
+
+```liquid
+---
+subject = "{{ inviter }} would like you in {{ organization }}"
+---
+```
+
+`inviter` is empty when the invite came from an account with no name on it, so
+the body branches on it rather than assuming — `{% if inviter != '' %}`. Try it
+by inviting an address into an organisation:
+
+```bash
+curl -s -XPOST $API/auth/invitations -H "authorization: Bearer $TOKEN" \
+  -H "X-Organization: $ORG" -H 'content-type: application/json' \
+  -d '{"email":"someone@example.com","role":"member"}'
+```
+
+An address with no account yet is invited all the same: opening the link is
+where they choose a password, and the account, the confirmed address and the
+membership are all made at once. See
+[Authentication](../../docs/authentication.md).
+
+`app_name` and `logo_url` are the app's own facts, so they are in scope for
+*every* template — an app's own `welcome` included, which is why the function
+above hands over only `name` and `sign_in_url` and the banner still renders.
 
 A template that does not **parse** stops the app at boot, naming the file: it
 was written to be used, and quietly sending the built-in instead would look
