@@ -344,9 +344,12 @@ impl Resource {
         // it is written — `create = "owner"` or an `own` clause — it can only
         // ever deny, so reject it at load time rather than ship an endpoint that
         // refuses everyone.
-        let owns_on_create = self.permissions.create.rules.iter().any(|rule| {
-            rule.effect == Effect::Own || rule.policy.level == Access::Owner
-        });
+        let owns_on_create = self
+            .permissions
+            .create
+            .rules
+            .iter()
+            .any(|rule| rule.effect == Effect::Own || rule.policy.level == Access::Owner);
         if owns_on_create {
             return Err(crate::Error::Schema {
                 resource: self.meta.name.clone(),
@@ -2318,10 +2321,9 @@ type = "reference"
 
     #[test]
     fn validate_rejects_owner_on_create() {
-        let shorthand: Resource = toml::from_str(
-            "[resource]\nname = \"product\"\n\n[permissions]\ncreate = \"owner\"\n",
-        )
-        .unwrap();
+        let shorthand: Resource =
+            toml::from_str("[resource]\nname = \"product\"\n\n[permissions]\ncreate = \"owner\"\n")
+                .unwrap();
         assert!(shorthand.validate().is_err());
 
         let own_clause: Resource = toml::from_str(

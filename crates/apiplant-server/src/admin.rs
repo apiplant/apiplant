@@ -523,9 +523,7 @@ fn build_manifest(
         // `queue_message` is a built-in table every app carries, but with
         // `[queues] enabled = false` there are no background tasks to look at —
         // keep the "Background tasks" screen out of the dashboard entirely.
-        .filter(|resource| {
-            resource.meta.name != "queue_message" || app.config.queues.enabled
-        })
+        .filter(|resource| resource.meta.name != "queue_message" || app.config.queues.enabled)
         .map(|resource| {
             resource_manifest(
                 resource,

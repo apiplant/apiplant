@@ -53,7 +53,7 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -176,7 +176,7 @@ jobs:
             os: ubuntu-22.04-arm
             variant: slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: docker/setup-buildx-action@v3
 
@@ -291,7 +291,7 @@ jobs:
     needs: binaries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v4
         with:
@@ -613,7 +613,7 @@ jobs:
     env:
       TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v4
         with:
@@ -701,7 +701,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg git ca-certificates
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: source
 

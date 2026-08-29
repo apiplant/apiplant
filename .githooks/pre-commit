@@ -51,6 +51,21 @@ changed() {
   echo "$staged" | grep -qE "$1"
 }
 
+# Keep the workspace formatted whenever Rust sources are staged. Ask rustfmt
+# which files it would rewrite first, then stage exactly those — never the
+# caller's unrelated unstaged edits.
+if changed '\.rs$'; then
+  echo "pre-commit: running cargo fmt"
+  fmt_targets=$(cargo fmt --all -- --check 2>&1 \
+    | sed -n 's/^Diff in \([^:]*\):.*/\1/p' | sort -u || true)
+  if [ -n "$fmt_targets" ]; then
+    cargo fmt --all
+    echo "pre-commit: staged formatting changes"
+    # shellcheck disable=SC2086
+    git add $fmt_targets
+  fi
+fi
+
 # Anything staged under the generated asset trees is a build output, not input.
 if changed '^studio/(src|public|index\.html|package\.json|vite\.config\.ts|tsconfig\.json)'; then
   echo "pre-commit: rebuilding studio"

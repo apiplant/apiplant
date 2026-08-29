@@ -551,4 +551,26 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn the_readme_names_the_app_and_keeps_its_lanes() {
+        let text = readme("my-app");
+        assert!(
+            text.starts_with("# my-app\n"),
+            "the title is the app's name"
+        );
+        // The layout the scaffold actually writes, so the readme and the tree
+        // cannot drift apart silently.
+        for line in [
+            "main.toml",
+            "resources/note.toml",
+            "seed/",
+            "functions/greet.rs",
+        ] {
+            assert!(text.contains(line), "the readme should mention `{line}`");
+        }
+        // The credentials it tells people to use are the ones the seed writes.
+        assert!(text.contains("admin@example.com"));
+        assert!(text.contains("password"));
+    }
 }

@@ -778,11 +778,17 @@ impl Client {
 /// A development server almost always has a self-signed certificate, and
 /// refusing to talk to the loopback address over one would make `cli` useless in
 /// exactly the case it is most useful. Anywhere else, certificates are checked.
+/// Whether the origin is one of the loopback addresses, where a self-signed
+/// certificate is the norm (a local server behind one) rather than the
+/// exception. Exactly the case it is most useful. Anywhere else, certificates
+/// are checked.
+fn loopback(origin: &str) -> bool {
+    origin.contains("127.0.0.1") || origin.contains("localhost") || origin.contains("[::1]")
+}
+
 fn http_client(origin: &str) -> Result<reqwest::Client> {
-    let loopback =
-        origin.contains("127.0.0.1") || origin.contains("localhost") || origin.contains("[::1]");
     reqwest::Client::builder()
-        .danger_accept_invalid_certs(loopback)
+        .danger_accept_invalid_certs(loopback(origin))
         .user_agent(concat!("apiplant-cli/", env!("CARGO_PKG_VERSION")))
         .build()
         .context("could not start an HTTP client")
@@ -881,6 +887,194 @@ pub fn encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_is_found_by_name_and_not_by_anything_else() {
+        let resource = ResourceManifest {
+            fields: vec![
+                FieldManifest {
+                    name: "name".into(),
+                    ..Default::default()
+                },
+                FieldManifest {
+                    name: "stock".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(resource.field("stock").is_some());
+        assert_eq!(resource.field("stock").unwrap().name, "stock");
+        assert!(resource.field("nope").is_none());
+        assert!(ResourceManifest::default().field("name").is_none());
+    }
+
+    #[test]
+    fn a_field_is_editable_only_when_every_gate_says_so() {
+        let mut field = FieldManifest {
+            name: "name".into(),
+            writable: true,
+            admin_visible: true,
+            ..Default::default()
+        };
+        assert!(field.editable(), "writable and visible is editable");
+        field.readonly = true;
+        assert!(!field.editable(), "readonly is not offered");
+        field.readonly = false;
+        field.hidden = true;
+        assert!(!field.editable(), "hidden is not offered");
+        field.hidden = false;
+        field.admin_visible = false;
+        assert!(!field.editable(), "kept from the admin is not offered");
+        field.admin_visible = true;
+        field.writable = false;
+        assert!(!field.editable(), "not writable is not offered");
+    }
+
+    #[test]
+    fn typed_text_becomes_the_json_the_api_wants() {
+        // Booleans have no empty state: anything but a yes-word is a no.
+        assert_eq!(parse_typed("boolean", "live", "yes").unwrap(), json!(true));
+        assert_eq!(parse_typed("boolean", "live", "ON").unwrap(), json!(true));
+        assert_eq!(parse_typed("boolean", "live", "").unwrap(), json!(false));
+        assert_eq!(
+            parse_typed("boolean", "live", "nope").unwrap(),
+            json!(false)
+        );
+
+        // Whole numbers and plain numbers are distinct types.
+        assert_eq!(parse_typed("integer", "stock", " 42 ").unwrap(), json!(42));
+        assert!(parse_typed("integer", "stock", "4.5").is_err());
+        assert_eq!(parse_typed("float", "price", "4.5").unwrap(), json!(4.5));
+        assert_eq!(parse_typed("number", "price", "3").unwrap(), json!(3.0));
+        assert!(parse_typed("number", "price", "abc").is_err());
+
+        // JSON is parsed, not quoted.
+        assert_eq!(
+            parse_typed("json", "body", "{\"a\":1}").unwrap(),
+            json!({"a":1})
+        );
+        assert!(parse_typed("json", "body", "{a").is_err());
+
+        // Everything else is a string, whatever it looks like.
+        assert_eq!(parse_typed("string", "name", " 42 ").unwrap(), json!("42"));
+    }
+
+    #[test]
+    fn a_permission_says_who_may_act_as_far_as_the_manifest_can() {
+        fn permission(value: &str, role: Option<&str>) -> ActionPermission {
+            ActionPermission {
+                value: value.into(),
+                role: role.map(str::to_string),
+                ..Default::default()
+            }
+        }
+        let nobody: &[String] = &[];
+        let member = vec!["member".to_string()];
+        let admin = vec!["admin".to_string()];
+
+        assert!(permission("public", None).allowed(false, false, nobody));
+        // `private` is nobody — including signed-in admins — and is the one
+        // value `possible` also refuses.
+        assert!(!permission("private", None).allowed(true, true, &admin));
+        assert!(!permission("private", None).possible());
+        assert!(permission("public", None).possible());
+
+        assert!(!permission("authenticated", None).allowed(false, true, &member));
+        assert!(permission("authenticated", None).allowed(true, false, &member));
+
+        // Organisation-scoped work needs a session and somewhere to do it.
+        assert!(!permission("member", None).allowed(true, false, &member));
+        assert!(permission("member", None).allowed(true, true, &member));
+        assert!(!permission("owner", None).allowed(false, true, &member));
+
+        // A role gate: the role itself, or `admin`, which holds every role.
+        assert!(!permission("role:billing", Some("billing")).allowed(true, true, &member));
+        assert!(permission("role:billing", Some("billing")).allowed(true, true, &admin));
+        // A role gate with no roles known at all is a refusal, not a guess.
+        assert!(!permission("role:billing", Some("billing")).allowed(true, true, nobody));
+    }
+
+    #[test]
+    fn the_manifest_url_is_where_the_server_keeps_it() {
+        let client = Client::new("http://x:1".into(), "/api".into(), "/admin/".into()).unwrap();
+        assert_eq!(
+            client.manifest_url(),
+            "http://x:1/admin/apiplant-admin.json"
+        );
+    }
+
+    #[test]
+    fn loopback_is_the_three_loopback_addresses_and_nothing_else() {
+        assert!(loopback("http://127.0.0.1:8099"));
+        assert!(loopback("http://localhost:8099"));
+        assert!(loopback("http://[::1]:8099"));
+        assert!(!loopback("http://192.168.1.10:8099"));
+        assert!(!loopback("https://api.example.com"));
+    }
+
+    #[test]
+    fn a_status_code_is_explained_in_words_the_operator_can_act_on() {
+        assert!(explain(401).contains("signed in"));
+        assert!(explain(403).contains("role"));
+        assert!(explain(404).contains("base path"));
+        assert!(explain(405).contains("method"));
+        assert_eq!(explain(408), explain(504));
+        assert!(explain(502).contains("running"));
+        assert_eq!(explain(502), explain(503));
+        // Anything else 5xx is a server error, whatever its number.
+        assert!(explain(500).contains("error"));
+        assert!(explain(599).contains("error"));
+        // A refusal that is not one of the named ones.
+        assert!(explain(400).contains("refused"));
+        assert!(explain(200).contains("refused"));
+    }
+
+    #[test]
+    fn the_expand_parameter_is_built_only_when_there_is_something_to_ask_for() {
+        assert!(expand_query(&[]).is_empty());
+        let query = expand_query(&["owner".into(), "items".into()]);
+        assert_eq!(query, vec![("expand", "owner,items".into())]);
+    }
+
+    #[test]
+    fn an_object_is_borrowed_as_an_object_and_nothing_else_is() {
+        let value = json!({"a": 1});
+        let map = as_object(&value);
+        assert_eq!(map.get("a"), Some(&json!(1)));
+        // A non-object is an empty object, not an error: the caller decides
+        // what that means.
+        assert!(as_object(&json!("text")).is_empty());
+        assert!(as_object(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn records_come_back_as_rows_from_either_shape() {
+        assert_eq!(as_records(json!([1, 2])), vec![json!(1), json!(2)]);
+        assert_eq!(as_records(json!({"data": [3]})), vec![json!(3)]);
+        assert_eq!(as_records(json!({"records": [4]})), vec![json!(4)]);
+        assert!(as_records(json!({"other": [5]})).is_empty());
+        assert!(as_records(json!("nope")).is_empty());
+    }
+
+    #[test]
+    fn a_path_is_normalised_to_one_spelling() {
+        assert_eq!(normalise_path("/api"), "/api");
+        assert_eq!(normalise_path("api/"), "/api");
+        assert_eq!(normalise_path(""), "");
+        assert_eq!(normalise_path("/"), "");
+        assert_eq!(normalise_path("  /api/  "), "/api");
+    }
+
+    #[test]
+    fn a_scalar_is_one_line_of_text() {
+        assert_eq!(scalar(&Value::Null), "");
+        assert_eq!(scalar(&json!("text")), "text");
+        assert_eq!(scalar(&json!(42)), "42");
+        // Booleans read as words, not JSON.
+        assert_eq!(scalar(&json!(true)), "yes");
+        assert_eq!(scalar(&json!(false)), "no");
+    }
 
     #[test]
     fn a_borrowed_session_carries_the_pin_and_the_actor() {

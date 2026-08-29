@@ -47,3 +47,5 @@ usage-lib.workspace = true
 
 [dev-dependencies]
 toml.workspace = true
+# Tests pin file mtimes to judge staleness at exact offsets, which std cannot set.
+filetime = "0.2"

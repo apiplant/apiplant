@@ -707,6 +707,22 @@ mod tests {
     }
 
     #[test]
+    fn the_repository_forms_are_recognised_and_directories_are_not() {
+        // A URL with a scheme, an scp-style ssh address, and a `.git` suffix are
+        // the only forms cloned; everything else is scaffolded in place.
+        assert!(looks_like_a_repository("https://github.com/org/app"));
+        assert!(looks_like_a_repository("git@github.com:org/app"));
+        assert!(looks_like_a_repository("git@github.com:org/app.git"));
+        assert!(looks_like_a_repository("/srv/templates/app.git"));
+        // A plain directory, a bare host, and a file that merely contains the
+        // letters are all directories, whatever they are called.
+        assert!(!looks_like_a_repository("."));
+        assert!(!looks_like_a_repository("my-app"));
+        assert!(!looks_like_a_repository("/home/me/my-app"));
+        assert!(!looks_like_a_repository("github.com"));
+    }
+
+    #[test]
     fn the_spec_the_parser_is_generated_from_is_valid() {
         // Every other test in here would fail with the same panic, but this one
         // says why: the KDL, not the code around it.

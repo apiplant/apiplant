@@ -5122,4 +5122,544 @@ mod tests {
         assert_eq!(titleize("email"), "Email");
         assert_eq!(titleize(""), "");
     }
+
+    // --- reach ------------------------------------------------------------
+
+    #[test]
+    fn a_role_this_console_cannot_check_is_left_alone() {
+        fn gated(value: &str) -> api::ActionPermission {
+            api::ActionPermission {
+                value: value.into(),
+                role: Some("billing".into()),
+                ..Default::default()
+            }
+        }
+        // A policy the manifest states plainly is settled by it.
+        let blank = api::ActionPermission {
+            ..Default::default()
+        };
+        assert!(
+            Reach::unknown().may(true, &blank),
+            "an unrecognised policy hides nothing"
+        );
+
+        // A role gate we cannot check: a session in an organisation might hold
+        // it, so the door stays; no session, or a `private` action, does not.
+        let in_org = Reach {
+            signed_in: true,
+            organization: true,
+            roles: &[],
+            roles_known: false,
+        };
+        assert!(in_org.may(true, &gated("role:billing")));
+        let signed_out = Reach {
+            signed_in: false,
+            organization: false,
+            roles: &[],
+            roles_known: false,
+        };
+        assert!(!signed_out.may(true, &gated("role:billing")));
+        assert!(
+            !in_org.may(true, &gated("private")),
+            "private is nobody, even unchecked"
+        );
+
+        // Once the roles are known, the gate is decided like any other.
+        let billing_roles = ["billing".to_string()];
+        let billing = signed_in(&billing_roles);
+        assert!(billing.may(true, &gated("role:billing")));
+        let admin_roles = ["admin".to_string()];
+        let admin = signed_in(&admin_roles);
+        assert!(
+            admin.may(true, &gated("role:billing")),
+            "admin holds every role"
+        );
+        let member_roles = ["member".to_string()];
+        let member = signed_in(&member_roles);
+        assert!(!member.may(true, &gated("role:billing")));
+    }
+
+    #[test]
+    fn a_global_action_does_not_need_an_organization() {
+        // `member` work needs a session and somewhere to do it — unless the
+        // resource is global, in which case the session is the somewhere.
+        let mut cli = console(Vec::new());
+        cli.client.organization = None;
+        let member = api::ActionPermission {
+            value: "member".into(),
+            ..Default::default()
+        };
+        let global = ResourceManifest {
+            scope: "global".into(),
+            ..Default::default()
+        };
+        let org_scoped = ResourceManifest {
+            scope: "org".into(),
+            ..Default::default()
+        };
+        assert!(
+            cli.may(&global, &member),
+            "a global resource is somewhere to work"
+        );
+        assert!(
+            !cli.may(&org_scoped, &member),
+            "an org resource needs an org"
+        );
+    }
+
+    // --- forms ------------------------------------------------------------
+
+    #[test]
+    fn an_unchanged_field_is_not_a_change() {
+        let mut field = FormField::text("name", "Name");
+        assert!(!field.changed(), "an empty new field is no change");
+        field.set("hello".into());
+        assert!(field.changed(), "a filled new field is a change");
+        field.was = Some("hello".into());
+        assert!(!field.changed(), "the same value is no change");
+        field.set("world".into());
+        assert!(field.changed(), "a different value is a change");
+    }
+
+    #[test]
+    fn sign_up_asks_for_the_identity_a_password_and_the_app_fields() {
+        let manifest = Manifest {
+            auth: api::AuthManifest {
+                signup_fields: vec![field("email", "string"), field("full_name", "string")],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let form = Form::sign_up(&manifest);
+        assert!(matches!(form.kind, FormKind::SignUp));
+        let names: Vec<&str> = form.fields.iter().map(|f| f.name.as_str()).collect();
+        // The identity, the password, its confirmation — then whatever the app
+        // declared, without repeating the identity.
+        assert_eq!(
+            names,
+            vec!["email", "password", CONFIRM_PASSWORD, "full_name"]
+        );
+        let by_name = |name: &str| &form.fields[names.iter().position(|n| *n == name).unwrap()];
+        assert!(by_name("email").required);
+        assert!(by_name("password").required && by_name("password").secret);
+        assert!(by_name(CONFIRM_PASSWORD).required && by_name(CONFIRM_PASSWORD).secret);
+    }
+
+    #[test]
+    fn manifest_fields_become_boxes_with_their_manners() {
+        let fields = vec![
+            FieldManifest {
+                name: "password".into(),
+                label: "Password".into(),
+                widget: "password".into(),
+                ..Default::default()
+            },
+            FieldManifest {
+                name: "stock".into(),
+                label: "Stock".into(),
+                ty: "integer".into(),
+                default_value: Some(json!(10)),
+                ..Default::default()
+            },
+            FieldManifest {
+                name: "live".into(),
+                label: "Live".into(),
+                ty: "boolean".into(),
+                ..Default::default()
+            },
+            FieldManifest {
+                name: "size".into(),
+                label: "Size".into(),
+                options: vec![api::FieldOption {
+                    value: "s".into(),
+                    label: "Small".into(),
+                }],
+                references: Some("product".into()),
+                ..Default::default()
+            },
+        ];
+        let boxes = inputs(&fields);
+        assert!(boxes[0].secret, "a password widget is a secret box");
+        assert_eq!(
+            boxes[1].value, "10",
+            "a default is what the box starts with"
+        );
+        assert_eq!(boxes[2].value, "false", "a boolean starts off");
+        assert_eq!(boxes[3].options, vec!["s".to_string()]);
+        assert_eq!(boxes[3].references.as_deref(), Some("product"));
+    }
+
+    #[test]
+    fn a_schema_becomes_one_box_per_property_with_its_defaults() {
+        let schema = json!({
+            "properties": {
+                "name": { "type": "string", "description": "Who it is for" },
+                "count": { "type": "integer" },
+                "flag": { "type": ["boolean", "null"] },
+                "tags": { "type": "array" },
+                "meta": { "type": "object" },
+                "size": { "type": "string", "enum": ["s", "m"] }
+            },
+            "required": ["name"]
+        });
+        let fields = schema_fields(&schema).expect("a schema with properties");
+        let by_name = |name: &str| {
+            fields
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("no box for `{name}`"))
+        };
+        assert!(by_name("name").required);
+        assert_eq!(by_name("name").help.as_deref(), Some("Who it is for"));
+        assert!(!by_name("count").required);
+        // A union with `null` is still typed by its first real member.
+        assert_eq!(by_name("flag").ty, "boolean");
+        assert_eq!(by_name("tags").value, "[]", "an array starts empty");
+        assert_eq!(by_name("meta").value, "{}");
+        assert_eq!(
+            by_name("size").options,
+            vec!["s".to_string(), "m".to_string()]
+        );
+
+        // Not a schema: no properties is no boxes, not an error.
+        assert!(schema_fields(&json!({ "type": "object" })).is_none());
+        assert!(schema_fields(&json!("nope")).is_none());
+    }
+
+    // --- the console's own answers -----------------------------------------
+
+    #[test]
+    fn the_doors_are_the_ways_the_app_offers() {
+        let mut cli = console(Vec::new());
+        // The three that are always there.
+        assert_eq!(cli.doors().len(), 3);
+        cli.manifest.auth.allow_registration = true;
+        assert_eq!(cli.doors().len(), 4);
+        cli.manifest.auth.password_reset_enabled = true;
+        assert_eq!(cli.doors().len(), 5);
+    }
+
+    #[test]
+    fn an_agent_or_function_is_borrowed_by_index_or_not() {
+        let mut cli = console(Vec::new());
+        cli.manifest.agents.push(api::AgentManifest {
+            name: "assistant".into(),
+            label: "Assistant".into(),
+            ..Default::default()
+        });
+        cli.manifest.functions.push(api::FunctionManifest {
+            name: "report".into(),
+            label: "Report".into(),
+            ..Default::default()
+        });
+        assert!(cli.agent(0).is_some());
+        assert!(cli.agent(1).is_none(), "past the end is nothing");
+        assert!(cli.function(0).is_some());
+        assert!(cli.function(1).is_none());
+    }
+
+    #[test]
+    fn the_organization_is_named_by_its_label_or_its_id() {
+        let mut cli = console(Vec::new());
+        cli.organizations = vec![("org-1".into(), "Acme".into())];
+        cli.client.organization = Some("org-1".into());
+        assert_eq!(cli.organization_label(), "Acme");
+        // An id we have no label for is still named by itself.
+        cli.client.organization = Some("org-9".into());
+        assert_eq!(cli.organization_label(), "org-9");
+        cli.client.organization = None;
+        assert_eq!(cli.organization_label(), "no organization");
+    }
+
+    #[test]
+    fn the_target_is_named_by_what_it_is() {
+        let mut cli = console(Vec::new());
+        cli.target = crate::cli::Target::Server("http://x:1".into());
+        assert_eq!(cli.target_label(), "http://x:1");
+        cli.target = crate::cli::Target::Dir("./my-app".into());
+        assert_eq!(cli.target_label(), "http://x:1 (./my-app)");
+    }
+
+    #[test]
+    fn the_identity_is_named_by_what_can_be_read() {
+        let mut cli = console(Vec::new());
+        // The identity field first, then the usual names, then the id.
+        cli.identity = Some(json!({ "email": "sam@acme.com", "display_name": "Sam" }));
+        assert_eq!(cli.identity_label(), "sam@acme.com");
+        cli.identity = Some(json!({ "email": "", "display_name": "Sam" }));
+        assert_eq!(
+            cli.identity_label(),
+            "Sam",
+            "an empty identity falls to the next name"
+        );
+        cli.identity = None;
+        cli.identity_id = Some("u-sam".into());
+        assert_eq!(cli.identity_label(), "u-sam");
+        cli.identity_id = None;
+        cli.client.credentials.api_key = Some("apik_test".into());
+        assert_eq!(cli.identity_label(), "an API key");
+        cli.client.credentials.api_key = None;
+        assert_eq!(cli.identity_label(), "unknown");
+    }
+
+    #[test]
+    fn the_sidebar_keeps_the_cursor_on_what_survives() {
+        let mut cli = console(vec![resource()]);
+        // A visible, listable resource is in the sidebar before the Session.
+        let at = cli
+            .nav
+            .iter()
+            .position(|item| matches!(item.kind, NavKind::Resource(0)));
+        assert!(at.is_some(), "the resource should be in the sidebar");
+        cli.nav_index = at.unwrap();
+        cli.rebuild_nav();
+        assert!(
+            matches!(
+                cli.nav.get(cli.nav_index).unwrap().kind,
+                NavKind::Resource(0)
+            ),
+            "the cursor stays on the resource"
+        );
+        // What no longer exists is not kept: the cursor lands on the first item.
+        cli.manifest.resources[0].visible = false;
+        cli.rebuild_nav();
+        assert_eq!(cli.nav_index, 0);
+        assert!(!matches!(
+            cli.nav.first().unwrap().kind,
+            NavKind::Resource(0)
+        ));
+    }
+
+    #[test]
+    fn a_resource_is_listable_only_when_the_server_will_list_it() {
+        let cli = console(vec![
+            ResourceManifest {
+                name: "note".into(),
+                permissions: api::ActionPermissions {
+                    list: api::ActionPermission {
+                        value: "public".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ResourceManifest {
+                name: "secret".into(),
+                permissions: api::ActionPermissions {
+                    list: api::ActionPermission {
+                        value: "private".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ]);
+        assert!(cli.listable("note"));
+        assert!(!cli.listable("secret"), "private is not listable");
+        assert!(!cli.listable("ghost"), "absent is not listable");
+    }
+
+    #[tokio::test]
+    async fn grants_are_a_known_answer_when_there_is_nothing_to_read() {
+        // No `membership_role` resource: there are no grants, full stop.
+        let cli = console(Vec::new());
+        assert_eq!(cli.grants_for("m-1").await, Some(Vec::new()));
+
+        // One the app will not let us list: the grants exist and we cannot
+        // read them, which is not the same as there being none.
+        let mut cli = console(vec![ResourceManifest {
+            name: "membership_role".into(),
+            permissions: api::ActionPermissions {
+                list: api::ActionPermission {
+                    value: "private".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }]);
+        cli.roles_known = true;
+        assert_eq!(cli.grants_for("m-1").await, None);
+    }
+
+    #[test]
+    fn a_member_is_named_by_their_identity_then_their_record() {
+        let cli = console(vec![ResourceManifest {
+            name: "user".into(),
+            display_field: Some("name".into()),
+            ..Default::default()
+        }]);
+        // The identity field, as the app names it.
+        assert_eq!(
+            cli.member_name(&json!({ "user": { "email": "sam@acme.com" } }), "u-sam"),
+            "sam@acme.com"
+        );
+        // Then the usual names, in order.
+        assert_eq!(
+            cli.member_name(&json!({ "user": { "display_name": "Sam" } }), "u-sam"),
+            "Sam"
+        );
+        assert_eq!(
+            cli.member_name(&json!({ "user": { "name": "Sam T." } }), "u-sam"),
+            "Sam T."
+        );
+        // Then whatever the `user` resource calls its records.
+        assert_eq!(
+            cli.member_name(
+                &json!({ "user": { "name": "Sam T.", "email": "" } }),
+                "u-sam"
+            ),
+            "Sam T."
+        );
+        // Nothing readable: the id, which is still a name.
+        assert_eq!(cli.member_name(&json!({ "user": {} }), "u-sam"), "u-sam");
+        assert_eq!(cli.member_name(&json!({}), "u-sam"), "u-sam");
+    }
+
+    #[test]
+    fn the_selected_member_is_the_one_the_cursor_is_on() {
+        let mut cli = console(Vec::new());
+        cli.main = Main::Team(Team {
+            members: vec![
+                member("sam", Some("admin"), &[], false),
+                member("tess", None, &["billing"], true),
+            ],
+            index: 1,
+            manage: true,
+        });
+        assert_eq!(
+            cli.selected_member(),
+            Some(("u-tess".into(), "tess".into()))
+        );
+        // A member with no readable name is still selected, by their id.
+        let mut team = Team {
+            members: vec![Member {
+                name: "".into(),
+                ..member("sam", None, &[], false)
+            }],
+            index: 0,
+            manage: false,
+        };
+        cli.main = Main::Team(team.clone());
+        assert_eq!(
+            cli.selected_member(),
+            Some(("u-sam".into(), "u-sam".into()))
+        );
+        // Past the end is nothing, and so is a screen that is not the team.
+        team.index = 5;
+        cli.main = Main::Team(team);
+        assert_eq!(cli.selected_member(), None);
+        cli.main = Main::Empty("".into());
+        assert_eq!(cli.selected_member(), None);
+    }
+
+    #[test]
+    fn only_relations_to_readable_resources_are_asked_for() {
+        let cli = console(vec![
+            ResourceManifest {
+                name: "note".into(),
+                permissions: api::ActionPermissions {
+                    read: api::ActionPermission {
+                        value: "public".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ResourceManifest {
+                name: "secret".into(),
+                permissions: api::ActionPermissions {
+                    read: api::ActionPermission {
+                        value: "private".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ]);
+        let resource = ResourceManifest {
+            relations: vec![
+                api::RelationManifest {
+                    field: "note_id".into(),
+                    relation: "note".into(),
+                    target: "note".into(),
+                    label: "Note".into(),
+                },
+                api::RelationManifest {
+                    field: "secret_id".into(),
+                    relation: "secret".into(),
+                    target: "secret".into(),
+                    label: "Secret".into(),
+                },
+                api::RelationManifest {
+                    field: "ghost_id".into(),
+                    relation: "ghost".into(),
+                    target: "ghost".into(),
+                    label: "Ghost".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(cli.expandable(&resource), vec!["note".to_string()]);
+    }
+
+    #[test]
+    fn the_record_under_the_cursor_is_the_one_the_screen_shows() {
+        let mut cli = console(vec![resource()]);
+        cli.main = Main::List(List {
+            resource: 0,
+            rows: vec![json!({ "id": "a" }), json!({ "id": "b" })],
+            index: 1,
+            page: 0,
+            search: String::new(),
+            searching: false,
+            cursor: 0,
+            filter: None,
+            filter_label: None,
+        });
+        assert_eq!(cli.current_record(), Some(json!({ "id": "b" })));
+        cli.main = Main::Detail(Detail {
+            resource: 0,
+            record: json!({ "id": "c" }),
+            scroll: 0,
+        });
+        assert_eq!(cli.current_record(), Some(json!({ "id": "c" })));
+        cli.main = Main::Empty("".into());
+        assert_eq!(cli.current_record(), None);
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_function_is_confirmed_before_it_runs() {
+        let mut cli = console(Vec::new());
+        cli.manifest.functions.push(api::FunctionManifest {
+            name: "wipe".into(),
+            label: "Wipe".into(),
+            confirm: Some("Really wipe everything?".into()),
+            ..Default::default()
+        });
+        let mut form = Form::new(
+            "Wipe",
+            "Run",
+            FormKind::Run { function: 0 },
+            vec![FormField::text("body", "Request body")],
+        );
+        form.raw_body = true;
+        form.fields[0].set("{}".into());
+        cli.main = Main::Form(form);
+
+        cli.submit().await;
+
+        // The confirmation is on screen and the function has not run: nothing
+        // has been sent, because there is nothing to send yet.
+        let confirm = cli.confirm.expect("a confirmation should be on screen");
+        assert_eq!(confirm.prompt, "Really wipe everything?");
+        assert!(matches!(
+            confirm.action,
+            ConfirmAction::Run { function: 0, .. }
+        ));
+    }
 }

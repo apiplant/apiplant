@@ -273,6 +273,72 @@ mod tests {
         assert_eq!(key_from("/", r#"{"hello":"world"}"#).as_deref(), None);
     }
 
+    #[test]
+    fn the_key_parameter_is_found_among_other_parameters() {
+        // With more than one pair, the query is scanned for the key's name,
+        // not taken at the first pair — and both spellings are accepted.
+        assert_eq!(
+            key_from("/?foo=bar&key=ap_live_9", "").as_deref(),
+            Some("ap_live_9")
+        );
+        assert_eq!(
+            key_from("/?api_key=ap_live_8&x=1", "").as_deref(),
+            Some("ap_live_8")
+        );
+        // A pair named `key` with an empty value is no key.
+        assert_eq!(key_from("/?key=&x=1", "").as_deref(), None);
+        // A body that is JSON without a key falls through to the query.
+        assert_eq!(
+            key_from("/?key=ap_live_7", r#"{"hello":"world"}"#).as_deref(),
+            Some("ap_live_7")
+        );
+    }
+
+    #[test]
+    fn percent_and_plus_are_decoded_and_everything_else_is_kept() {
+        assert_eq!(decode(""), "");
+        assert_eq!(decode("plain"), "plain");
+        assert_eq!(decode("%41%42"), "AB");
+        assert_eq!(decode("a%20b"), "a b");
+        // `+` is a space, the form-encoding way.
+        assert_eq!(decode("a+b"), "a b");
+        // A `%` that is not the start of a valid pair is kept as itself.
+        assert_eq!(decode("%zz"), "%zz");
+        assert_eq!(decode("100%"), "100%");
+        // Too short to be a pair: the `%` and what follows are kept.
+        assert_eq!(decode("%4"), "%4");
+        assert_eq!(decode("a%41b"), "aAb");
+    }
+
+    #[test]
+    fn a_needle_is_found_in_a_haystack_or_not() {
+        let haystack = b"GET /?key=abc HTTP/1.1";
+        assert_eq!(find(haystack, b"key=abc"), Some(6));
+        assert_eq!(find(haystack, b"key=abd"), None);
+        // The needle at the very start and the very end are found too.
+        assert_eq!(find(haystack, b"GET"), Some(0));
+        assert_eq!(find(haystack, b"1.1"), Some(haystack.len() - 3));
+        assert_eq!(find(b"", b"x"), None);
+    }
+
+    #[test]
+    fn a_header_is_read_by_name_case_insensitively_and_trimmed() {
+        let head = "POST / HTTP/1.1\nHost: x\n  Content-Type:   application/json  \n\n";
+        assert_eq!(header(head, "content-type"), Some("application/json"));
+        assert_eq!(header(head, "CONTENT-TYPE"), Some("application/json"));
+        assert_eq!(header(head, "host"), Some("x"));
+        assert_eq!(header(head, "no-such"), None);
+        // A line without a colon is not a header.
+        assert_eq!(header("\r\n", "host"), None);
+    }
+
+    #[test]
+    fn a_blank_is_no_key() {
+        assert_eq!(non_empty(""), None);
+        assert_eq!(non_empty("   "), None);
+        assert_eq!(non_empty("  ap_live  ").as_deref(), Some("ap_live"));
+    }
+
     #[tokio::test]
     async fn the_callback_url_names_the_port_we_are_listening_on() {
         let handoff = Handoff::start("http://localhost:8080/admin/", "laptop")

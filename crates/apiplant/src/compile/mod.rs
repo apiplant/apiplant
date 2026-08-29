@@ -345,7 +345,15 @@ mod tests {
     use super::rust::{cdylib_from_cargo_output, manifest};
     use super::source::{classify_directory, crate_name, library_name};
     use super::*;
+    use filetime::FileTime;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    /// Pin a file's mtime to an exact offset, so staleness is judged at a
+    /// known difference rather than at the clock's mercy.
+    fn set_mtime(path: &std::path::Path, seconds: i64) {
+        let time = SystemTime::UNIX_EPOCH + Duration::from_secs(seconds as u64);
+        filetime::set_file_mtime(path, FileTime::from_system_time(time)).unwrap();
+    }
 
     fn temp_dir(label: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -366,6 +374,113 @@ mod tests {
         assert_eq!(crate_name("post-hooks"), "post_hooks");
         assert_eq!(crate_name("Post Hooks"), "post_hooks");
         assert_eq!(crate_name("2fa"), "_2fa");
+    }
+
+    #[test]
+    fn a_typescript_function_is_refused_by_name_in_a_slim_build() {
+        #[cfg(not(feature = "typescript"))]
+        {
+            let dir = temp_dir("refuse-ts");
+            let source = Source {
+                path: dir.join("functions/scripty.ts"),
+                crate_name: "scripty".into(),
+                language: Language::TypeScript,
+                is_dir: false,
+            };
+            let error = refuse_typescript(&[source]).expect_err("a slim build refuses");
+            // The refusal names the file, so the fix is findable.
+            assert!(error.to_string().contains("scripty.ts"), "{error}");
+
+            // A build that has no TypeScript at all passes through.
+            let rust = Source {
+                path: dir.join("functions/greet.rs"),
+                crate_name: "greet".into(),
+                language: Language::Rust,
+                is_dir: false,
+            };
+            refuse_typescript(&[rust]).expect("no TypeScript, nothing to refuse");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_source_is_stale_only_when_it_is_newer_than_its_library() {
+        let dir = temp_dir("path-stale");
+        let source = dir.join("greet.rs");
+        let library = dir.join("libgreet.so");
+        std::fs::write(&source, "// fn").unwrap();
+        std::fs::write(&library, "binary").unwrap();
+
+        // No library at all is always a build.
+        std::fs::remove_file(&library).unwrap();
+        assert!(path_is_stale(&source, &library), "missing library is stale");
+        std::fs::write(&library, "binary").unwrap();
+
+        // Older, equal, and newer: only the last rebuilds. An equal mtime is
+        // not a change — the editor saved, the build ran, done.
+        set_mtime(&library, 200);
+        set_mtime(&source, 100);
+        assert!(
+            !path_is_stale(&source, &library),
+            "older source is up to date"
+        );
+        set_mtime(&source, 200);
+        assert!(
+            !path_is_stale(&source, &library),
+            "an equal mtime is not a change"
+        );
+        set_mtime(&source, 201);
+        assert!(path_is_stale(&source, &library), "a newer source rebuilds");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_directory_is_stale_when_any_source_under_it_is_newer() {
+        let dir = temp_dir("dir-stale");
+        let functions = dir.join("functions");
+        let library = dir.join("libgreet.so");
+
+        // No library yet: build it, whatever the sources say.
+        assert!(
+            dir_is_stale(&functions, &library),
+            "missing library is stale"
+        );
+        std::fs::write(&library, "binary").unwrap();
+        set_mtime(&library, 300);
+
+        // A directory with no sources at all is judged stale: nothing to
+        // compare against is not proof that the build is current.
+        assert!(dir_is_stale(&functions, &library), "no sources, rebuild");
+
+        // One source equal to the library is not a change; one past it is.
+        let first = functions.join("greet.rs");
+        std::fs::write(&first, "// fn").unwrap();
+        set_mtime(&first, 300);
+        assert!(
+            !dir_is_stale(&functions, &library),
+            "an equal mtime is not a change"
+        );
+        set_mtime(&first, 301);
+        assert!(
+            dir_is_stale(&functions, &library),
+            "a newer source rebuilds"
+        );
+
+        // Editing a second module is a change too — the directory is judged
+        // against its newest source, not the one that was built last.
+        std::fs::write(&library, "binary").unwrap();
+        set_mtime(&library, 400);
+        set_mtime(&first, 301);
+        let second = functions.join("audit.rs");
+        std::fs::write(&second, "// fn").unwrap();
+        set_mtime(&second, 401);
+        assert!(
+            dir_is_stale(&functions, &library),
+            "a newer second module rebuilds"
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
