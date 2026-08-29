@@ -293,6 +293,11 @@ Facts, not prose. The URL and its lifetime stay the framework's to decide —
 they are not the template's to get wrong — while every sentence around them is
 yours.
 
+`app_name` and `logo_url` belong to the app rather than to any one message, so
+they are in scope for a template a *function* sends too — `url` and
+`expires_in` are not, since there is no token behind that message: a function
+passes whatever its own template names.
+
 ### The plain-text half
 
 Write `<name>.text.liquid` beside it, or let one be derived from the rendered

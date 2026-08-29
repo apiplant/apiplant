@@ -339,21 +339,37 @@ fn dotenv_value(raw: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Set variables for one test, and remove them afterwards even if it fails.
-    struct Vars(&'static [(&'static str, &'static str)]);
+    /// The process environment is shared by every test in the binary, and
+    /// cargo runs them on threads, so tests that set variables have to take
+    /// turns — otherwise one test's cleanup unsets another's variable.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Set variables for one test, and remove them afterwards even if it
+    /// fails. Holds [`ENV_LOCK`] for its lifetime, so only construct one at a
+    /// time within a test.
+    struct Vars {
+        pairs: &'static [(&'static str, &'static str)],
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
 
     impl Vars {
         fn set(pairs: &'static [(&'static str, &'static str)]) -> Vars {
+            // A test that fails while holding the lock poisons it; the
+            // remaining tests still want their turn.
+            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             for (name, value) in pairs {
                 std::env::set_var(name, value);
             }
-            Vars(pairs)
+            Vars {
+                pairs,
+                _guard: guard,
+            }
         }
     }
 
     impl Drop for Vars {
         fn drop(&mut self) {
-            for (name, _) in self.0 {
+            for (name, _) in self.pairs {
                 std::env::remove_var(name);
             }
         }
@@ -398,7 +414,7 @@ mod tests {
 
     #[test]
     fn a_default_covers_an_unset_or_empty_variable() {
-        let _vars = Vars::set(&[("APIPLANT_T_EMPTY", "")]);
+        let _vars = Vars::set(&[("APIPLANT_T_EMPTY", ""), ("APIPLANT_T_REGION", "eu-west-1")]);
 
         assert_eq!(expanded("${APIPLANT_T_UNSET:-us-east-1}"), "us-east-1");
         // `export VAR=` should behave like "not set", or a blank in the
@@ -411,7 +427,6 @@ mod tests {
             "postgres://a:b@c/d"
         );
 
-        let _set = Vars::set(&[("APIPLANT_T_REGION", "eu-west-1")]);
         assert_eq!(expanded("${APIPLANT_T_REGION:-us-east-1}"), "eu-west-1");
     }
 

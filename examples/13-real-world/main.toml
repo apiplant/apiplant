@@ -16,3 +16,6 @@ jwt_secret = "example-secret-change-me"
 enabled = true
 path = "/docs"
 title = "13 · Real-world app"
+
+[organization]
+enabled = false

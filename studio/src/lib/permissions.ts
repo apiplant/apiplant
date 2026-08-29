@@ -87,10 +87,26 @@ export function policyVocabulary(): { roles: string[]; classes: string[] } {
  * when it is the whole set, so a `private` clause with company is a clause
  * naming nobody on an action that is still very much exposed.
  */
-export function permissionConflicts(rules: PermissionSet): string[] {
+export function permissionConflicts(
+  rules: PermissionSet,
+  action?: string,
+): string[] {
   const issues: string[] = [];
   const word = (rule: { policy: string; effect: string }) =>
     `\`${rule.effect} ${rule.policy}\``;
+
+  // Ownership is a test against a column on an existing row, and a create has
+  // no row yet — the server rejects this outright at load time.
+  if (
+    action === "create" &&
+    rules.some(
+      (rule) => rule.effect === "own" || parsePolicy(rule.policy).level === "owner",
+    )
+  ) {
+    issues.push(
+      "`owner` makes no sense on create: there is no row to own yet. The server refuses to start with this. Use `member`, a role, or `authenticated`.",
+    );
+  }
 
   const seen = new Set<string>();
   for (const rule of rules) {

@@ -16,6 +16,24 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+/// The one organisation an app has when `[organization] enabled = false`, and
+/// the account every request acts as when `[auth] enabled = false`.
+///
+/// Fixed values rather than generated ones: every scoped row points at the
+/// organisation, so it has to be the same id after a restart, after a second
+/// `migrate`, and in a second process against the same database. Turning either
+/// switch back on then leaves those rows attached to something that exists,
+/// rather than orphaning them.
+///
+/// Strings because this crate deliberately depends on nothing that isn't
+/// `serde` or `toml`; the crates that need real UUIDs parse them once.
+pub const SOLO_ORGANIZATION_ID: &str = "a1b00000-0000-0000-0000-000000000001";
+/// See [`SOLO_ORGANIZATION_ID`].
+pub const SOLO_USER_ID: &str = "a1b00000-0000-0000-0000-000000000002";
+/// The name the solo organisation is seeded with, so a dashboard that shows an
+/// organisation somewhere has a word to show.
+pub const SOLO_ORGANIZATION_NAME: &str = "Default";
+
 /// Fully-resolved server configuration.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -185,6 +203,21 @@ impl DatabaseConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AuthConfig {
+    /// Whether this app has accounts at all (default true).
+    ///
+    /// Off is a real mode, not a lockout: there are no `/auth/*` endpoints, no
+    /// sessions and no API keys, the `user`, `api_key`, `oauth_connection`,
+    /// `invitation`, `auth_token`, `membership` and `membership_role` tables are
+    /// absent from the app entirely, and every caller is treated as the
+    /// deployment's administrator — so the dashboard is a single-user back
+    /// office where everything is editable. `private` still means `private`:
+    /// it is not a permission anybody holds but a statement that something is
+    /// not reachable over the API, and it stays a `404`.
+    ///
+    /// Organisations are memberships of users, so turning this off turns
+    /// [`[organization] enabled`](OrganizationConfig::enabled) off with it —
+    /// see [`Config::organizations_enabled`].
+    pub enabled: bool,
     /// Secret used to sign session JWTs. Auto-generated (and warned about) when
     /// left empty — set it in production so tokens survive restarts.
     pub jwt_secret: String,
@@ -253,6 +286,7 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         AuthConfig {
+            enabled: true,
             jwt_secret: String::new(),
             session_ttl_secs: 60 * 60 * 24 * 7,
             allow_registration: true,
@@ -273,19 +307,19 @@ impl AuthConfig {
     /// can send mail at all. An unset flag follows the mailer: asking for a
     /// confirmation nobody can deliver would lock every new account out.
     pub fn requires_email_verification(&self, email_enabled: bool) -> bool {
-        self.require_email_verification.unwrap_or(email_enabled) && email_enabled
+        self.enabled && self.require_email_verification.unwrap_or(email_enabled) && email_enabled
     }
 
     /// Whether invitations are offered. See
     /// [`requires_email_verification`](Self::requires_email_verification) for
     /// why an explicit `true` still needs a mailer.
     pub fn invitations_enabled(&self, email_enabled: bool) -> bool {
-        self.allow_invitations.unwrap_or(email_enabled) && email_enabled
+        self.enabled && self.allow_invitations.unwrap_or(email_enabled) && email_enabled
     }
 
     /// Whether password reset is offered.
     pub fn password_reset_enabled(&self, email_enabled: bool) -> bool {
-        self.allow_password_reset.unwrap_or(email_enabled) && email_enabled
+        self.enabled && self.allow_password_reset.unwrap_or(email_enabled) && email_enabled
     }
 }
 
@@ -454,6 +488,21 @@ impl Default for AdminConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct OrganizationConfig {
+    /// Whether this app is multitenant (default true).
+    ///
+    /// Off means there is one implicit organisation and everybody is in it.
+    /// The `organization` table and every resource's `organization_id` column
+    /// stay exactly where they are — this is a switch, not a migration — and
+    /// all of them point at one auto-provisioned row, so turning tenancy back
+    /// on later loses nothing. What changes is what the words mean: the
+    /// `X-Organization` header is ignored, `member` and `role:` stop being
+    /// questions about *where* a caller stands, and the dashboard drops its
+    /// organisation switcher and organisation settings.
+    ///
+    /// Read [`Config::organizations_enabled`] rather than this field: an app
+    /// with no accounts has nobody to be a member, so `[auth] enabled = false`
+    /// forces this off regardless of what is written here.
+    pub enabled: bool,
     /// Who administers the deployment, in the same grammar as `[permissions]`
     /// — typically an organisation class of its own, e.g.
     /// `"role:admin@org_class=staff"`.
@@ -494,6 +543,7 @@ pub struct OrganizationConfig {
 impl Default for OrganizationConfig {
     fn default() -> Self {
         OrganizationConfig {
+            enabled: true,
             global_admin_role: "private".to_string(),
             default_org_class: String::new(),
         }
@@ -552,6 +602,13 @@ impl Default for PublicConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct EmailConfig {
+    /// Turn the feature off without unpicking its settings (default true).
+    ///
+    /// Setting it to `false` is how an app pauses outbound mail while keeping the
+    /// credentials and options below intact, so turning it back on is one
+    /// keystroke rather than a re-configuration. Naming no provider still
+    /// leaves it off — this switch only ever subtracts.
+    pub enabled: bool,
     /// `none` (default), `smtp`, `ses`, `sendgrid`, `brevo` (aka `sendinblue`),
     /// `mailjet`, `mailgun`, `postmark` or `resend`.
     pub provider: String,
@@ -588,6 +645,7 @@ pub struct EmailConfig {
 impl Default for EmailConfig {
     fn default() -> Self {
         EmailConfig {
+            enabled: true,
             provider: "none".to_string(),
             from: String::new(),
             from_name: String::new(),
@@ -604,13 +662,16 @@ impl Default for EmailConfig {
 }
 
 impl EmailConfig {
-    /// Whether a provider is configured at all. `none` and the empty string
-    /// both mean "this app doesn't send mail".
+    /// Whether mail can actually be sent: the switch is on *and* a provider
+    /// is named. `none` and the empty string both mean "this app doesn't send
+    /// mail", so an app that never wrote an `[email]` section stays off
+    /// however `enabled` reads.
     pub fn enabled(&self) -> bool {
-        !matches!(
-            self.provider.trim().to_ascii_lowercase().as_str(),
-            "" | "none"
-        )
+        self.enabled
+            && !matches!(
+                self.provider.trim().to_ascii_lowercase().as_str(),
+                "" | "none"
+            )
     }
 }
 
@@ -1047,6 +1108,13 @@ impl QueuesConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct OAuthConfig {
+    /// Turn the feature off without unpicking its settings (default true).
+    ///
+    /// Setting it to `false` is how an app pauses signing in through a third party while keeping the
+    /// credentials and options below intact, so turning it back on is one
+    /// keystroke rather than a re-configuration. Naming no provider still
+    /// leaves it off — this switch only ever subtracts.
+    pub enabled: bool,
     /// Whether a **verified** address from a provider may sign somebody in to
     /// an existing account carrying the same address (default true).
     ///
@@ -1108,6 +1176,7 @@ pub struct OAuthConfig {
 impl Default for OAuthConfig {
     fn default() -> Self {
         OAuthConfig {
+            enabled: true,
             link_by_verified_email: true,
             state_ttl_secs: 600,
             success_redirect: "/".to_string(),
@@ -1123,7 +1192,7 @@ impl Default for OAuthConfig {
 impl OAuthConfig {
     /// Whether any provider is usable — which is what mounts the routes.
     pub fn enabled(&self) -> bool {
-        self.providers.values().any(OAuthProviderConfig::is_active)
+        self.enabled && self.providers.values().any(OAuthProviderConfig::is_active)
     }
 
     /// The names of the providers that are on, in a stable order.
@@ -1217,6 +1286,13 @@ impl OAuthProviderConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PaymentsConfig {
+    /// Turn the feature off without unpicking its settings (default true).
+    ///
+    /// Setting it to `false` is how an app pauses taking money while keeping the
+    /// credentials and options below intact, so turning it back on is one
+    /// keystroke rather than a re-configuration. Naming no provider still
+    /// leaves it off — this switch only ever subtracts.
+    pub enabled: bool,
     /// `none` (default) or `stripe`.
     pub provider: String,
     /// Stripe secret key (`sk_live_…` / `sk_test_…`). Required once enabled.
@@ -1284,6 +1360,7 @@ pub struct PaymentsConfig {
 impl Default for PaymentsConfig {
     fn default() -> Self {
         PaymentsConfig {
+            enabled: true,
             provider: "none".to_string(),
             secret_key: String::new(),
             publishable_key: String::new(),
@@ -1304,13 +1381,15 @@ impl Default for PaymentsConfig {
 }
 
 impl PaymentsConfig {
-    /// Whether a provider is configured at all. `none` and the empty string
-    /// both mean "this app doesn't take money".
+    /// Whether money can actually be taken: the switch is on *and* a provider
+    /// is named. `none` and the empty string both mean "this app doesn't take
+    /// money".
     pub fn enabled(&self) -> bool {
-        !matches!(
-            self.provider.trim().to_ascii_lowercase().as_str(),
-            "" | "none"
-        )
+        self.enabled
+            && !matches!(
+                self.provider.trim().to_ascii_lowercase().as_str(),
+                "" | "none"
+            )
     }
 
     /// The currency to use for an amount that didn't name one, lowercased the
@@ -1384,6 +1463,13 @@ impl PaymentsConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AiConfig {
+    /// Turn the feature off without unpicking its settings (default true).
+    ///
+    /// Setting it to `false` is how an app pauses the assistant while keeping the
+    /// credentials and options below intact, so turning it back on is one
+    /// keystroke rather than a re-configuration. Naming no provider still
+    /// leaves it off — this switch only ever subtracts.
+    pub enabled: bool,
     /// `none` (default), `openai`, `anthropic` or `custom`.
     pub provider: String,
     /// Where to send the request.
@@ -1471,6 +1557,7 @@ pub struct AiConfig {
 impl Default for AiConfig {
     fn default() -> Self {
         AiConfig {
+            enabled: true,
             provider: "none".to_string(),
             endpoint: String::new(),
             model: String::new(),
@@ -1487,13 +1574,15 @@ impl Default for AiConfig {
 }
 
 impl AiConfig {
-    /// Whether a provider is configured at all. `none` and the empty string
-    /// both mean "this app has no assistant".
+    /// Whether the assistant can actually answer: the switch is on *and* a
+    /// provider is named. `none` and the empty string both mean "this app has
+    /// no assistant".
     pub fn enabled(&self) -> bool {
-        !matches!(
-            self.provider.trim().to_ascii_lowercase().as_str(),
-            "" | "none"
-        )
+        self.enabled
+            && !matches!(
+                self.provider.trim().to_ascii_lowercase().as_str(),
+                "" | "none"
+            )
     }
 
     /// The sampling temperature to send, or `None` to let the provider decide.
@@ -1750,14 +1839,30 @@ impl ObservabilityConfig {
 }
 
 impl Config {
+    /// Whether this app has accounts at all — the switch every auth endpoint,
+    /// every permission check and the whole `user` family of tables hangs off.
+    pub fn auth_enabled(&self) -> bool {
+        self.auth.enabled
+    }
+
+    /// Whether this app is multitenant.
+    ///
+    /// The derived answer, and the one everything should ask: `[organization]
+    /// enabled` says what the app *wants*, but an app with no accounts has
+    /// nobody to be a member of anything, so no-auth is always no-tenancy.
+    pub fn organizations_enabled(&self) -> bool {
+        self.organization.enabled && self.auth.enabled
+    }
+
     /// Whether *any* door to impersonation is open, which is what decides
     /// whether the endpoint is mounted and whether the dashboard offers it:
     /// `[auth] allow_impersonation` for a tenant's own admins, and
     /// `[organization] global_admin_role` for the back office, which may act
     /// as anyone wherever it names somebody.
     pub fn impersonation_enabled(&self) -> bool {
-        self.auth.allow_impersonation
-            || self.organization.global_admin_policy().level != Access::Private
+        self.auth_enabled()
+            && (self.auth.allow_impersonation
+                || self.organization.global_admin_policy().level != Access::Private)
     }
 
     /// Load `main.toml` from an app directory, applying defaults for anything

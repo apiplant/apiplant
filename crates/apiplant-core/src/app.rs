@@ -47,6 +47,15 @@ impl App {
             resources.insert(name.to_string(), crate::defaults::parse_builtin(src));
         }
 
+        // 1a. The account tables, only for an app that has accounts. An app
+        //     with `[auth] enabled = false` carries neither them nor the
+        //     `/auth/*` endpoints — see `defaults::auth_builtins`.
+        if config.auth_enabled() {
+            for (name, src) in crate::defaults::auth_builtins() {
+                resources.insert(name.to_string(), crate::defaults::parse_builtin(src));
+            }
+        }
+
         // 1b. The billing resources, only for an app that takes money. They
         //     are seeded here rather than in `builtins()` so that an app with
         //     no `[payments]` provider carries neither the tables nor the
@@ -115,6 +124,34 @@ impl App {
                 let resource = Resource::load(&path)?;
                 tracing::info!(resource = %resource.meta.name, "loaded resource");
                 resources.insert(resource.meta.name.clone(), resource);
+            }
+        }
+
+        // 2b. A reference to a table this app doesn't have is a foreign key
+        //     that cannot be created, and the honest place to say so is here —
+        //     with the resource name and the field still in hand — rather than
+        //     halfway through `migrate`, where the message is a Postgres error
+        //     about a relation nobody wrote.
+        if !config.auth_enabled() {
+            for resource in resources.values() {
+                for (field_name, field) in resource.fields.iter() {
+                    let Some(target) = field.references.as_deref() else {
+                        continue;
+                    };
+                    if crate::defaults::auth_builtins()
+                        .iter()
+                        .any(|(name, _)| *name == target)
+                    {
+                        return Err(crate::Error::Schema {
+                            resource: resource.meta.name.clone(),
+                            message: format!(
+                                "field `{field_name}` references `{target}`, which this app does \
+                                 not have: `[auth] enabled = false` removes the account tables. \
+                                 Drop the field, or turn authentication back on."
+                            ),
+                        });
+                    }
+                }
             }
         }
 

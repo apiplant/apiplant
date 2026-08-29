@@ -27,6 +27,42 @@ pub async fn migrate(conn: &impl ConnectionTrait, app: &App) -> Result<(), Error
     for resource in app.resources_in_dependency_order() {
         add_foreign_keys(conn, resource, app).await?;
     }
+    ensure_solo_organization(conn, app).await?;
+    Ok(())
+}
+
+/// Give a single-tenant app the one organisation everything belongs to.
+///
+/// With `[organization] enabled = false` every scoped row still carries an
+/// `organization_id`, and the foreign key on it is real — so the row it points
+/// at has to exist before the first write, not after somebody notices. Written
+/// here, at the end of migrate, for the same reason the columns are: it is part
+/// of making the database match what the app says it is.
+///
+/// Idempotent, and idempotent by *id* rather than by name: an operator who
+/// renamed it keeps their name.
+async fn ensure_solo_organization(conn: &impl ConnectionTrait, app: &App) -> Result<(), Error> {
+    if app.config.organizations_enabled() {
+        return Ok(());
+    }
+    let Some(organization) = app.resources.get("organization") else {
+        return Ok(());
+    };
+    let table = quote_ident(&organization.table_name())?;
+    // Only the columns every `organization` is guaranteed to have. An app that
+    // replaced the built-in with one that requires more of its own is telling
+    // us it manages its own tenants, and this insert would be guessing.
+    let sql = format!(
+        "INSERT INTO {table} ({id}, {name}) VALUES ('{org_id}', '{org_name}') \
+         ON CONFLICT ({id}) DO NOTHING",
+        id = quote_ident("id")?,
+        name = quote_ident("name")?,
+        org_id = apiplant_core::SOLO_ORGANIZATION_ID,
+        org_name = apiplant_core::SOLO_ORGANIZATION_NAME,
+    );
+    conn.execute(Statement::from_string(DatabaseBackend::Postgres, sql))
+        .await?;
+    tracing::debug!("ensured the solo organisation");
     Ok(())
 }
 

@@ -136,6 +136,7 @@ apiplant targets **PostgreSQL**, using `to_jsonb`, `gen_random_uuid()`,
 
 | Key | Default | Notes |
 |-----|---------|-------|
+| `enabled` | `true` | Whether this app has accounts at all. See [Turning authentication off](#turning-authentication-off) below. |
 | `jwt_secret` | *(empty)* | HMAC secret for session JWTs. **Set this in production**: an empty value generates a random secret at boot, so tokens do not survive a restart. |
 | `session_ttl_secs` | `604800` (7d) | Lifetime of issued session tokens. |
 | `allow_registration` | `true` | Whether self-service signup is open. `false` closes `POST /auth/register` *and* anonymous `POST <base>/user`. |
@@ -156,6 +157,38 @@ explicit `true` still requires a provider, since otherwise every new account
 would be locked behind a confirmation that cannot be delivered.
 
 See [Authentication](authentication.md) for the flows themselves.
+
+### Turning authentication off
+
+```toml
+[auth]
+enabled = false
+```
+
+Off is a real mode, not a lockout. There is one caller, they are the
+deployment's administrator, and the admin dashboard is a single-user back
+office where everything is editable. Concretely:
+
+* no `/auth/*` or `/auth/oauth/*` endpoints are mounted, and none are described
+  in the OpenAPI document;
+* the `user`, `membership`, `membership_role`, `api_key`, `oauth_connection`,
+  `invitation` and `auth_token` resources are absent from the app entirely — as
+  `billing_*` is absent without a `[payments]` provider;
+* every permission level except `private` resolves to yes. `private` is not a
+  permission anybody holds but a statement that something is not reachable over
+  the API, so it stays a `404` here exactly as it is everywhere else;
+* `[organization] enabled` is forced off with it, because an organisation is a
+  set of memberships of users.
+
+The `organization` table stays — it is the tenant, not an auth table — and every
+org-scoped row points at the one organisation described below. Migrations are
+additive, so turning accounts back on recreates the seven tables and loses
+nothing.
+
+A resource with a `references = "user"` field is refused at load in this mode,
+naming the file and the field: a foreign key to a table the app does not have
+would otherwise fail halfway through `migrate` as a Postgres error about a
+relation nobody wrote.
 
 ## `[rate_limit]`
 
@@ -266,6 +299,7 @@ See [Admin dashboard](admin.md).
 
 | Key | Default | Notes |
 |-----|---------|-------|
+| `enabled` | `true` | Whether this app is multitenant. See [Turning organizations off](#turning-organizations-off) below. |
 | `global_admin_role` | `private` | The deployment's own administrators, in the [permissions](permissions.md) grammar. They write any organisation's `org_class`, list every organisation and every user, and read and write data in all of them — role checks and organisation checks do not apply to them, and `private` still does. The default names nobody: the class column is server-owned and classes come from seed data or SQL. |
 | `default_org_class` | unset | The class stamped on a new organisation that has none — every organisation the API creates, including the personal one each account is given. Unset leaves them unclassed, which no `@org_class=` qualifier matches. A class editor who names a class on create keeps theirs. |
 
@@ -284,6 +318,32 @@ global_admin_role = "role:admin@org_class=admin"
 ```
 
 See [Organisation classes](permissions.md#organisation-classes).
+
+### Turning organizations off
+
+```toml
+[organization]
+enabled = false
+```
+
+One implicit organisation, and everybody is in it. Unlike `[auth] enabled`, this
+drops no tables: `organization` stays, every `organization_id` column stays, and
+all of them point at one auto-provisioned row —
+`a1b00000-0000-0000-0000-000000000001`, a fixed id so it survives a restart and
+a second `migrate`. Turning tenancy back on later leaves those rows attached to
+an organisation that already exists.
+
+What changes is what the words mean:
+
+* the `X-Organization` header selects nothing and is ignored rather than
+  refused — a client that keeps sending it is not wrong, it is talking about
+  something this app no longer has;
+* `member` and `role:<name>` stop being questions about *where* a caller
+  stands. Everybody is a member, and an admin;
+* the admin dashboard drops its organisation switcher, its Team and
+  Organization screens, and the back office's organisation list.
+
+`[auth] enabled = false` forces this off regardless of what is written here.
 
 ## `[public]`
 
@@ -311,6 +371,7 @@ sent that the application did not compose.
 
 | Key | Default | Notes |
 |-----|---------|-------|
+| `enabled` | `true` | Turns the feature off without unpicking the settings below. Naming no provider still leaves it off — this switch only ever subtracts. |
 | `provider` | `none` | `smtp`, `ses` (`aws`), `sendgrid`, `brevo` (`sendinblue`), `mailjet`, `mailgun`, `postmark` or `resend`. |
 | `from` | *(empty)* | Envelope sender. Required once a provider is named; a message may override it. |
 | `from_name` | *(empty)* | Display name beside `from`. |
@@ -426,6 +487,7 @@ adds the `billing_*` resources and the `/billing` endpoints. See
 
 | Key | Default | Notes |
 |-----|---------|-------|
+| `enabled` | `true` | Turns the feature off without unpicking the settings below. Naming no provider still leaves it off — this switch only ever subtracts. |
 | `provider` | `none` | `none` or `stripe`. |
 | `secret_key` | *(empty)* | `sk_…`. Required once a provider is named; a `pk_…` here is detected by its prefix at boot. |
 | `publishable_key` | *(empty)* | `pk_…`. Served to browsers by `GET <base>/billing/config`; it is not a secret. |
@@ -452,8 +514,9 @@ boot.
 
 ## `[oauth]`
 
-Signing in with somebody else's account. Off until a provider block carries a
-`client_id`; naming one mounts the `<base>/auth/oauth` endpoints and adds the
+Signing in with somebody else's account. `enabled` defaults to `true` and
+`enabled = false` turns every provider off at once; otherwise it is off until a
+provider block carries a `client_id`; naming one mounts the `<base>/auth/oauth` endpoints and adds the
 `oauth_state` resource. See
 [Authentication](authentication.md#signing-in-with-somebody-elses-account).
 
@@ -470,6 +533,7 @@ say).
 
 | Key | Default | Notes |
 |-----|---------|-------|
+| `enabled` | `true` | Turns every provider off at once, without emptying the blocks below. `[auth] enabled = false` turns them off too — there is nothing to sign in to. |
 | `link_by_verified_email` | `true` | May a **verified** address from a provider sign somebody in to an existing account with that address? An *unverified* one never can, whatever this says. Off means such a match is refused with an answer telling the caller to sign in the way they already can and link from that session. |
 | `state_ttl_secs` | `600` | How long somebody has to get through a consent screen. Clamped to 60–3600. |
 | `success_redirect` | `/` | Where the redirecting callback lands, as a path. A caller may override it per flow with `?return_to=/somewhere`, accepted only as a path — never a full URL. |
@@ -510,6 +574,7 @@ See [AI](ai.md).
 
 | Key | Default | Notes |
 |-----|---------|-------|
+| `enabled` | `true` | Turns the feature off without unpicking the settings below. Naming no provider still leaves it off — this switch only ever subtracts. |
 | `provider` | `none` | `none`, `openai`, `anthropic` or `custom`. `custom` covers anything implementing the OpenAI chat-completions shape, such as llama.cpp, vLLM, Ollama, LM Studio or a gateway. |
 | `endpoint` | *(provider's own API)* | An origin (`http://localhost:8080`), a base (`…/v1`) or the full path (`…/v1/chat/completions`, used as written). Required for `custom`. |
 | `model` | *(empty)* | Requested when a call does not name one. A server hosting a single model ignores it. |

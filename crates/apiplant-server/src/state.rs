@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use apiplant_ai::Ai;
-use apiplant_auth::{Authenticator, OrgMembership, Principal, Session as AuthSession};
+use apiplant_auth::{Authenticator, OrgMembership, Principal, Session as AuthSession, ADMIN_ROLE};
 use apiplant_cache::Cache;
 use apiplant_core::{Access, App, Policy, ORG_CLASS_FIELD};
 use apiplant_db::Db;
@@ -147,6 +147,21 @@ impl Statics {
     }
 }
 
+/// [`apiplant_core::SOLO_ORGANIZATION_ID`] as a real UUID — the one
+/// organisation an app has when `[organization] enabled = false`.
+///
+/// Written out here rather than parsed at every use so it stays a `const`; the
+/// test below is what keeps the two spellings from drifting.
+pub const SOLO_ORGANIZATION_ID: Uuid = Uuid::from_u128(0xa1b0_0000_0000_0000_0000_0000_0000_0001);
+
+/// [`apiplant_core::SOLO_USER_ID`] as a real UUID — the account every request
+/// acts as when `[auth] enabled = false`.
+///
+/// There are no accounts in that mode, but a great deal of the system —
+/// `created_by` stamps, hook contexts, audit fields — wants *an* id, and a
+/// fresh one per request would make every row look like a different person.
+pub const SOLO_USER_ID: Uuid = Uuid::from_u128(0xa1b0_0000_0000_0000_0000_0000_0000_0002);
+
 impl AppState {
     /// Resolve the caller (identity + organisation memberships) from the request.
     ///
@@ -155,6 +170,14 @@ impl AppState {
     /// organisation) are loaded fresh from the database so changes take effect
     /// immediately. Anonymous callers resolve to `None`.
     pub async fn resolve_principal(&self, req: &HttpRequest) -> Option<Principal> {
+        // With no accounts there is nobody to resolve and nothing to check, so
+        // every request is the same caller: the solo principal, admin of the
+        // one organisation. Returning `Some` rather than `None` is deliberate —
+        // `authenticated` is a level about having an identity, and in this mode
+        // everybody does.
+        if !self.auth_enabled() {
+            return Some(self.solo_principal());
+        }
         let session = self.resolve_session(req).await?;
         let mut organizations = self.load_memberships(session.user_id).await;
         // A pinned session sees one organisation and no other. Done by
@@ -164,6 +187,14 @@ impl AppState {
         // reached by something that forgot to ask about the lock.
         if let Some(locked) = session.org_lock {
             organizations.retain(|membership| membership.org_id == locked);
+        }
+        // With tenancy off, who you are is still a question and *where you
+        // stand* is not: rewriting the memberships here rather than special-
+        // casing `member` and `role:` at each site means every check downstream
+        // — `access.rs`, `crud.rs`, the agent routes, billing — answers from
+        // the one membership without knowing the switch exists.
+        if !self.organizations_enabled() {
+            organizations = vec![self.solo_membership()];
         }
         Some(Principal {
             user_id: session.user_id,
@@ -404,6 +435,13 @@ impl AppState {
     /// is never a safe guess — a request that does not say which organisation
     /// it means is answered as one that has none.
     pub fn active_org(&self, req: &HttpRequest, principal: &Option<Principal>) -> Option<Uuid> {
+        // One organisation means the header has nothing to choose between, so
+        // it is ignored rather than refused: a client that keeps sending it —
+        // an old build, a shared SDK — is not wrong, it is just talking about
+        // something this app no longer has.
+        if !self.organizations_enabled() {
+            return principal.is_some().then_some(SOLO_ORGANIZATION_ID);
+        }
         resolve_active_org(req, principal, self.is_global_admin(principal.as_ref()))
     }
 
@@ -426,6 +464,14 @@ impl AppState {
     /// applying the moment they looked at the tenant they were supporting
     /// would be no access at all, which is exactly how this reads a caller.
     pub fn is_global_admin(&self, principal: Option<&Principal>) -> bool {
+        // No accounts means no back office to be let into and none to be kept
+        // out of: there is one caller, and the only useful thing for them to be
+        // is the administrator. Saying so here — rather than at each of the
+        // three enforcement styles built on it — is what makes the whole app
+        // freely editable in that mode, `private` excepted.
+        if !self.auth_enabled() {
+            return true;
+        }
         let policy = self.app.config.organization.global_admin_policy();
         principal.is_some_and(|principal| is_global_admin(&policy, principal))
     }
@@ -437,6 +483,42 @@ impl AppState {
     // question through these four methods — rather than reading the flags —
     // keeps "is it configured" and "is it switched on" in one place, so no
     // caller can accidentally offer a door that cannot open.
+
+    /// Whether this app has accounts at all.
+    ///
+    /// The `/auth/*` routes are mounted on this and the `user` family of tables
+    /// exists on it. Off, every caller is the deployment's administrator — see
+    /// [`SOLO_USER_ID`].
+    pub fn auth_enabled(&self) -> bool {
+        self.app.config.auth_enabled()
+    }
+
+    /// Whether this app is multitenant.
+    ///
+    /// Off, `X-Organization` is ignored and every caller stands in
+    /// [`SOLO_ORGANIZATION_ID`]. Derived, so an app with no accounts is never
+    /// multitenant whatever `[organization] enabled` says.
+    pub fn organizations_enabled(&self) -> bool {
+        self.app.config.organizations_enabled()
+    }
+
+    /// The single membership every caller holds when tenancy is off: admin of
+    /// the one organisation, carrying the app's `default_org_class` so a
+    /// `@org_class=` permission still means something.
+    fn solo_membership(&self) -> OrgMembership {
+        OrgMembership::new(SOLO_ORGANIZATION_ID, Some(ADMIN_ROLE.to_string()), []).in_class(
+            self.app
+                .config
+                .organization
+                .default_class()
+                .map(str::to_string),
+        )
+    }
+
+    /// The caller every request is when auth is off.
+    fn solo_principal(&self) -> Principal {
+        Principal::new(SOLO_USER_ID, vec![self.solo_membership()])
+    }
 
     /// Whether this app can send email at all.
     pub fn email_enabled(&self) -> bool {
@@ -475,7 +557,7 @@ impl AppState {
     /// the endpoints nor the table — and the admin manifest says so, which is
     /// what stops a dashboard offering a button that would land on a 404.
     pub fn oauth_enabled(&self) -> bool {
-        self.oauth.is_some()
+        self.auth_enabled() && self.oauth.is_some()
     }
 
     /// Whether this app has an assistant at all.
@@ -581,6 +663,21 @@ fn resolve_active_org(
 mod tests {
     use super::*;
     use ntex::web::test;
+
+    /// The solo ids exist twice — as strings in `apiplant-core`, which depends
+    /// on no UUID crate, and as `const Uuid`s here. Two spellings of one value
+    /// is a thing that drifts, so it is asserted rather than trusted.
+    #[test]
+    fn solo_ids_match_the_core_spellings() {
+        assert_eq!(
+            SOLO_ORGANIZATION_ID,
+            Uuid::parse_str(apiplant_core::SOLO_ORGANIZATION_ID).unwrap()
+        );
+        assert_eq!(
+            SOLO_USER_ID,
+            Uuid::parse_str(apiplant_core::SOLO_USER_ID).unwrap()
+        );
+    }
 
     fn principal(orgs: &[(Uuid, Option<&str>)]) -> Principal {
         Principal::new(

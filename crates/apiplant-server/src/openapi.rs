@@ -75,11 +75,14 @@ pub fn build(app: &App, functions: &FunctionRegistry, email_enabled: bool) -> Va
         }
     }
 
-    // Built-in auth endpoints.
-    paths.insert("/auth/register".into(), auth_register_path());
-    paths.insert("/auth/login".into(), auth_login_path(app));
-    paths.insert("/auth/me".into(), auth_me_path());
-    paths.insert("/auth/apikeys".into(), auth_apikeys_path());
+    // Built-in auth endpoints, described only where they are mounted — an app
+    // with `[auth] enabled = false` has no accounts to document.
+    if app.config.auth_enabled() {
+        paths.insert("/auth/register".into(), auth_register_path());
+        paths.insert("/auth/login".into(), auth_login_path(app));
+        paths.insert("/auth/me".into(), auth_me_path());
+        paths.insert("/auth/apikeys".into(), auth_apikeys_path());
+    }
 
     // The mailbox flows, described only where they are mounted — the same three
     // conditions `build_app!` registers the routes under.

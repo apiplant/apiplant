@@ -278,12 +278,23 @@ export interface AdminManifest {
   api_base_url: string;
   docs_url: string | null;
   ai_assistance?: AdminAiAssistanceManifest;
+  /**
+   * Absent in an app with `[auth] enabled = false`, which has no accounts at
+   * all. Screens do not read this field directly for that question — the store
+   * fills a blank manifest in so every `manifest()!.auth.x` read stays valid,
+   * and {@link authEnabled} in `store.ts` is what tells them the truth.
+   */
   auth: AuthManifest;
   resources: ResourceManifest[];
   functions: FunctionManifest[];
   agents: AgentManifest[];
   /** Present only in an app whose `[payments]` section names a provider. */
   billing?: BillingManifest;
+  /**
+   * Absent in an app with `[organization] enabled = false` — one implicit
+   * organisation, so nothing to switch between and no tenancy settings to
+   * write. See {@link organizationsEnabled} in `store.ts`.
+   */
   organization?: OrganizationManifest;
 }
 

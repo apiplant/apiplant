@@ -49,7 +49,9 @@ import {
   navigationGroups,
   dismissAllToasts,
   notify,
+  authEnabled,
   organizationLabel,
+  organizationsEnabled,
   refreshSession,
   reportError,
   resourceByName,
@@ -100,7 +102,10 @@ export function App() {
         // visible to a read in this same tick.
         document.title = loaded.title ?? "apiplant admin";
         if (arrived) notify("success", "Welcome back.");
-        if (signedInNow()) {
+        // `signedInNow()` is true in an app with no accounts — there is one
+        // caller and they are already here — but there is no `/auth/me` to
+        // verify them against, so the check is skipped rather than failed.
+        if (loaded.auth && signedInNow()) {
           try {
             // Verify the stored credential before loading anything with it;
             // an invalid token is dropped here and the sign-in screen takes
@@ -264,7 +269,10 @@ function ImpersonationBanner() {
 }
 
 function TopBar(props: { onToggleNav: () => void }) {
-  const organizations = () => session.organizations;
+  // Nothing to switch between, and nothing to name: with one implicit
+  // organisation the switcher would be a control with a single option and the
+  // badge a label for a word nobody chose.
+  const organizations = () => (organizationsEnabled() ? session.organizations : []);
 
   return (
     <header class="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-surface/80 px-4 backdrop-blur-md sm:px-6">
@@ -365,15 +373,19 @@ function TopBar(props: { onToggleNav: () => void }) {
             <p class="mt-0.5 text-[0.6875rem] text-faint">{session.roles.join(", ")}</p>
           </Show>
         </div>
-        <MenuItem onClick={() => navigate({ kind: "account" })}>Your account</MenuItem>
-        <MenuItem onClick={() => navigate({ kind: "keys" })}>API keys</MenuItem>
+        <Show when={authEnabled()}>
+          <MenuItem onClick={() => navigate({ kind: "account" })}>Your account</MenuItem>
+          <MenuItem onClick={() => navigate({ kind: "keys" })}>API keys</MenuItem>
+        </Show>
         <Show when={manifest()?.docs_url}>
           {(docs) => <MenuItem href={docs()}>API documentation</MenuItem>}
         </Show>
-        <MenuSeparator />
-        <MenuItem danger onClick={signOut}>
-          Sign out
-        </MenuItem>
+        <Show when={authEnabled()}>
+          <MenuSeparator />
+          <MenuItem danger onClick={signOut}>
+            Sign out
+          </MenuItem>
+        </Show>
       </Menu>
     </header>
   );
@@ -500,49 +512,69 @@ function Navigation(props: { onNavigate: () => void }) {
       {/* Only the deployment's own administrators have a deployment to
           administer. Everyone else's questions are about the organisation they
           are in, which the Settings group below already answers. */}
-      <Show when={isGlobalAdmin()}>
+      <Show when={isGlobalAdmin() && (organizationsEnabled() || authEnabled())}>
         <div>
           <p class="px-3 pb-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-faint">
             Back office
           </p>
           <div class="space-y-0.5">
-            <button
-              type="button"
-              class={item(isActive((r) => r.kind === "organizations"))}
-              onClick={() => go({ kind: "organizations" })}
-            >
-              Organizations
-            </button>
-            <button
-              type="button"
-              class={item(isActive((r) => r.kind === "users"))}
-              onClick={() => go({ kind: "users" })}
-            >
-              Users
-            </button>
+            {/* Listing tenants needs there to be more than one. */}
+            <Show when={organizationsEnabled()}>
+              <button
+                type="button"
+                class={item(isActive((r) => r.kind === "organizations"))}
+                onClick={() => go({ kind: "organizations" })}
+              >
+                Organizations
+              </button>
+            </Show>
+            {/* And listing people needs there to be any. */}
+            <Show when={authEnabled()}>
+              <button
+                type="button"
+                class={item(isActive((r) => r.kind === "users"))}
+                onClick={() => go({ kind: "users" })}
+              >
+                Users
+              </button>
+            </Show>
           </div>
         </div>
       </Show>
 
+      <Show
+        when={
+          organizationsEnabled() ||
+          Boolean(manifest()?.billing) ||
+          authEnabled() ||
+          system().length
+        }
+      >
       <div>
         <p class="px-3 pb-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-faint">
           Settings
         </p>
         <div class="space-y-0.5">
-          <button
-            type="button"
-            class={item(isActive((r) => r.kind === "team"))}
-            onClick={() => go({ kind: "team" })}
-          >
-            Team
-          </button>
-          <button
-            type="button"
-            class={item(isActive((r) => r.kind === "organization"))}
-            onClick={() => go({ kind: "organization" })}
-          >
-            Organization
-          </button>
+          {/* Both of these are about the tenant: who else is in it, and what
+              it is called. With one implicit organisation there is no "else"
+              and nothing to name, and with no accounts there is nobody to be
+              a member in the first place. */}
+          <Show when={organizationsEnabled()}>
+            <button
+              type="button"
+              class={item(isActive((r) => r.kind === "team"))}
+              onClick={() => go({ kind: "team" })}
+            >
+              Team
+            </button>
+            <button
+              type="button"
+              class={item(isActive((r) => r.kind === "organization"))}
+              onClick={() => go({ kind: "organization" })}
+            >
+              Organization
+            </button>
+          </Show>
           {/* Only where the app processes payments; the routes and tables
               behind this screen do not exist otherwise. */}
           <Show when={manifest()?.billing}>
@@ -554,13 +586,16 @@ function Navigation(props: { onNavigate: () => void }) {
               Billing
             </button>
           </Show>
-          <button
-            type="button"
-            class={item(isActive((r) => r.kind === "account"))}
-            onClick={() => go({ kind: "account" })}
-          >
-            Your account
-          </button>
+          {/* There is no account to configure when there are no accounts. */}
+          <Show when={authEnabled()}>
+            <button
+              type="button"
+              class={item(isActive((r) => r.kind === "account"))}
+              onClick={() => go({ kind: "account" })}
+            >
+              Your account
+            </button>
+          </Show>
           {/* Plumbing tables — the queue, and anything else marked `System` —
               belong here rather than among the app's own resources. */}
           <For each={system()}>
@@ -582,6 +617,7 @@ function Navigation(props: { onNavigate: () => void }) {
           </For>
         </div>
       </div>
+      </Show>
     </nav>
   );
 }
@@ -607,22 +643,26 @@ function CurrentPage() {
       <Match keyed when={route().kind === "agent" && agentByName((route() as { name: string }).name)}>
         {(agent) => <AgentPage agent={agent} threadId={(route() as { threadId?: string }).threadId ?? null} />}
       </Match>
-      <Match when={route().kind === "account"}>
+      {/* The screens below are about accounts and tenants. A hash can still
+          name one in an app that has neither, so they are gated here as well
+          as in the navigation — an unmatched route falls through to the
+          dashboard, which is the right place to land. */}
+      <Match when={route().kind === "account" && authEnabled()}>
         <AccountPage />
       </Match>
-      <Match when={route().kind === "team"}>
+      <Match when={route().kind === "team" && organizationsEnabled()}>
         <TeamPage />
       </Match>
-      <Match when={route().kind === "organization"}>
+      <Match when={route().kind === "organization" && organizationsEnabled()}>
         <OrganizationPage />
       </Match>
-      <Match when={route().kind === "organizations"}>
+      <Match when={route().kind === "organizations" && organizationsEnabled()}>
         <OrganizationsPage />
       </Match>
-      <Match when={route().kind === "users"}>
+      <Match when={route().kind === "users" && authEnabled()}>
         <UsersPage />
       </Match>
-      <Match when={route().kind === "keys"}>
+      <Match when={route().kind === "keys" && authEnabled()}>
         <ApiKeysPage />
       </Match>
       <Match when={route().kind === "billing"}>

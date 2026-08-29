@@ -14,7 +14,7 @@ columns = ["label", "city", "country_id"]
 [permissions]
 list   = "member"
 read   = "member"
-create = "member"
+create = "owner"
 update = "member"
 delete = "member"
 

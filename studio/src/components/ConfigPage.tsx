@@ -62,6 +62,17 @@ interface ConfigField {
    * with no group leads the section, above every heading.
    */
   group?: string;
+  /**
+   * Why this field cannot be set right now, when something in another section
+   * has taken it out of play — `[organization] default_org_class` in an app
+   * that has one organisation, say.
+   *
+   * Shown greyed rather than hidden, on purpose: a setting that vanishes reads
+   * as one the studio does not support, and the operator is left looking for
+   * it. A setting that is visibly unavailable *and says why* answers the
+   * question it raises.
+   */
+  disabledReason?: string;
 }
 
 interface FieldGroup {
@@ -81,7 +92,6 @@ const DEFAULT_SECTION_ID = "application";
 const TOML_TAB_ID = "toml";
 
 const EMAIL_PROVIDERS = [
-  { value: "none", label: "none" },
   { value: "smtp", label: "smtp" },
   { value: "ses", label: "ses" },
   { value: "sendgrid", label: "sendgrid" },
@@ -227,14 +237,12 @@ const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
   ],
 };
 
-const PAYMENT_PROVIDERS = [
-  { value: "none", label: "none" },
-  { value: "stripe", label: "stripe" },
-] as const;
+const PAYMENT_PROVIDERS = [{ value: "stripe", label: "stripe" }] as const;
 
 const BILLING_ADDRESS = ["auto", "required"] as const;
+// No `none` entry any more: "off" is the section's own switch, and a provider
+// list that also carries an off-switch asks the operator which one means it.
 const AI_PROVIDERS = [
-  { value: "none", label: "none" },
   { value: "openai", label: "openai" },
   { value: "anthropic", label: "anthropic" },
   { value: "custom", label: "custom" },
@@ -279,7 +287,145 @@ function accessRoleOf(value: string | number | boolean | undefined) {
     : "";
 }
 
+/**
+ * Whether a section's own switch is on.
+ *
+ * Unset is on: every `enabled` in `main.toml` defaults to `true`, so a file
+ * that says nothing about a section describes one that is running. What turns
+ * a section off is the word `false`, written down.
+ */
+function sectionEnabled(table: string): boolean {
+  return configValue(table, "enabled") !== false;
+}
+
+/**
+ * The switch every optional section now opens with.
+ *
+ * One grammar for one question. Before this, a section was off because its
+ * provider said `none`, or because it had an `enabled` key, or because it had
+ * no way to be off at all — three spellings of the same thing, and two of them
+ * asked the operator to know which. Naming a provider is a separate decision
+ * and now a separate field, asked only once the answer matters.
+ */
+function enabledField(hint: string, group?: string): ConfigField {
+  return {
+    key: "enabled",
+    label: "enabled",
+    kind: "boolean" as const,
+    defaultOn: true,
+    hint,
+    group,
+  };
+}
+
+/** Whether this app has accounts — see the `auth` section below. */
+function authIsEnabled(): boolean {
+  return sectionEnabled("auth");
+}
+
+/**
+ * Whether this app is multitenant.
+ *
+ * Derived exactly as `Config::organizations_enabled` derives it: an app with no
+ * accounts has nobody to be a member of anything, so no-auth is no-tenancy
+ * whatever `[organization] enabled` says.
+ */
+function organizationsAreEnabled(): boolean {
+  return authIsEnabled() && sectionEnabled("organization");
+}
+
+const NEEDS_AUTH = "Needs authentication: this app has no accounts.";
+
+/** The same field, greyed with a reason, when `reason` is given. */
+function gatedBy(reason: string | null, field: ConfigField): ConfigField {
+  return reason ? { ...field, disabledReason: reason } : field;
+}
+
+function authFields(): ConfigField[] {
+  const enabled = enabledField(
+    "On by default. Off, this app has no accounts at all: no `/auth/*` endpoints, no sessions, no API keys, and no `user`, `membership`, `api_key`, `invitation` or `auth_token` tables. Every caller is the deployment's administrator and everything in admin is editable — `private` still means private. Organizations go with it, since a membership is a user's.",
+  );
+  if (!authIsEnabled()) return [enabled];
+  return [
+    enabled,
+    {
+      key: "jwt_secret",
+      label: "jwt secret",
+      group: "Sessions",
+      placeholder: "random per boot",
+      kind: "text" as const,
+      hint: "Set it in production — an empty secret means tokens die with the process.",
+    },
+    {
+      key: "session_ttl_secs",
+      label: "session ttl (s)",
+      group: "Sessions",
+      placeholder: "604800",
+      kind: "number" as const,
+      hint: "Lifetime of issued session tokens.",
+    },
+    {
+      key: "allow_registration",
+      label: "registration open",
+      group: "Signing up",
+      defaultOn: true,
+      kind: "boolean" as const,
+      hint: "Whether anybody may create an account for themselves.",
+    },
+    {
+      key: "verify_email_redirect",
+      label: "verified redirect",
+      group: "Signing up",
+      placeholder: "nowhere — stay on the confirmation screen",
+      kind: "text" as const,
+      hint: "Where somebody lands once they confirm their address. An absolute URL or a path on this origin. Confirming signs them in first, so the app is reached already authenticated.",
+    },
+  ];
+}
+
+function organizationFields(): ConfigField[] {
+  const enabled = gatedBy(
+    authIsEnabled() ? null : NEEDS_AUTH,
+    enabledField(
+      "On by default. Off, there is one organisation and everybody is in it: the `X-Organization` header stops selecting anything, `member` and `role:` stop being questions about where a caller stands, and admin drops its organisation switcher. The tables and every `organization_id` column stay exactly where they are, so turning tenancy back on loses nothing.",
+    ),
+  );
+  if (!organizationsAreEnabled()) return [enabled];
+  return [
+    enabled,
+    {
+      key: "global_admin_role",
+      label: "global admin role",
+      group: "Back office",
+      placeholder: "private",
+      kind: "policy" as const,
+      hint: "The deployment's own administrators — typically a role in a class of its own, e.g. `role:admin` in class `staff`. They write any organisation's `org_class`, list every organisation and every user, and read and write data in all of them: role checks and organisation checks do not apply to them. `private` does — anything marked private is no more reachable for them than for anyone else. `private` means there is no back office.",
+    },
+    {
+      key: "default_org_class",
+      label: "default org class",
+      group: "Classes",
+      placeholder: "none",
+      kind: "text" as const,
+      hint: "The class every new organisation starts with, personal ones included. Only fills a gap: a global admin naming a class on create keeps it. Unset leaves new organisations unclassed, which no `@org_class=` permission matches.",
+    },
+    {
+      section: "auth",
+      key: "allow_impersonation",
+      label: "allow impersonation",
+      group: "Acting as somebody else",
+      defaultOn: true,
+      kind: "boolean" as const,
+      hint: "On by default. An organisation's admins may sign in as one of its members; the session they get is pinned to that organisation, so it reaches nothing the member has anywhere else. The back office above may act as anyone, anywhere, whatever this says.",
+    },
+  ];
+}
+
 function aiFields(): ConfigField[] {
+  const enabled = enabledField(
+    "On by default, but an app with no provider named below has no assistant either way. Off keeps the model, key and prompts here while `/ai/chat`, the configured agents and `ctx.chat` stop answering.",
+  );
+  if (!sectionEnabled("ai")) return [enabled];
   const provider = String(configValue("ai", "provider") ?? "none");
   const endpointHint =
     provider === "custom"
@@ -291,13 +437,14 @@ function aiFields(): ConfigField[] {
       : "The provider credential. Leave empty only when the provider truly needs none.";
 
   return [
+    enabled,
     {
       key: "provider",
       label: "provider",
       group: "Provider & model",
       kind: "select" as const,
       options: AI_PROVIDERS,
-      hint: "`none` leaves chat and configured agents without a backing model provider.",
+      hint: "Which API the model is asked for. Unset leaves chat and configured agents without a backing provider, whatever the switch says.",
     },
     {
       key: "endpoint",
@@ -590,7 +737,7 @@ const SECTIONS: ConfigSection[] = [
   {
     id: "application",
     title: "Server",
-    hint: "Naming, networking, routing, sign-in defaults and the API docs, each under its own heading.",
+    hint: "Naming, networking, routing, the admin dashboard and the API docs, each under its own heading.",
     fields: [
       {
         section: "app",
@@ -645,41 +792,6 @@ const SECTIONS: ConfigSection[] = [
         placeholder: "one per CPU",
         kind: "number" as const,
         hint: "OS worker threads.",
-      },
-      {
-        section: "auth",
-        key: "jwt_secret",
-        label: "jwt secret",
-        group: "Authentication",
-        placeholder: "random per boot",
-        kind: "text" as const,
-        hint: "Set it in production — an empty secret means tokens die with the process.",
-      },
-      {
-        section: "auth",
-        key: "session_ttl_secs",
-        label: "session ttl (s)",
-        group: "Authentication",
-        placeholder: "604800",
-        kind: "number" as const,
-        hint: "Lifetime of issued session tokens.",
-      },
-      {
-        section: "auth",
-        key: "allow_registration",
-        label: "registration open",
-        group: "Authentication",
-        kind: "boolean" as const,
-        hint: "Whether anybody may create an account for themselves.",
-      },
-      {
-        section: "auth",
-        key: "verify_email_redirect",
-        label: "verified redirect",
-        group: "Authentication",
-        placeholder: "nowhere — stay on the confirmation screen",
-        kind: "text" as const,
-        hint: "Where somebody lands once they confirm their address. An absolute URL or a path on this origin. Confirming signs them in first, so the app is reached already authenticated.",
       },
       {
         section: "admin",
@@ -780,42 +892,26 @@ const SECTIONS: ConfigSection[] = [
     ],
   },
   {
+    id: "auth",
+    title: "Authentication",
+    hint: "Whether this app has accounts, and what signing in to one is like.",
+    fields: authFields,
+  },
+  {
     id: "organization",
     title: "Organizations",
     hint: "The tenant itself. An organisation's `org_class` decides which `@org_class=` permissions apply inside it, and the column is server-owned — no ordinary request writes it, whatever the resource permissions say. The global admin role below is the one thing that names who may set it, for every organisation.",
-    fields: [
-      {
-        key: "global_admin_role",
-        label: "global admin role",
-        group: "Back office",
-        placeholder: "private",
-        kind: "policy" as const,
-        hint: "The deployment's own administrators — typically a role in a class of its own, e.g. `role:admin` in class `staff`. They write any organisation's `org_class`, list every organisation and every user, and read and write data in all of them: role checks and organisation checks do not apply to them. `private` does — anything marked private is no more reachable for them than for anyone else. `private` means there is no back office.",
-      },
-      {
-        key: "default_org_class",
-        label: "default org class",
-        group: "Classes",
-        placeholder: "none",
-        kind: "text" as const,
-        hint: "The class every new organisation starts with, personal ones included. Only fills a gap: a global admin naming a class on create keeps it. Unset leaves new organisations unclassed, which no `@org_class=` permission matches.",
-      },
-      {
-        section: "auth",
-        key: "allow_impersonation",
-        label: "allow impersonation",
-        group: "Acting as somebody else",
-        defaultOn: true,
-        kind: "boolean" as const,
-        hint: "On by default. An organisation's admins may sign in as one of its members; the session they get is pinned to that organisation, so it reaches nothing the member has anywhere else. The back office above may act as anyone, anywhere, whatever this says.",
-      },
-    ],
+    fields: organizationFields,
   },
   {
     id: "email",
     title: "Email",
     hint: "Outbound mail for functions and auth flows that need a mailbox.",
     fields: () => {
+      const enabled = enabledField(
+        "On by default, but an app with no provider named below sends nothing either way. Off keeps the credentials here while the mailbox flows — invitations, address confirmation, password reset — stop being mounted.",
+      );
+      if (!sectionEnabled("email")) return [enabled];
       const provider = String(configValue("email", "provider") ?? "none");
       const credentialsGroup =
         provider === "smtp" ? "SMTP server" : "Credentials";
@@ -829,10 +925,11 @@ const SECTIONS: ConfigSection[] = [
         group: "Provider",
         kind: "select" as const,
         options: EMAIL_PROVIDERS,
-        hint: "`none` leaves email off.",
+        hint: "How mail leaves the process. Unset sends nothing, whatever the switch says.",
       };
-      if (provider === "none") return [chooser];
+      if (provider === "none") return [enabled, chooser];
       return [
+        enabled,
         chooser,
         {
           key: "from",
@@ -916,14 +1013,13 @@ const SECTIONS: ConfigSection[] = [
     hint:
       "Work that happens after the response. `publish` writes a row and fires a Postgres NOTIFY; " +
       "a subscriber claims it and runs a function. No broker to deploy.",
-    fields: [
-      {
-        key: "enabled",
-        label: "enabled",
-        group: "Handling",
-        kind: "boolean" as const,
-        hint: "Pauses handling without deleting the subscriptions below. Publishing still records rows, so nothing is lost while it is off.",
-      },
+    fields: () => {
+      const enabled = enabledField(
+        "On by default. Off pauses handling without deleting the subscriptions below — publishing still records rows, so nothing is lost while it is off. It is a pause, not a drain.",
+      );
+      if (!sectionEnabled("queues")) return [enabled];
+      return [
+      enabled,
       {
         key: "poll_secs",
         label: "poll (s)",
@@ -987,20 +1083,27 @@ const SECTIONS: ConfigSection[] = [
         options: QUEUE_PUBLISH_OPTIONS,
         hint: "Who may POST <base>/queues/{topic}. `private` — the default — means there is no such endpoint.",
       },
-    ],
+      ];
+    },
   },
   {
     id: "payments",
     title: "Payments",
-    hint: "Taking money. Naming a provider also adds the billing_* resources and the /billing endpoints.",
-    fields: [
+    hint: "Taking money. Switched on with a provider named, the app also gains the billing_* resources and the /billing endpoints.",
+    fields: () => {
+      const enabled = enabledField(
+        "On by default, but an app with no provider named below takes no money either way. Off keeps the keys and options here while the /billing endpoints and the billing_* tables leave the app.",
+      );
+      if (!sectionEnabled("payments")) return [enabled];
+      return [
+      enabled,
       {
         key: "provider",
         label: "provider",
         group: "Provider",
         kind: "select" as const,
         options: PAYMENT_PROVIDERS,
-        hint: "`none` leaves payments off — and leaves the billing tables out of the app.",
+        hint: "Who processes the payment. Unset leaves the billing tables out of the app, whatever the switch says.",
       },
       {
         key: "secret_key",
@@ -1068,10 +1171,12 @@ const SECTIONS: ConfigSection[] = [
         key: "automatic_tax",
         label: "automatic tax",
         group: "Pricing & tax",
+        defaultOn: true,
         kind: "boolean" as const,
         hint: "Compute tax automatically and quote prices accordingly.",
       },
-    ],
+      ];
+    },
   },
   {
     id: "ai",
@@ -1186,6 +1291,29 @@ function selectOptions(sectionId: string, field: ConfigField) {
  * is a select plus a box that appears only when it means something. Shared by
  * `[ai] access` and `[queues] publish`, which use the same grammar.
  */
+/**
+ * The access levels that still mean something in this app.
+ *
+ * `authenticated` is a question about having an identity, and `member` and
+ * `role:` are questions about where a caller stands — so an app with no
+ * accounts can answer none of the three, and one with no organisations cannot
+ * answer the last two. Offering a level that resolves to "yes, everybody" would
+ * be offering a restriction the server does not apply.
+ */
+function availableAccessOptions(
+  options: readonly { value: string; label: string }[],
+): { value: string; label: string }[] {
+  const drop = new Set<string>();
+  if (!authIsEnabled()) {
+    drop.add("authenticated");
+  }
+  if (!organizationsAreEnabled()) {
+    drop.add("member");
+    drop.add("role");
+  }
+  return options.filter((option) => !drop.has(option.value));
+}
+
 function AccessField(props: {
   table: string;
   field: string;
@@ -1200,7 +1328,7 @@ function AccessField(props: {
       <Select
         class="flex-1"
         value={level()}
-        options={props.options}
+        options={availableAccessOptions(props.options)}
         onChange={(value) =>
           setConfigValue(
             props.table,
@@ -1229,6 +1357,15 @@ function AccessField(props: {
 /** What a `[permissions]` policy may name, when it names a person. */
 const POLICY_LEVELS = ["private", "role", "member", "authenticated"];
 
+/** The same list, narrowed to what this app can actually answer. */
+function availablePolicyLevels(): string[] {
+  return POLICY_LEVELS.filter((level) =>
+    availableAccessOptions(
+      POLICY_LEVELS.map((value) => ({ value, label: value })),
+    ).some((option) => option.value === level),
+  );
+}
+
 /**
  * A whole policy string — who it names and the class it is narrowed to —
  * written as the sentence the resource permissions are written as.
@@ -1250,7 +1387,7 @@ function PolicyField(props: { table: string; field: string }) {
   return (
     <PolicyPhrase
       subject={subject()}
-      levels={POLICY_LEVELS}
+      levels={availablePolicyLevels()}
       onChange={(update) =>
         setConfigValue(props.table, props.field, formatPolicy(update(subject())))
       }
@@ -1707,6 +1844,16 @@ export function ConfigPage() {
                         </Show>
                         <For each={group.fields}>
                           {(field) => (
+                            <div
+                              // `inert` rather than a `disabled` on each
+                              // control: the reason a field is out of play is
+                              // never about the control, so it is stated once
+                              // here and the whole cell stops taking input.
+                              inert={Boolean(field.disabledReason) || undefined}
+                              class={`${field.kind === "boolean" ? "sm:col-span-2" : ""} ${
+                                field.disabledReason ? "opacity-50" : ""
+                              }`}
+                            >
                             <Show
                               when={field.kind !== "boolean"}
                               fallback={
@@ -1919,6 +2066,12 @@ export function ConfigPage() {
                                 </Show>
                               </Labelled>
                             </Show>
+                            <Show when={field.disabledReason}>
+                              <p class="mt-1 text-[0.6875rem] leading-relaxed text-faint">
+                                {field.disabledReason}
+                              </p>
+                            </Show>
+                            </div>
                           )}
                         </For>
                       </>

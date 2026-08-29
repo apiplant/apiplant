@@ -20,6 +20,13 @@ default, and any of them can be extended by adding a same-named file in
 These are real resources: they get tables, CRUD endpoints (gated by their own
 permissions), migrations and relationships like any other.
 
+All of them but `organization` are conditional on `[auth] enabled`, which
+defaults to `true`. An app that sets it to `false` has none of them, none of the
+endpoints below, and no permission checks either: there is one caller, they are
+the deployment's administrator, and only `private` still refuses them. See
+[Turning authentication off](configuration.md#turning-authentication-off) for
+what that mode is and is not.
+
 ## The `[auth]` section
 
 The `user` resource carries an optional `[auth]` block controlling how login works:

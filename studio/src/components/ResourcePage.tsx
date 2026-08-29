@@ -918,6 +918,7 @@ function PermissionsTab(props: {
                 {(rule, index) => (
                   <ClauseLine
                     rule={rule()}
+                    action={action}
                     onSubject={(update) => editSubject(action, index, update)}
                     onEffect={(effect) => setEffect(action, index, effect)}
                     onRemove={() =>
@@ -934,7 +935,7 @@ function PermissionsTab(props: {
                   It sits under the action it is about and nowhere else — a
                   second copy at the top of the page would move the clause you
                   are editing out from under the pointer. */}
-              <For each={permissionConflicts(rulesOf(action))}>
+              <For each={permissionConflicts(rulesOf(action), action)}>
                 {(issue) => (
                   <p class="mt-1 text-[0.6875rem] leading-relaxed text-warn">
                     {issue}
@@ -992,6 +993,7 @@ function PermissionsTab(props: {
 /** One clause, read as a sentence, with the remove control on the same line. */
 function ClauseLine(props: {
   rule: PermissionRule;
+  action: Action;
   onSubject: (update: (subject: Subject) => Subject) => void;
   onEffect: (effect: Effect) => void;
   onRemove: () => void;
@@ -1001,6 +1003,12 @@ function ClauseLine(props: {
   /** A legacy `owner` level allowed outright is this clause's own effect. */
   const legacyOwner = () =>
     props.rule.effect === "allow" && subject().level === "owner";
+
+  // Ownership on create is a contradiction the server rejects, so the editor
+  // does not offer it — `own` as an effect, or `owner` as a level. A file that
+  // sets one by hand still shows it (and a warning under the action), but the
+  // form will not put it there.
+  const ownershipOffered = () => props.action !== "create";
 
   return (
     <div class="group mt-0.5 flex items-start gap-1.5">
@@ -1013,9 +1021,10 @@ function ClauseLine(props: {
           onChange={props.onSubject}
           effect={props.rule.effect}
           onEffectChange={props.onEffect}
+          effects={ownershipOffered() ? undefined : ["allow", "deny"]}
           levels={LEVELS_BY_EFFECT[props.rule.effect]}
         />
-        <Show when={legacyOwner()}>
+        <Show when={legacyOwner() && ownershipOffered()}>
           <p class="text-[0.6875rem] leading-relaxed text-faint">
             Written the old way —{" "}
             <button

@@ -348,9 +348,13 @@ that identifies neither key.
 
 ## Turning it off
 
-Set `provider = "none"` and the routes and resources are removed. The **tables
-are not**: migrations are additive, and records of money changing hands should
-outlive a configuration change.
+Set `enabled = false` — or `provider = "none"`, which means the same thing here
+— and the routes and resources are removed. The switch is the one to reach for
+when the keys should stay: it turns payments off without unpicking the
+credentials, currency and redirect URLs below it.
+
+The **tables are not** removed either way: migrations are additive, and records
+of money changing hands should outlive a configuration change.
 
 ## See also
 

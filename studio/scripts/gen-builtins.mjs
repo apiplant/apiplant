@@ -20,6 +20,10 @@ const OUTPUT = join(here, "../src/lib/builtins.ts");
 /** Always present, in the dependency order `builtins()` uses. */
 const ALWAYS = [
   ["organization", "ORGANIZATION_TOML", "organizations.toml", "The tenant. Membership decides who sees it, so it is global."],
+];
+
+/** Added only when [auth] is enabled, in `auth_builtins()` order. */
+const AUTH = [
   ["user", "USER_TOML", "users.toml", "Login identity. Carries the [auth] section the framework authenticates against."],
   ["membership", "MEMBERSHIP_TOML", "memberships.toml", "Joins a user to an organisation and carries their role there."],
   ["membership_role", "MEMBERSHIP_ROLE_TOML", "membership_roles.toml", "Extra roles a membership holds, beyond the one on the membership itself."],
@@ -50,7 +54,7 @@ function tomlFor(constant) {
   return source.slice(from, to);
 }
 
-const all = [...ALWAYS, ...BILLING];
+const all = [...ALWAYS, ...AUTH, ...BILLING];
 
 const record = (entries, value) =>
   entries.map(([name, , file, summary]) => `  ${name}: ${JSON.stringify(value(file, summary))},`).join("\n");
@@ -66,8 +70,9 @@ const out = `/**
  *
  * The studio shows them alongside custom resources; editing one writes a
  * \`resources/*.toml\` that replaces the default, exactly as the framework intends.
- * The billing set is conditional: the framework adds it only when \`[payments]\`
- * names a provider, so the studio lists it on the same condition.
+ * Two sets are conditional, and the studio lists them on exactly the conditions
+ * the framework adds them under: the account tables when \`[auth]\` is enabled,
+ * and the billing tables when \`[payments]\` is on and names a provider.
  */
 
 import { parseResource } from "./toml";
@@ -77,12 +82,21 @@ export const ALWAYS_BUILTIN_NAMES = [
 ${ALWAYS.map(([name]) => `  "${name}",`).join("\n")}
 ] as const;
 
-/** Present only when \`[payments].provider\` is set. */
+/** Present only when \`[auth].enabled\` is not \`false\`. */
+export const AUTH_BUILTIN_NAMES = [
+${AUTH.map(([name]) => `  "${name}",`).join("\n")}
+] as const;
+
+/** Present only when \`[payments]\` is on and names a provider. */
 export const BILLING_BUILTIN_NAMES = [
 ${BILLING.map(([name]) => `  "${name}",`).join("\n")}
 ] as const;
 
-export const BUILTIN_NAMES = [...ALWAYS_BUILTIN_NAMES, ...BILLING_BUILTIN_NAMES] as const;
+export const BUILTIN_NAMES = [
+  ...ALWAYS_BUILTIN_NAMES,
+  ...AUTH_BUILTIN_NAMES,
+  ...BILLING_BUILTIN_NAMES,
+] as const;
 export type BuiltinName = (typeof BUILTIN_NAMES)[number];
 
 /** Conventional file name for a built-in, matching the docs (\`user\` → users.toml). */

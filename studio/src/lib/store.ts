@@ -33,6 +33,7 @@ import {
 } from "./fs";
 import {
   ALWAYS_BUILTIN_NAMES,
+  AUTH_BUILTIN_NAMES,
   BILLING_BUILTIN_NAMES,
   BUILTIN_FILENAME,
   BUILTIN_NAMES,
@@ -233,11 +234,24 @@ function buildFileMap(scanned: ScannedFile[]): Record<string, FileState> {
   return files;
 }
 
-/** Whether `[payments]` names a provider — the condition the billing built-ins ride on. */
+/**
+ * Whether `[payments]` is on *and* names a provider — the condition the billing
+ * built-ins ride on, and the same one `PaymentsConfig::enabled` applies.
+ */
 function paymentsEnabled(config: TomlTable): boolean {
   const table = configTable(config, "payments", false);
   const provider = table?.provider;
-  return typeof provider === "string" && provider !== "" && provider !== "none";
+  const named = typeof provider === "string" && provider !== "" && provider !== "none";
+  return named && table?.enabled !== false;
+}
+
+/**
+ * Whether this app has accounts — the condition the seven account built-ins
+ * ride on. Unset means yes: `[auth] enabled` defaults to `true`, and a file
+ * that says nothing about it describes an app that has them.
+ */
+function authEnabled(config: TomlTable): boolean {
+  return configTable(config, "auth", false)?.enabled !== false;
 }
 
 function buildResources(
@@ -251,7 +265,11 @@ function buildResources(
   const problems: { path: string; message: string }[] = [];
   const byName = new Map<string, ResourceEntry>();
 
-  const present = paymentsEnabled(config) ? BUILTIN_NAMES : ALWAYS_BUILTIN_NAMES;
+  const present: readonly BuiltinName[] = [
+    ...ALWAYS_BUILTIN_NAMES,
+    ...(authEnabled(config) ? AUTH_BUILTIN_NAMES : []),
+    ...(paymentsEnabled(config) ? BILLING_BUILTIN_NAMES : []),
+  ];
   for (const name of present) {
     byName.set(name, {
       name,
@@ -576,7 +594,15 @@ function configTable(config: TomlTable, sectionPath: string, create: boolean): T
 
 export function setConfigValue(section: string, key: string, value: string | number | boolean | undefined) {
   const config = writeConfig(section, key, value === "" ? undefined : value);
-  if (config && section === "payments" && key === "provider") syncBillingBuiltins(config);
+  if (!config) return;
+  // The three keys that decide which tables the app has. Naming a provider or
+  // flipping a switch has to move the resource list then and there — a list
+  // that only agreed with the app at the moment the project was opened would
+  // be worse than none.
+  if (section === "payments" && (key === "provider" || key === "enabled")) {
+    syncBillingBuiltins(config);
+  }
+  if (section === "auth" && key === "enabled") syncAuthBuiltins(config);
 }
 
 /**
@@ -670,12 +696,29 @@ export function setConfigEntries(section: string, key: string, entries: ConfigEn
  * an ordinary resource of the app's own, which is what it then is.
  */
 function syncBillingBuiltins(config: TomlTable) {
+  syncConditionalBuiltins(BILLING_BUILTIN_NAMES, paymentsEnabled(config));
+}
+
+/**
+ * Follow `[auth] enabled` with the account resources, exactly as
+ * {@link syncBillingBuiltins} follows `[payments]`.
+ */
+function syncAuthBuiltins(config: TomlTable) {
+  syncConditionalBuiltins(AUTH_BUILTIN_NAMES, authEnabled(config));
+}
+
+/** Both of the above, for the writers that replace the whole file. */
+function syncBuiltins(config: TomlTable) {
+  syncAuthBuiltins(config);
+  syncBillingBuiltins(config);
+}
+
+function syncConditionalBuiltins(names: readonly BuiltinName[], enabled: boolean) {
   if (!state.project) return;
-  const enabled = paymentsEnabled(config);
 
   setState((s) => {
     const resources: ResourceEntry[] = s.project!.resources;
-    for (const name of BILLING_BUILTIN_NAMES) {
+    for (const name of names) {
       const index = resources.findIndex((entry) => entry.name === name);
       if (enabled) {
         if (index < 0) {
@@ -804,7 +847,7 @@ export function setConfigFromToml(text: string) {
     s.project!.config = parsed;
   });
   setFileText(CONFIG_PATH, text);
-  syncBillingBuiltins(parsed);
+  syncBuiltins(parsed);
 }
 
 export function ensureMainToml() {
@@ -816,7 +859,7 @@ export function ensureMainToml() {
     s.project!.config = parsed;
   });
   setFileText(CONFIG_PATH, text);
-  syncBillingBuiltins(parsed);
+  syncBuiltins(parsed);
 }
 
 // ---- resources --------------------------------------------------------------

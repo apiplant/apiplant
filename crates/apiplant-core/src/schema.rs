@@ -339,6 +339,22 @@ impl Resource {
                 });
             }
         }
+        // `owner` on `create` is a contradiction: ownership is a test against a
+        // column on an existing row, and a create has no row yet. Whichever way
+        // it is written — `create = "owner"` or an `own` clause — it can only
+        // ever deny, so reject it at load time rather than ship an endpoint that
+        // refuses everyone.
+        let owns_on_create = self.permissions.create.rules.iter().any(|rule| {
+            rule.effect == Effect::Own || rule.policy.level == Access::Owner
+        });
+        if owns_on_create {
+            return Err(crate::Error::Schema {
+                resource: self.meta.name.clone(),
+                message: "[permissions] create cannot use `owner`: there is no row to own yet — \
+                          use `member`, a role, or `authenticated`"
+                    .to_string(),
+            });
+        }
         Ok(())
     }
 
@@ -2298,6 +2314,27 @@ type = "reference"
         )
         .unwrap();
         assert!(missing_target.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_owner_on_create() {
+        let shorthand: Resource = toml::from_str(
+            "[resource]\nname = \"product\"\n\n[permissions]\ncreate = \"owner\"\n",
+        )
+        .unwrap();
+        assert!(shorthand.validate().is_err());
+
+        let own_clause: Resource = toml::from_str(
+            "[resource]\nname = \"product\"\n\n[permissions.create]\nown = [\"role:seller\"]\n",
+        )
+        .unwrap();
+        assert!(own_clause.validate().is_err());
+
+        let ok: Resource = toml::from_str(
+            "[resource]\nname = \"product\"\n\n[permissions]\ncreate = \"member\"\n",
+        )
+        .unwrap();
+        assert!(ok.validate().is_ok());
     }
 
     #[test]

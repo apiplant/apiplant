@@ -1033,11 +1033,33 @@ type = "json"
 hidden = true
 "#;
 
-/// The name → embedded-TOML table of built-ins, in dependency order so foreign
-/// keys resolve (organization and user before membership/api_key/oauth).
+/// The name → embedded-TOML table of built-ins every app has, whatever it
+/// turns off.
+///
+/// One entry, and deliberately so: `organization` is the tenant, not an auth
+/// table. An app with `[organization] enabled = false` still has exactly one
+/// organisation — every scoped row points at it — and an app with no accounts
+/// at all still has somewhere for those rows to live. Keeping the table here
+/// is what makes both switches reversible: nothing is dropped, so nothing has
+/// to be recreated.
 pub fn builtins() -> Vec<(&'static str, &'static str)> {
+    vec![("organization", ORGANIZATION_TOML)]
+}
+
+/// The resources an app gets for having accounts, in dependency order so
+/// foreign keys resolve (user before membership/api_key/oauth).
+///
+/// Conditional for the same reason [`billing_builtins`] is: with `[auth]
+/// enabled = false` there are no sessions, no API keys and nobody to invite,
+/// so seven tables that can never hold a row are seven pieces of noise in the
+/// dashboard. `membership` and `membership_role` belong here rather than with
+/// `organization` because a membership is a *user's* — with no users, the join
+/// table joins one thing.
+///
+/// Migrations are additive, so switching auth back on recreates the tables and
+/// switching it off leaves the rows where they are.
+pub fn auth_builtins() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("organization", ORGANIZATION_TOML),
         ("user", USER_TOML),
         ("membership", MEMBERSHIP_TOML),
         ("membership_role", MEMBERSHIP_ROLE_TOML),

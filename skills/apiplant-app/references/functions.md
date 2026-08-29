@@ -794,6 +794,8 @@ so it works in two stages:
 > you have it. There, `apiplant build` refuses a `.ts` by name rather than
 > compiling it, and `apiplant run` reports any `.js` in `functions/` as a
 > function it cannot load — an app is never quietly served missing an endpoint.
+> Everything on this page above this section applies to both builds; everything
+> below it needs the full one. See [the README](../README.md#the-slim-build).
 
 Nothing is installed: the transpiler is built into `apiplant build`, so there is
 no node, deno, bun, `package.json` or `node_modules`. Nothing is

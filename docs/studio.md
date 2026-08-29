@@ -131,6 +131,14 @@ directory, filled in.
 as the placeholder, so an empty box is a documented behaviour rather than a
 gap.
 
+Every optional section — Authentication, Organizations, Email, Queues, Payments,
+AI — opens with the same `enabled` switch, and shows nothing else until it is on.
+Choosing a *provider* is a separate field asked only once the answer matters, so
+"is this on" and "what backs it" stop being one question with two spellings.
+Sections that depend on each other say so where the dependency bites: with
+authentication off, Organizations is greyed with the reason, and the access
+dropdowns elsewhere stop offering levels the app can no longer answer.
+
 ![main.toml as a form](images/studio-configuration.png)
 
 ## Nothing is written until you save

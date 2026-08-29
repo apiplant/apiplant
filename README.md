@@ -362,6 +362,10 @@ Requests authenticate via `Authorization: Bearer <jwt>` or
 identity, same permissions. Passwords are argon2id-hashed; API keys are stored
 as SHA-256 and never recoverable.
 
+An app that wants none of it sets `[auth] enabled = false`: no `/auth/*`
+endpoints, none of the account tables, and one caller who is the deployment's
+administrator — `private` still refuses them, and organisations go with it.
+
 Each request's permission check turns a resource's `Access` policy plus the
 caller into *allow* / *allow-if-owner* / *deny*. `owner` policies transparently
 scope queries to rows the caller owns.
@@ -480,6 +484,10 @@ role, and every other resource is organisation-scoped unless you set
 
 Single-org users never need the header; multi-org users send it per request.
 Full details in [Multitenancy](docs/multitenancy.md).
+
+An app that is not multitenant sets `[organization] enabled = false`: one
+implicit organisation, everybody in it, the header ignored and the dashboard's
+switcher gone — with no table dropped and no column removed, so it is reversible.
 
 ## Interactive API docs (OpenAPI + Swagger UI)
 

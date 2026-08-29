@@ -14,6 +14,7 @@ import type {
   AdminManifest,
   AgentManifest,
   ApiRecord,
+  AuthManifest,
   FunctionManifest,
   ResourceManifest,
   Route,
@@ -104,9 +105,48 @@ export const manifest = manifestSignal;
  */
 let manifestNow: AdminManifest | null = null;
 
+/**
+ * Whether this app has accounts at all.
+ *
+ * The server leaves `auth` out of the manifest entirely when `[auth] enabled =
+ * false`, and that absence is the signal — but a hundred screens read
+ * `manifest()!.auth.identity_label` and friends, so {@link setManifest} fills a
+ * blank block in and records the answer here instead. Off means: no sign-in
+ * screen, no permission affordances, one caller who is the administrator.
+ */
+const [authEnabledSignal, setAuthEnabledSignal] = createSignal(true);
+export const authEnabled = authEnabledSignal;
+let authEnabledNow = true;
+
+/** Whether this app is multitenant — see {@link authEnabled}. */
+export function organizationsEnabled(): boolean {
+  return Boolean(manifest()?.organization);
+}
+
+/** The blank block that stands in for `auth` when the app has no accounts. */
+const NO_AUTH: AuthManifest = {
+  identity_field: "email",
+  identity_label: "Email",
+  allow_registration: false,
+  email_enabled: false,
+  require_email_verification: false,
+  verify_email_redirect: "",
+  invitations_enabled: false,
+  password_reset_enabled: false,
+  allow_impersonation: false,
+  signup_fields: [],
+  profile_fields: [],
+  known_roles: [],
+  oauth_providers: [],
+};
+
 export function setManifest(next: AdminManifest | null) {
-  manifestNow = next;
-  setManifestSignal(next);
+  const hasAuth = Boolean(next?.auth);
+  const filled = next && !hasAuth ? { ...next, auth: NO_AUTH } : next;
+  authEnabledNow = !next || hasAuth;
+  setAuthEnabledSignal(authEnabledNow);
+  manifestNow = filled;
+  setManifestSignal(filled);
 }
 export const [route, setRouteSignal] = createSignal<Route>({ kind: "dashboard" });
 export const [toasts, setToasts] = createSignal<Toast[]>([]);
@@ -260,14 +300,20 @@ export function persistSession() {
   );
 }
 
-/** Reactive: what the screens gate on. */
+/**
+ * Reactive: what the screens gate on.
+ *
+ * An app with no accounts has nobody to sign in and nothing to sign in with,
+ * so the answer is yes: there is one caller, they are already here, and a
+ * sign-in screen would be a door onto a wall.
+ */
 export function isSignedIn() {
-  return Boolean(session.token || session.apiKey);
+  return !authEnabled() || Boolean(session.token || session.apiKey);
 }
 
 /** The same question asked imperatively, off the mirror rather than the store. */
 export function signedInNow() {
-  return Boolean(now.token || now.apiKey);
+  return !authEnabledNow || Boolean(now.token || now.apiKey);
 }
 
 export function signOut() {
@@ -315,7 +361,7 @@ export function isImpersonating(): boolean {
  * A borrowed session is never one, whoever borrowed it.
  */
 export function isGlobalAdmin(): boolean {
-  return session.globalAdmin;
+  return !authEnabled() || session.globalAdmin;
 }
 
 export function mayImpersonate(userId: string): boolean {
@@ -796,6 +842,9 @@ export function asRecords(value: unknown): ApiRecord[] {
  * in place, since an unreachable server is not evidence of a bad token.
  */
 export async function verifySession(): Promise<boolean> {
+  // No accounts means no `/auth/me` to ask and no credential to doubt. The
+  // caller is valid by construction.
+  if (!authEnabledNow) return true;
   if (!signedInNow()) return false;
   try {
     const identity = asRecord(await api("/auth/me"));
@@ -822,6 +871,7 @@ export async function verifySession(): Promise<boolean> {
 }
 
 export async function refreshSession() {
+  if (!authEnabledNow) return;
   if (!signedInNow()) return;
   updateSession({ loading: true });
   try {
@@ -873,7 +923,7 @@ export function hasRole(role: string): boolean {
   // about where they are standing. Without this the dashboard hides controls
   // the server would honour: the team screen of an organisation they are not a
   // member of would draw its people and offer nothing to do with them.
-  if (session.globalAdmin) return true;
+  if (isGlobalAdmin()) return true;
   return session.roles.includes(role) || session.roles.includes("admin");
 }
 
@@ -1006,6 +1056,9 @@ export function currentUserEmail(): string | null {
  * global `role:` resource and gets a 403 back.
  */
 export function includeOrgContext(resource: ResourceManifest, action: Action): boolean {
+  // With one implicit organisation there is nothing for the header to select,
+  // and the server ignores it — so it is not sent, rather than sent empty.
+  if (!organizationsEnabled()) return false;
   if (resource.scope === "organization") return true;
   if (!session.organizationId) return false;
   const policy = resource.permissions[action];
@@ -1057,8 +1110,11 @@ function matchesClause(
       return isSignedIn();
     case "member":
     case "owner":
-      // Org-scoped work needs somewhere to do it.
-      return isSignedIn() && (global || Boolean(session.organizationId));
+      // Org-scoped work needs somewhere to do it — unless there is only one
+      // somewhere, in which case everybody is already standing in it.
+      return (
+        isSignedIn() && (global || !organizationsEnabled() || Boolean(session.organizationId))
+      );
     default:
       if (!clause.role) return false;
       return literalRoles ? session.roles.includes(clause.role) : hasRole(clause.role);
@@ -1103,7 +1159,7 @@ export function isFunctionVisible(fn: FunctionManifest): boolean {
     case "authenticated":
       return isSignedIn();
     case "member":
-      return isSignedIn() && Boolean(session.organizationId);
+      return isSignedIn() && (!organizationsEnabled() || Boolean(session.organizationId));
     case "private":
       return false;
     default:

@@ -54,24 +54,31 @@ macro_rules! build_app {
                     $crate::ntex_web::get().to($crate::docs_page),
                 );
         }
-        let mut scope = scope
-            .route("/_health", $crate::ntex_web::get().to($crate::health))
-            .route(
-                "/auth/register",
-                $crate::ntex_web::post().to($crate::auth_routes::register),
-            )
-            .route(
-                "/auth/login",
-                $crate::ntex_web::post().to($crate::auth_routes::login),
-            )
-            .route(
-                "/auth/me",
-                $crate::ntex_web::get().to($crate::auth_routes::me),
-            )
-            .route(
-                "/auth/apikeys",
-                $crate::ntex_web::post().to($crate::auth_routes::create_api_key),
-            );
+        let mut scope = scope.route("/_health", $crate::ntex_web::get().to($crate::health));
+
+        // Accounts, and everything that follows from having them. An app with
+        // `[auth] enabled = false` has no `user` table to register into and no
+        // session to issue, so the four endpoints are not there to be probed —
+        // and neither is anything below that needs a sign-in first.
+        if state.auth_enabled() {
+            scope = scope
+                .route(
+                    "/auth/register",
+                    $crate::ntex_web::post().to($crate::auth_routes::register),
+                )
+                .route(
+                    "/auth/login",
+                    $crate::ntex_web::post().to($crate::auth_routes::login),
+                )
+                .route(
+                    "/auth/me",
+                    $crate::ntex_web::get().to($crate::auth_routes::me),
+                )
+                .route(
+                    "/auth/apikeys",
+                    $crate::ntex_web::post().to($crate::auth_routes::create_api_key),
+                );
+        }
 
         // Acting as somebody else. Mounted only where some door into it is
         // open, so an app that has switched both off has no endpoint to probe.

@@ -251,11 +251,17 @@ export function PolicyPhrase(props: {
         ];
   });
 
-  const effectOptions = createMemo(() =>
-    EFFECTS.filter((option) =>
-      (props.effects ?? ["allow", "own", "deny"]).includes(option.value),
-    ).map((option) => ({ value: option.value, label: option.label })),
-  );
+  const effectOptions = createMemo(() => {
+    const offered = props.effects ?? ["allow", "own", "deny"];
+    return EFFECTS.filter(
+      (option) =>
+        offered.includes(option.value) ||
+        // An effect the file already uses but this form would not offer (an
+        // `own` clause on create, say) stays in the menu — otherwise the box
+        // would show a value that is not one of its options.
+        option.value === props.effect,
+    ).map((option) => ({ value: option.value, label: option.label }));
+  });
 
   const setLevel = (level: string) =>
     props.onChange((subject) => ({

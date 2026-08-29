@@ -120,6 +120,16 @@ Everything is derived from the app. There is no dashboard code to write, and the
 shipped JavaScript is byte-identical across applications; only
 `apiplant-admin.json` differs.
 
+Two of those screens are conditional on the app having the thing they are about.
+With [`[auth] enabled = false`](configuration.md#turning-authentication-off) the
+manifest carries no `auth` block, and the dashboard has no sign-in screen, no
+Your account, no API keys and no Users: it opens straight onto the app, as a
+single-user back office where everything is editable. With
+[`[organization] enabled = false`](configuration.md#turning-organizations-off)
+it carries no `organization` block, and the workspace switcher, Team,
+Organization and the back office's Organizations screen are all gone — there is
+one organisation and everybody is in it.
+
 The sign-in buttons are an example of that: `auth.oauth_providers` in the
 manifest is whatever `[oauth]` names, so the console offers exactly the
 providers that work — and none at all in an app that configured none. A console

@@ -639,6 +639,7 @@ thinking = false
         );
 
         let base = AiConfig {
+            enabled: true,
             provider: "openai".to_string(),
             endpoint: String::new(),
             model: "gpt-4o-mini".to_string(),

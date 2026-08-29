@@ -18,7 +18,8 @@ pub use app::{App, TlsPaths};
 pub use config::{
     AiConfig, CacheConfig, Config, EmailConfig, LogFormat, LogsConfig, MetricsConfig,
     ObservabilityConfig, OrganizationConfig, OtlpConfig, OtlpProtocol, PaymentsConfig,
-    QueuesConfig, RateLimitConfig, SmtpConfig, StorageConfig, TracesConfig,
+    QueuesConfig, RateLimitConfig, SmtpConfig, StorageConfig, TracesConfig, SOLO_ORGANIZATION_ID,
+    SOLO_ORGANIZATION_NAME, SOLO_USER_ID,
 };
 pub use env::{expand_document, load_dotenv, parse_toml};
 pub use error::{Error, Result};

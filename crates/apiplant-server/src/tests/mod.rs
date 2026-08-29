@@ -408,3 +408,4 @@ mod resources;
 mod schema;
 mod serving;
 mod storage;
+mod switches;

@@ -62,7 +62,12 @@ struct AdminManifest {
     /// fill text fields.
     #[serde(skip_serializing_if = "Option::is_none")]
     ai_assistance: Option<AdminAiAssistanceManifest>,
-    auth: AuthManifest,
+    /// Present only in an app that has accounts. Absent — `[auth] enabled =
+    /// false` — the dashboard shows no sign-in screen and no permission
+    /// affordances at all: there is one caller, they are the administrator,
+    /// and everything is editable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth: Option<AuthManifest>,
     resources: Vec<ResourceManifest>,
     functions: Vec<FunctionManifest>,
     agents: Vec<AgentManifest>,
@@ -71,7 +76,11 @@ struct AdminManifest {
     /// `billing_*` resources exist.
     #[serde(skip_serializing_if = "Option::is_none")]
     billing: Option<BillingManifest>,
-    organization: OrganizationManifest,
+    /// Present only in a multitenant app, so the dashboard drops its
+    /// organisation switcher and organisation settings exactly where
+    /// `X-Organization` stops meaning anything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    organization: Option<OrganizationManifest>,
 }
 
 /// Deployment-wide rules about the tenant itself.
@@ -511,6 +520,12 @@ fn build_manifest(
     let resources = app
         .resources
         .values()
+        // `queue_message` is a built-in table every app carries, but with
+        // `[queues] enabled = false` there are no background tasks to look at —
+        // keep the "Background tasks" screen out of the dashboard entirely.
+        .filter(|resource| {
+            resource.meta.name != "queue_message" || app.config.queues.enabled
+        })
         .map(|resource| {
             resource_manifest(
                 resource,
@@ -590,7 +605,7 @@ fn build_manifest(
         api_base_url,
         docs_url,
         ai_assistance: admin_ai_assistance_manifest(app),
-        auth: AuthManifest {
+        auth: app.config.auth_enabled().then(|| AuthManifest {
             identity_label: titleize(&identity_field),
             identity_field,
             allow_registration: app.config.auth.allow_registration,
@@ -604,20 +619,23 @@ fn build_manifest(
             profile_fields,
             known_roles: known_roles(app, functions),
             oauth_providers: oauth_providers_manifest(app),
-        },
+        }),
         resources,
         functions: loaded_functions,
         agents,
         billing: billing_manifest(app),
-        organization: OrganizationManifest {
-            // `false` for `org_scoped`: the setting is answered against the
-            // organisation the caller *selected*, like any global policy.
-            global_admin_role: permission_manifest(
-                &app.config.organization.global_admin_policy(),
-                false,
-            ),
-            known_classes: known_classes(app),
-        },
+        organization: app
+            .config
+            .organizations_enabled()
+            .then(|| OrganizationManifest {
+                // `false` for `org_scoped`: the setting is answered against the
+                // organisation the caller *selected*, like any global policy.
+                global_admin_role: permission_manifest(
+                    &app.config.organization.global_admin_policy(),
+                    false,
+                ),
+                known_classes: known_classes(app),
+            }),
     })
 }
 

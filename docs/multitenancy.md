@@ -204,6 +204,26 @@ send mail.
 **Switching organisation.** Send `X-Organization: <org-id>`, naming an
 organisation you belong to.
 
+## Opting out: the whole thing
+
+An app that is not multitenant says so once:
+
+```toml
+[organization]
+enabled = false
+```
+
+One implicit organisation, and everybody is in it. No table is dropped and no
+column removed — `organization_id` stays on every scoped resource, pointing at a
+single auto-provisioned row — so this is a switch rather than a migration, and
+turning tenancy on later leaves the existing rows in an organisation that
+already exists. What changes is that `X-Organization` selects nothing, `member`
+and `role:` stop being questions about where a caller stands, and the dashboard
+drops its organisation switcher and organisation screens. `[auth] enabled =
+false` implies it: a membership is a user's, so an app with no accounts has
+nobody to be a member. See
+[Turning organizations off](configuration.md#turning-organizations-off).
+
 ## Opting out: global resources
 
 Shared reference data (a public catalogue, feature flags, or the
