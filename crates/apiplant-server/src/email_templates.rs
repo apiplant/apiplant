@@ -470,7 +470,9 @@ mod tests {
         // themselves, and those must not be second-guessed here.
         let root = temp("brandwins");
         write(&root, "welcome.liquid", "<p>{{ app_name }}</p>");
-        let templates = EmailTemplates::load(&root).unwrap().with_brand("Acme", None);
+        let templates = EmailTemplates::load(&root)
+            .unwrap()
+            .with_brand("Acme", None);
         let rendered = templates
             .render("welcome", &liquid::object!({ "app_name": "Other" }), "s")
             .unwrap();

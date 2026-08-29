@@ -376,7 +376,7 @@ fn price_spec(price: &Price) -> PriceSpec {
         Some(recurring) => (
             Interval::parse(recurring.interval.as_str()),
             recurring.interval_count,
-            recurring.trial_period_days.unwrap_or(0) as u32,
+            recurring.trial_period_days.unwrap_or(0),
         ),
         None => (Interval::OneOff, 1, 0),
     };

@@ -341,7 +341,7 @@ async fn prepare(
             ensure_thread(
                 state,
                 agent,
-                &caller,
+                caller,
                 body.thread_id,
                 body.title.as_deref(),
                 &message,
@@ -1234,6 +1234,7 @@ async fn insert_tool_event(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_message(
     state: &State<AppState>,
     agent: &Agent,

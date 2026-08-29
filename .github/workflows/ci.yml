@@ -1,0 +1,99 @@
+name: ci
+
+# Runs on every push and pull request. `release.yml` builds artefacts; this
+# workflow is the gate that decides whether the tree deserves to be built.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to the same branch cancels the run it supersedes.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Formatting is seconds and needs no toolchain beyond rustfmt, so it runs on
+  # its own and fails fast rather than waiting behind a v8 build.
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked
+
+  # The declared MSRV is only real if something checks it: `is_none_or` sat in
+  # the tree under a 1.80 floor for who knows how long and nothing caught it.
+  # 1.98 is today's stable, so this job is a tripwire for the day stable moves
+  # on and a 1.99+ API slips in while Cargo.toml still promises 1.98.
+  msrv:
+    name: msrv (1.98)
+    runs-on: ubuntu-22.04
+    env:
+      # rust-toolchain.toml says "stable" and would otherwise win over the
+      # toolchain installed below, quietly making this job a duplicate of
+      # `clippy`. RUSTUP_TOOLCHAIN takes precedence over the file.
+      RUSTUP_TOOLCHAIN: "1.98"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets --locked
+
+  test:
+    name: test
+    runs-on: ubuntu-22.04
+    services:
+      # The server suite boots a real app per test against a throwaway
+      # database, so Postgres is not optional here. Credentials match the
+      # ADMIN_DB_URL the harness hardcodes.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  # The slim build drops TypeScript and with it v8. It is a shipped artefact,
+  # so a compile break in it is a release break.
+  slim:
+    name: slim build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --no-default-features --locked

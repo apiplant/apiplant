@@ -1,0 +1,39 @@
+# cargo-mutants configuration.  Run with:  cargo mutants --workspace
+#
+# The exclusions are not a way to flatter the score. They remove code where a
+# surviving mutant does not describe a defect anyone could ship: terminal
+# drawing, key dispatch, and constant accessors are verified by using the
+# program, and a unit test pinning them would only restate the source. What
+# is left is logic whose being wrong would be a bug.
+#
+# `exclude_re` matches the mutant's *name* — "path:line:col: replace F with X"
+# — not the source text, so the patterns below are written against that form.
+
+exclude_globs = [
+    # Every `draw_*` returns (), so "replace with ()" survives by construction,
+    # and the arithmetic around it is layout maths judged by looking at it.
+    "crates/apiplant/src/cli/ui.rs",
+]
+
+exclude_re = [
+    # Key dispatch. "delete match arm KeyCode::Char('j')" survives because no
+    # test presses 'j'; driving a TUI keymap from unit tests pins the keymap,
+    # not the behaviour behind it. Both the handlers and their arms go.
+    "replace Cli::[a-z_]+_key with \\(\\)",
+    "match arm KeyCode::",
+
+    # Tautological accessors: `match self { X => "x" }`. A test asserting
+    # "x" == "x" is a copy of the source with extra steps.
+    "replace [A-Za-z]+::as_str ->",
+    "replace [A-Za-z]+::as_string ->",
+    "replace [A-Za-z]+::grammar ->",
+    "replace [A-Za-z]+::names ->",
+    "::expecting ->",
+    "Debug for .*>::fmt ->",
+]
+
+# Mutating a loop counter (`i += 1` -> `i *= 1`) hangs rather than fails: the
+# counter stops advancing. That is an artefact of the operator swap, not
+# evidence of a missing bound, so cap it cheaply instead of paying 261s each.
+timeout_multiplier = 3.0
+minimum_test_timeout = 30

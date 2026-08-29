@@ -1,0 +1,8 @@
+# Pins the repo to stable. Without this, whatever `rustup default` happens to
+# be — nightly on at least one machine here — decides how the tree is built,
+# and a nightly-only slip reaches CI before anyone notices.
+#
+# `rust-version` in Cargo.toml is the matching floor; keep the two in step.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

@@ -1503,7 +1503,7 @@ fn parse_window(window: &str) -> Option<u64> {
 /// `"5/1m"` rather than as a number nobody wrote.
 fn format_window(seconds: u64) -> String {
     for (size, suffix) in [(86_400, 'd'), (3600, 'h'), (60, 'm')] {
-        if seconds % size == 0 {
+        if seconds.is_multiple_of(size) {
             return format!("{}{suffix}", seconds / size);
         }
     }

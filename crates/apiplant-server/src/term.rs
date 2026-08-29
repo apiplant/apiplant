@@ -52,7 +52,12 @@ pub struct Style {
 impl Style {
     /// The escapes to use right now: real ones for a terminal, empty otherwise.
     pub fn detect() -> Self {
-        if std::io::stdout().is_terminal() {
+        Self::new(std::io::stdout().is_terminal())
+    }
+
+    /// The escapes for a stream that is (or is not) a terminal.
+    pub fn new(terminal: bool) -> Self {
+        if terminal {
             Style {
                 bold: "\x1b[1m",
                 red: "\x1b[31m",
@@ -245,9 +250,27 @@ mod tests {
 
     #[test]
     fn styles_are_empty_when_output_is_not_a_terminal() {
-        // Tests do not run on a tty, so this is the piped case.
-        let s = Style::detect();
+        // Piped case: no escapes at all.
+        let s = Style::new(false);
         assert_eq!(s.bold, "");
+        assert_eq!(s.red, "");
+        assert_eq!(s.blue, "");
+        assert_eq!(s.green, "");
+        assert_eq!(s.yellow, "");
+        assert_eq!(s.dim, "");
         assert_eq!(s.reset, "");
+    }
+
+    #[test]
+    fn styles_are_ansi_when_output_is_a_terminal() {
+        // Tty case: real escapes for every style.
+        let s = Style::new(true);
+        assert_eq!(s.bold, "\x1b[1m");
+        assert_eq!(s.red, "\x1b[31m");
+        assert_eq!(s.blue, "\x1b[34m");
+        assert_eq!(s.green, "\x1b[32m");
+        assert_eq!(s.yellow, "\x1b[33m");
+        assert_eq!(s.dim, "\x1b[2m");
+        assert_eq!(s.reset, "\x1b[0m");
     }
 }

@@ -146,7 +146,7 @@ fn dir_is_stale(dir: &Path, library: &Path) -> bool {
         // No library yet: build it.
         return true;
     };
-    newest_source_mtime(dir).map_or(true, |newest| newest > lib)
+    newest_source_mtime(dir).is_none_or(|newest| newest > lib)
 }
 
 /// The most recent modification time of any source file under `dir`.

@@ -57,7 +57,7 @@ async fn without_a_provider_there_is_no_billing_at_all() {
         "billing_event",
     ] {
         assert!(
-            state.app.resources.get(resource).is_none(),
+            !state.app.resources.contains_key(resource),
             "`{resource}` exists in an app that takes no money"
         );
     }
@@ -93,7 +93,7 @@ async fn a_provider_brings_the_billing_resources_and_routes() {
     let state = load_state(&root).await;
     assert!(state.payments_enabled());
     for resource in ["billing_product", "billing_price", "billing_subscription"] {
-        assert!(state.app.resources.get(resource).is_some(), "{resource}");
+        assert!(state.app.resources.contains_key(resource), "{resource}");
     }
 
     let app = init_http_app!(state);

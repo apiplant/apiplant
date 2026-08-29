@@ -78,19 +78,14 @@ pub enum AiError {
 /// `system` is accepted in the message list even for providers that carry the
 /// system prompt out of band (Anthropic): it is lifted out on the way to the
 /// wire, so a caller writes the same conversation for every provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     System,
+    #[default]
     User,
     Assistant,
     Tool,
-}
-
-impl Default for Role {
-    fn default() -> Self {
-        Role::User
-    }
 }
 
 impl Role {

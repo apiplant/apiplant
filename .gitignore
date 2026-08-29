@@ -57,4 +57,4 @@ e2e/.cli-shots/
 __pycache__/
 
 ### mutants testing
-mutants.out
+mutants.out*

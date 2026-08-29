@@ -829,7 +829,7 @@ async fn a_sign_in_fills_in_a_name_and_a_picture() {
 #[ntex::test]
 async fn where_the_profile_lands_is_the_apps_to_say() {
     let provider = MockProvider::start(Identity::new("42", Some("mine@example.com"), true)).await;
-    let (state, _root, _db) = app_with(
+    let (_state, _root, _db) = app_with(
         "oauth_fields",
         &provider,
         "\n[oauth]\nname_field = \"\"\navatar_field = \"picture\"\n",
