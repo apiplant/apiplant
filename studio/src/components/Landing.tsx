@@ -95,7 +95,7 @@ function NewAppDialog(props: { target: NewAppTarget; onClose: () => void }) {
 
         <p class="text-xs leading-relaxed text-faint">
           The directory is created now; <Mono>main.toml</Mono> and the resources are staged like any other
-          edit and hit disk when you press <strong>Save</strong>.
+          edit and written to disk when you press <strong>Save</strong>.
         </p>
 
         <div class="flex justify-end gap-2">
@@ -178,8 +178,8 @@ export function Landing(props: { rememberedProjectName?: string | null; onReopen
 
         <p class="mt-8 max-w-2xl text-[0.9375rem] leading-relaxed text-muted">
           Point it at the folder you would hand to the <Mono>apiplant</Mono> binary. It loads the resources,
-          permissions, hooks, agents and functions that folder declares, lets you edit them as forms or as TOML,
-          and writes the result straight back to disk.
+          permissions, hooks, agents and functions the folder declares, edits them as forms or TOML,
+          and writes the result back to disk.
         </p>
 
         <Show when={props.rememberedProjectName && props.onReopenRemembered}>
@@ -215,8 +215,8 @@ export function Landing(props: { rememberedProjectName?: string | null; onReopen
             New app directory
           </Button>
           <span class="text-xs text-faint">
-            or drag an app directory or parent folder onto the page. You can also pick a parent folder —
-            <Mono>examples/</Mono> works — and choose the app inside it.
+            or drag an app directory or parent folder onto the page. A parent folder (e.g. <Mono>examples/</Mono>)
+            lets you choose the app inside it.
           </span>
         </div>
 

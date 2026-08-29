@@ -1,10 +1,7 @@
 /**
- * The code editor: CodeMirror 6, one instance per mounted editor.
- *
- * Colours come from the CSS variables in app.css rather than a bundled theme,
- * so switching light/dark re-paints the editor with everything else. Languages
- * are reconfigured through a compartment instead of rebuilding the view, which
- * keeps the cursor and history when a different file of the same editor loads.
+ * The code editor: CodeMirror 6, one instance per mounted editor. Colours come
+ * from the CSS variables in app.css, so light/dark re-paints it with everything
+ * else. Languages reconfigure through a compartment, keeping cursor and history.
  */
 
 import { createEffect, onSettled, Show } from "solid-js";

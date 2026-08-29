@@ -317,7 +317,7 @@ export function ResetPasswordPage(props: { token: string }) {
   };
 
   return (
-    <LinkLayout title="Choose a new password" subtitle="You'll be signed in straight afterwards.">
+    <LinkLayout title="Choose a new password" subtitle="You'll be signed in afterwards.">
       <Show when={props.token} fallback={<Problem message={DEAD_LINK} />}>
         <form class="space-y-4 px-5 py-5" onSubmit={submit}>
           <PasswordFields pair={passwords} label="New password" />

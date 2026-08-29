@@ -311,7 +311,7 @@ export function ResourceListPage(props: { resource: ResourceManifest }) {
                       ? "Try a different search, or clear the filters to see everything."
                       : can(props.resource, "create")
                         ? `Create the first one to get started.`
-                        : "There is nothing here for you to see yet."
+                        : "Nothing to show yet."
                   }
                 >
                   <Show when={filtersApplied()}>

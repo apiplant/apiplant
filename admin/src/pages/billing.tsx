@@ -2,14 +2,13 @@
  * Billing, for the organisation you are currently in.
  *
  * The `billing_*` tables are ordinary resources with generic screens already.
- * This screen exists for the two operations a table of rows cannot perform,
- * starting a checkout and opening the provider's portal, and to summarise the
- * current plan and renewal date, which a table presents poorly.
+ * This screen exists for the two operations a table of rows cannot perform
+ * (starting a checkout, opening the provider's portal) and to summarise the
+ * current plan and renewal date.
  *
- * Everything here is read through the ordinary API with the ordinary
- * permissions. The price list is public, the subscription is readable by any
- * member, and the payment history and the two buttons require `role:admin`, so
- * a member sees their plan and an admin sees the payment details.
+ * Everything is read through the ordinary API with the ordinary permissions:
+ * the price list is public, the subscription readable by any member, and the
+ * payment history and the two buttons require `role:admin`.
  */
 
 import { For, Show, createMemo, createSignal, latest } from "solid-js";

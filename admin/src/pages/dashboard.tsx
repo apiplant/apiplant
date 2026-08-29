@@ -73,7 +73,7 @@ export function DashboardPage() {
               <div class="px-5 py-4">
                 <EmptyState
                   title="Nothing to manage yet"
-                  description="Once this application defines resources you can see, they appear here."
+                  description="Resources you can see appear here once the application defines them."
                 />
               </div>
             }
@@ -150,7 +150,7 @@ export function DashboardPage() {
               <div class="px-5 py-4">
                 <EmptyState
                   title="No actions available"
-                  description="Actions are functions the application exposes to operators. This one has none you can run."
+                  description="Actions are functions the application exposes to operators. This one has none."
                 />
               </div>
             }

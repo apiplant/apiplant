@@ -1,10 +1,9 @@
 //! The `emails/` directory: an app's own wording for the messages it sends.
 //!
 //! [`emails`](crate::emails) composes three messages the framework sends by
-//! itself, and they are deliberately plain — they have to work in an app that
-//! has configured nothing but a provider and a `from` address. This module is
-//! how an app says something else instead, without giving up the flows: drop a
-//! file in `emails/` and it is used in place of the built-in one.
+//! itself. A file in `emails/` named after one of them **overrides** it; any
+//! other name is a new template, which nothing sends on its own — a function
+//! asks for it by name through `send_email`.
 //!
 //! ```text
 //! emails/
@@ -15,18 +14,13 @@
 //!   welcome.liquid             # a new one, sent from a function
 //! ```
 //!
-//! A file named after one of the three built-ins **overrides** it. Any other
-//! name is a new template, which nothing sends on its own — a function asks for
-//! it by name through `send_email`.
-//!
 //! ## Why Liquid
 //!
-//! For what it cannot do. A template here is written by whoever writes the
-//! app's copy, edited in the studio, and rendered on the server with a token in
-//! scope; it must not be able to read a file, call out, or reach anything it
-//! was not handed. Liquid has no escape hatch to close — the variables in scope
-//! are exactly the ones passed in, and `{{ }}` interpolates rather than
-//! executes.
+//! A template is written by whoever writes the app's copy and rendered on the
+//! server with a token in scope; it must not read a file, call out, or reach
+//! anything it was not handed. Liquid has no escape hatch to close — the
+//! variables in scope are exactly the ones passed in, and `{{ }}` interpolates
+//! rather than executes.
 //!
 //! ## The subject line
 //!
@@ -40,16 +34,14 @@
 //! <p>Hello — <a href="{{ url }}">confirm your address</a>.</p>
 //! ```
 //!
-//! The subject is a template too, so it can name the app or the organisation.
-//! A file with no front matter falls back to the built-in subject when it is
-//! overriding one, and to the app's name when it is not.
+//! The subject is a template too. A file with no front matter falls back to the
+//! built-in subject when overriding one, and to the app's name when it is not.
 //!
 //! ## The plain-text half
 //!
 //! `<name>.text.liquid` beside it, when the app wants to write one. Without it
 //! the text half is derived from the rendered HTML — tags dropped, links kept
-//! as their URL — which is worth more than no text part at all, since a message
-//! with only HTML is scored as spam by most of the things that score messages.
+//! as their URL — since an HTML-only message is scored as spam by most filters.
 
 use std::collections::BTreeMap;
 use std::path::Path;

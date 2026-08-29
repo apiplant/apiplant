@@ -6,23 +6,20 @@
 //! saying what is being asked, a URL carrying a single-use token, and a note of
 //! when it stops working.
 //!
-//! They are deliberately plain. An app that wants its own wording and its own
-//! letterhead should send its own message from a hook — `after_register` and
-//! `before_api_key` already exist for exactly that, and a function has the
-//! whole `send_email` API. What lives here is the version that has to work in
-//! an app which has configured nothing but a provider and a `from` address, so
-//! it is a paragraph of text and a link, in both plain text and the least
-//! surprising HTML that renders in a dark mailbox as well as a light one.
+//! They are deliberately plain: a paragraph of text and a link, in both plain
+//! text and the least surprising HTML. An app that wants its own wording sends
+//! its own message from a hook — `after_register` and `before_api_key` exist
+//! for that, and a function has the whole `send_email` API.
 //!
 //! ## Where the links point
 //!
-//! At the **admin dashboard**, not at the API: the URL in the message is opened
-//! by a person in a browser, and the endpoint that spends the token is a
-//! `POST` that wants a password typed into a form first. The dashboard's
-//! hash-routed screens (`#/accept-invite`, `#/verify-email`, `#/reset-password`)
-//! are that form. An app that serves its own front end sets
-//! [`links_base`](Links::from_app) through `[server] public_url` and can point
-//! its own page at the same three endpoints.
+//! At the **admin dashboard**, not at the API: the URL is opened by a person in
+//! a browser, and the endpoint that spends the token is a `POST` that wants a
+//! password typed into a form first. The dashboard's hash-routed screens
+//! (`#/accept-invite`, `#/verify-email`, `#/reset-password`) are that form. An
+//! app that serves its own front end sets [`links_base`](Links::from_app)
+//! through `[server] public_url` and can point its own page at the same three
+//! endpoints.
 
 use std::sync::Arc;
 
@@ -203,7 +200,7 @@ pub fn invitation(
     let lead = format!("{who} to join {organization} on {}.", links.app_name);
     let note = format!(
         "Opening the link lets you choose a password and join. \
-         It stops working in {expires_in}."
+         The link stops working in {expires_in}."
     );
     let subject = format!("You're invited to join {organization}");
     // The two facts only this message has, on top of the common ones.
@@ -249,17 +246,17 @@ pub fn verification(links: &Links, token: &str, expires_in: &str) -> Composed {
 
 /// "Reset your password".
 ///
-/// Says plainly that an unrequested one can be ignored, because it can: the
-/// existing password keeps working until this link is actually used.
+/// Says an unrequested one can be ignored: the existing password keeps working
+/// until this link is actually used.
 pub fn password_reset(links: &Links, token: &str, expires_in: &str) -> Composed {
     let url = links.to("reset-password", token);
     let lead = format!(
-        "Somebody asked to reset the password for this {} account.",
+        "A password reset was requested for this {} account.",
         links.app_name
     );
     let note = format!(
         "The link stops working in {expires_in}. If this wasn't you, ignore this \
-         message — your password has not changed."
+         message; your password has not changed."
     );
     let subject = format!("Reset your {} password", links.app_name);
     if let Some(composed) =
@@ -274,7 +271,7 @@ pub fn password_reset(links: &Links, token: &str, expires_in: &str) -> Composed 
     }
 }
 
-/// The plain-text half. The URL sits on its own line so that every mail client
+/// The plain-text half. The URL sits on its own line so every mail client
 /// linkifies it and every human can copy it.
 fn plain(lead: &str, call: &str, url: &str, note: &str) -> String {
     format!("{lead}\n\n{call}\n{url}\n\n{note}\n")
@@ -283,15 +280,10 @@ fn plain(lead: &str, call: &str, url: &str, note: &str) -> String {
 /// The HTML half: a dark banner carrying the app's mark and name, then one
 /// column of text, a button, and the URL again underneath.
 ///
-/// Everything here is a table with inline styles, because a mail client is not
-/// a browser: Outlook lays out with tables, Gmail strips `<style>` blocks and
-/// most clients ignore anything that isn't on the element itself. The single
-/// media query is the one exception, and it only narrows the padding on a phone
-/// — a client that drops it still gets a readable message.
-///
-/// The URL is repeated as text under the button. A button is a link somebody's
-/// client may decide not to render, and a link nobody can read is a support
-/// ticket.
+/// Everything is a table with inline styles, because a mail client is not a
+/// browser: Outlook lays out with tables, Gmail strips `<style>` blocks. The
+/// single media query only narrows the padding on a phone. The URL is repeated
+/// as text under the button, since a button is a link a client may not render.
 fn html(links: &Links, lead: &str, call: &str, url: &str, note: &str) -> String {
     let lead = escape(lead);
     let call = escape(call);
@@ -299,7 +291,7 @@ fn html(links: &Links, lead: &str, call: &str, url: &str, note: &str) -> String 
     let href = escape(url);
     let name = escape(&links.app_name);
     let year_free_footer =
-        format!("You are receiving this because somebody used this address at {name}.");
+        format!("You are receiving this because this address was used at {name}.");
     let footer = escape(&year_free_footer);
 
     // The mark, when there is one. `max-height` keeps a large file in its

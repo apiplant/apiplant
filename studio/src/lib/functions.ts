@@ -1,9 +1,8 @@
 /**
- * Reading `functions/` the way `apiplant build` does: an entry is either a
- * source file or a directory, its language comes from what it holds, and what it
- * produces sits beside it — `lib<entry>.so` for the compiled languages, and
- * `<entry>.js` for TypeScript, which the server runs in a V8 isolate instead of
- * loading as a library.
+ * Reading `functions/` the way `apiplant build` does: an entry is a source file
+ * or a directory, its language comes from what it holds, and its output sits
+ * beside it — `lib<entry>.so` for the compiled languages, `<entry>.js` for
+ * TypeScript (run in a V8 isolate, not loaded as a library).
  */
 
 import { extensionOf, type ScannedFile } from "./fs";
@@ -28,11 +27,9 @@ function isDeclarations(fileName: string): boolean {
 }
 
 /**
- * Function names a library exports, read out of its source.
- *
- * The manifest is a compile-time constant in every language — `name: "x"` in the
- * `function!` macro, `"name": "x"` in the JSON the C/Zig/Go sources return — so
- * a scan is enough to populate the hook pickers without building anything.
+ * Function names a library exports, read out of its source. The manifest is a
+ * compile-time constant in every language, so a scan populates the hook pickers
+ * without building anything.
  */
 export function extractExports(sources: string[]): string[] {
   const names = new Set<string>();
@@ -52,12 +49,9 @@ export function extractExports(sources: string[]): string[] {
 }
 
 /**
- * The keys of a TypeScript module's `defineFunctions({...})`, which is where the
- * names live in that form — there is no `name:` to match, because the key *is*
- * the name.
- *
- * Braces are counted rather than the whole call parsed: enough to know which
- * keys are at the top level of the object, which is all a hook picker needs.
+ * The keys of a TypeScript module's `defineFunctions({...})` — the key *is*
+ * the name, so there is no `name:` to match. Braces are counted rather than the
+ * whole call parsed: enough to know which keys are top-level.
  */
 function definedFunctions(source: string): string[] {
   const call = source.indexOf("defineFunctions(");

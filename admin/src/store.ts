@@ -1037,23 +1037,19 @@ export function currentUserEmail(): string | null {
 /**
  * Whether a request against `resource` should carry `X-Organization`.
  *
- * Always, for an org-scoped resource: the header is what selects the tenant.
+ * Always, for an org-scoped resource: the header selects the tenant. On a
+ * global resource there is no tenant to select, but a policy may still be
+ * answered against the caller's organisation — `role:<name>` asks whether you
+ * hold that role in the one you are acting in. `requires_org` on the manifest
+ * is the server's own verdict, so the two sides cannot drift.
  *
- * On a *global* resource there is no tenant to select, but a policy may still
- * be answered against the caller's organisation — `role:<name>` asks whether
- * you hold that role in the one you are acting in, and cannot be answered
- * without knowing which. `requires_org` on the manifest is the server's own
- * verdict on that, so the two sides cannot drift; deriving it again from the
- * policy string here is how they would.
- *
- * Then one case the flag does not cover, because it is about widening rather
- * than permitting: under `owner`, an admin is shown the whole organisation's
- * rows instead of only their own, which the server can only do when it knows
- * which organisation that is.
+ * One case the flag does not cover: under `owner`, an admin is shown the whole
+ * organisation's rows instead of only their own, which the server can only do
+ * when it knows which organisation that is.
  *
  * Everything that talks to a resource endpoint goes through here — a screen
- * that decides for itself by looking at `scope` alone drops the header on a
- * global `role:` resource and gets a 403 back.
+ * that decides by `scope` alone drops the header on a global `role:` resource
+ * and gets a 403 back.
  */
 export function includeOrgContext(resource: ResourceManifest, action: Action): boolean {
   // With one implicit organisation there is nothing for the header to select,

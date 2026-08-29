@@ -1,10 +1,7 @@
 /**
- * Reading and writing the TOML apiplant actually consumes.
- *
- * Parsing is `smol-toml`; emitting is ours, because the shape of these files is
- * part of their readability — `[resource]`, `[permissions]`, one `[fields.x]`
- * block per column, `[hooks]` last — and a generic serializer will not produce
- * that order.
+ * Reading and writing the TOML apiplant actually consumes. Parsing is
+ * `smol-toml`; emitting is ours, because the shape of these files is part of
+ * their readability and a generic serializer will not produce that order.
  */
 
 import { parse as parseToml } from "smol-toml";
@@ -123,10 +120,9 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
 
 /**
  * Read one action's permission, in any of the three shapes it may be written.
- *
- * A bare string and an array are both `allow` — the array is only shorthand for
- * several of them — and the table form is the one that can say anything else.
- * Returns null for an absent or unreadable value, leaving the server's default.
+ * A bare string and an array are both `allow`; the table form can say anything
+ * else. Returns null for an absent or unreadable value, leaving the server's
+ * default.
  */
 function parsePermissionSet(value: TomlValue | undefined): PermissionSet | null {
   const clause = (raw: TomlValue | undefined, effect: Effect): PermissionRule[] => {

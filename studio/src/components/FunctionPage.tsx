@@ -103,11 +103,11 @@ export function FunctionPage(props: { entry: FunctionEntry }) {
           <Mono>apiplant build &lt;app&gt;</Mono>
           <Show when={props.entry.language === "typescript"}>
             {" "}
-            — JavaScript the server runs in a V8 isolate, not a shared library
+            — TypeScript runs in a V8 isolate, not a shared library
           </Show>
-          . Every function it exports is mounted at{" "}
+          . Every export is mounted at{" "}
           <Mono>{basePath()}/functions/&lt;name&gt;</Mono> with the method and visibility its manifest
-          declares — unless it is Private, which keeps it available to lifecycle hooks only.
+          declares; Private exports stay available to lifecycle hooks only.
         </p>
 
         <div class="mt-3 flex flex-wrap items-center gap-2">

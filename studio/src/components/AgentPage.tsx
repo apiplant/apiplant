@@ -173,7 +173,7 @@ function SettingsTab(props: {
       <Card>
         <CardHeader title="Identity" />
         <div class="grid gap-4 px-4 py-4 sm:grid-cols-2">
-          <Labelled label="name" hint="The route name and, when storage is on, the generated history resources.">
+          <Labelled label="name" hint="Route name and, with storage on, the generated history resources.">
             <CommitInput
               mono
               lowercase
@@ -200,7 +200,7 @@ function SettingsTab(props: {
             />
           </Labelled>
 
-          <Labelled label="scope" hint="Global threads follow the caller across the app; organisation scope needs an active org.">
+          <Labelled label="scope" hint="Global threads follow the caller; organization scope requires an active org.">
             <Select
               value={props.entry.scope}
               options={[
@@ -233,7 +233,7 @@ function SettingsTab(props: {
           <Show when={props.entry.storageEnabled}>
             <Labelled
               label="summary after chars"
-              hint="Refresh the hidden rolling summary once the unsummarised tail reaches this many characters. The summary itself is budgeted at half of it. Empty uses the backend default."
+              hint="Character count at which the rolling summary refreshes; the summary is budgeted at half of it. Empty uses the default."
             >
               <TextInput
                 type="number"
@@ -254,7 +254,7 @@ function SettingsTab(props: {
       <Card class="border-danger-line">
         <CardHeader
           title="Delete this agent"
-          hint="Removes the agent file. Stored history resources stay in the app until you remove them yourself."
+          hint="Removes the agent file. Stored history resources remain until removed separately."
         >
           <Show
             when={props.confirming}
@@ -292,7 +292,7 @@ function PermissionsTab(props: {
     <Card>
       <CardHeader
         title="Access policy"
-        hint="Chat decides who may talk to the agent. History decides who may browse stored threads and messages."
+        hint="Chat governs the endpoint; history governs the stored thread and message resources."
       />
       <div class="divide-y divide-line">
         <PermissionRow
@@ -359,7 +359,7 @@ function PromptTab(props: {
     <Card>
       <CardHeader
         title="System prompt"
-        hint="Sent before every user turn. Caller-supplied system messages do not override it."
+        hint="Sent before every user turn; caller-supplied system messages do not override it."
       />
       <div class="px-4 py-4">
         <TextArea
@@ -423,7 +423,7 @@ function ToolsTab(props: {
       <Card>
         <CardHeader
           title="Function-backed tools"
-          hint="Each tool is advertised to the model and invokes a loaded function through the same function ABI. A function can use permission = 'none' to stay hidden from direct/admin calls."
+          hint="Each tool advertises a loaded function to the model. Functions with permission = 'none' stay hidden from direct calls."
         >
           <Button
             size="sm"
@@ -562,7 +562,7 @@ function AiOverrideTab(props: {
     <Card>
       <CardHeader
         title="Per-agent AI configuration"
-        hint="Override the app's global [ai] settings for this agent only. Leave individual fields empty to inherit."
+        hint="Overrides the global [ai] settings for this agent. Empty fields inherit."
       >
         <Switch
           checked={enabled()}
@@ -586,7 +586,7 @@ function AiOverrideTab(props: {
         <div class="grid gap-4 px-4 py-4 sm:grid-cols-2">
           <Labelled
             label="provider"
-            hint="Override the provider for this agent alone. `custom` needs an endpoint."
+            hint="Provider for this agent. `custom` requires an endpoint."
           >
             <Select
               value={override().provider ?? ""}
@@ -631,7 +631,7 @@ function AiOverrideTab(props: {
             />
           </Labelled>
 
-          <Labelled label="api key" hint="Empty inherits the global key. For custom, blank can mean no auth header.">
+          <Labelled label="api key" hint="Empty inherits the global key; for custom, blank sends no auth header.">
             <TextInput
               mono
               value={override().apiKey ?? ""}
@@ -699,7 +699,7 @@ function AiOverrideTab(props: {
 
           <Labelled
             label="thinking"
-            hint="Whether to ask the model to think, using the provider's own switch. Whatever thinking comes back is always kept on the message and revealed by the Show reasoning toggle — it is never part of the answer."
+            hint="Provider thinking switch. Returned reasoning is stored on the message, revealed by the Show reasoning toggle, and never part of the answer."
           >
             <Select
               value={
@@ -730,7 +730,7 @@ function AiOverrideTab(props: {
           <Labelled
             class="sm:col-span-2"
             label="fallback system prompt"
-            hint="Optional [ai] system override for this agent. The Prompt tab above is more specific and wins when set."
+            hint="Optional [ai] system override for this agent; the Prompt tab wins when set."
           >
             <TextArea
               mono

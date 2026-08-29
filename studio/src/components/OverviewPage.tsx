@@ -24,12 +24,8 @@ function copy(text: string) {
 }
 
 /**
- * Installing the CLI, per platform.
- *
- * The official packages, not `cargo install`: a package manager is how most
- * people will get it, and it is the path that also brings updates. The tabs
- * exist because only one of these is ever the reader's — showing four blocks of
- * shell asks them to work out which line is theirs.
+ * Installing the CLI, per platform. Official packages, not `cargo install`:
+ * a package manager is how most people get it, and it brings updates.
  */
 const INSTALLS = [
   {
@@ -69,11 +65,8 @@ docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant`,
 type InstallId = (typeof INSTALLS)[number]["id"];
 
 /**
- * The tab to open on: the platform the browser says it is on.
- *
- * A guess, so it is only ever the *starting* tab — the others are one click
- * away, and nothing here depends on being right. Windows gets Docker because
- * there is no native package for it.
+ * The tab to open on: the platform the browser says it is on. A guess, so it is
+ * only the starting tab. Windows gets Docker (no native package).
  */
 function detectPlatform(): InstallId {
   const data = (navigator as { userAgentData?: { platform?: string } }).userAgentData;
@@ -94,7 +87,7 @@ function InstallCard() {
     <Card class="mt-3">
       <CardHeader
         title="Installing the CLI"
-        hint="Official packages. Pick your platform; the detected one is preselected."
+        hint="Official packages; the detected platform is preselected."
       />
       <div class="space-y-3 px-4 py-4">
         <Tabs
@@ -213,7 +206,7 @@ export function OverviewPage(props: {
 
       <div class="mt-3 grid gap-3 lg:grid-cols-2">
         <Card>
-          <CardHeader title="Resources" hint="Your resources, plus any built-in you have overridden." />
+          <CardHeader title="Resources" hint="App resources, plus overridden built-ins." />
           <Show
             when={custom().length || overridden().length}
             fallback={
@@ -286,7 +279,7 @@ export function OverviewPage(props: {
       </div>
 
       <Card class="mt-3">
-        <CardHeader title="Agents" hint="Configured assistants in agents/, with their own prompt and access." />
+        <CardHeader title="Agents" hint="Agents in agents/, each with its own prompt and access." />
         <Show
           when={props.project.agents.length}
           fallback={
@@ -319,13 +312,13 @@ export function OverviewPage(props: {
       <Card class="mt-3">
         <CardHeader
           title="Emails"
-          hint="emails/*.liquid — an app's own wording for the messages the framework sends."
+          hint="emails/*.liquid — the app's wording for framework-sent messages."
         />
         <Show
           when={props.project.emails.length}
           fallback={
             <p class="px-4 py-8 text-center text-xs text-muted">
-              None. Verification, password reset and invitation go out in the framework's own plain wording.
+              None. Verification, password reset and invitation use the framework's default wording.
             </p>
           }
         >
@@ -356,7 +349,7 @@ export function OverviewPage(props: {
       <Card class="mt-3">
         <CardHeader
           title="Running this app"
-          hint="The studio only edits files; building and serving stay with the CLI."
+          hint="The studio edits files only; building and serving stay with the CLI."
         />
         <div class="space-y-2 px-4 py-4">
           <For

@@ -1260,7 +1260,7 @@ export function ApiKeysPage() {
               <div class="px-5 py-4">
                 <EmptyState
                   title="No keys yet"
-                  description="A key acts as you, with all of your permissions. Create one only when something requires it."
+                  description="A key acts as you, with all your permissions. Create one only when required."
                 />
               </div>
             }
@@ -1291,7 +1291,7 @@ export function ApiKeysPage() {
       <Dialog
         open={creating()}
         title="New API key"
-        description="Name it after whatever will use it, so you know what you are revoking later."
+        description="Name it after what will use it, so you know what you are revoking later."
         onClose={() => setCreating(false)}
         footer={
           <>

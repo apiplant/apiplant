@@ -1,10 +1,8 @@
 /**
  * Light/dark, the way apiplant.com does it: dark by default, with a `light`
- * class on `<html>` swapping the palette.
- *
- * The choice is remembered; without one, the system preference decides. The
- * class is also set by an inline script in index.html so the first paint is
- * already the right theme.
+ * class on `<html>` swapping the palette. The choice is remembered; without one,
+ * the system preference decides. An inline script in index.html sets the class
+ * so the first paint is already the right theme.
  */
 
 import { createSignal } from "solid-js";

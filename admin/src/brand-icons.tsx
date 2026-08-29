@@ -1,27 +1,21 @@
 /**
  * Provider marks for the sign-in buttons.
  *
- * These are [Super Tiny Icons](https://github.com/edent/SuperTinyIcons) — each
- * one a few hundred bytes of hand-written path data, MIT licensed. They are
- * inlined rather than fetched for the reason everything else in this bundle is:
- * the dashboard is a static build that must work against an API on another
- * origin, offline, and with no third-party request to a CDN that would tell
- * somebody else who is signing in to what.
+ * These are [Super Tiny Icons](https://github.com/edent/SuperTinyIcons) — a
+ * few hundred bytes of hand-written path data each, MIT licensed. Inlined
+ * rather than fetched: the dashboard is a static build that must work against
+ * an API on another origin, offline, with no third-party CDN request.
  *
  * Each icon draws its own background — Google's white, LinkedIn's blue —
- * because these are trademarks, and their brand guidelines ask for the mark as
- * they drew it rather than recoloured to match a host page. So a Google button
- * looks the same in dark mode, on purpose.
+ * because they are trademarks and their guidelines ask for the mark as drawn,
+ * not recoloured. So a Google button looks the same in dark mode, on purpose.
  *
- * GitHub is the exception, and only because GitHub publishes two marks: a black
- * one and a white one for dark backgrounds. Ours carries the two paths as
- * classes so the stylesheet can pick, since a black tile on this theme's dark
- * surface is a button with no logo on it.
+ * GitHub is the exception: it publishes a black and a white mark. Ours carries
+ * both paths as classes so the stylesheet can pick.
  *
  * A provider apiplant does not ship a mark for falls back to [`InitialMark`],
- * which is its first letter on a neutral tile. That keeps a `[oauth.gitlab]`
- * block working with no edit here — the row simply looks plainer than the four
- * below.
+ * its first letter on a neutral tile — a `[oauth.gitlab]` block works with no
+ * edit here, the row just looks plainer.
  */
 
 import type { JSX } from "@solidjs/web";

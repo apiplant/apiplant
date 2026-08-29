@@ -24,12 +24,11 @@
 //! Because everything else in apiplant is. A plan is data an operator changes
 //! on a Tuesday afternoon, so it belongs in a table with permissions on it —
 //! `role:admin` can add one, anyone can read the price list — rather than in a
-//! config file that wants a deployment, or in a Stripe dashboard that the
-//! app's own queries cannot see. The [hooks] this crate backs keep Stripe in
-//! step: saving a `billing_product` row creates the Stripe product, and
-//! changing a price's amount creates a new Stripe price and archives the old
-//! one, because a Stripe price is immutable and pretending otherwise is how an
-//! app ends up charging last quarter's amount.
+//! config file that wants a deployment, or in a Stripe dashboard that the app's
+//! own queries cannot see. The [hooks] this crate backs keep Stripe in step:
+//! saving a `billing_product` row creates the Stripe product, and changing a
+//! price's amount creates a new Stripe price and archives the old one, because a
+//! Stripe price is immutable.
 //!
 //! ## Where the truth lives
 //!
@@ -41,8 +40,8 @@
 //!
 //! So those two tables are `private`: no endpoint writes them, because a row
 //! saying somebody is subscribed when Stripe disagrees is worse than no row at
-//! all. Read them freely — that is what they are for — but the way to *change*
-//! one is to change the subscription, and let the webhook arrive.
+//! all. Read them freely — but the way to *change* one is to change the
+//! subscription, and let the webhook arrive.
 //!
 //! ## Tax
 //!
@@ -51,8 +50,7 @@
 //! registered for, adds it to the charge, and reports it back on the invoice —
 //! which is where `billing_payment.tax_amount` comes from. It needs an origin
 //! address and at least one active registration configured in the Stripe
-//! dashboard; with none, it computes nothing and the buyer pays the price. It
-//! is not a substitute for having registered anywhere.
+//! dashboard; with none, it computes nothing and the buyer pays the price.
 //!
 //! [hooks]: https://docs.rs/apiplant-server
 

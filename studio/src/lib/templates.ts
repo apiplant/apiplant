@@ -372,12 +372,12 @@ const typescriptSource = (name: string, kind: TemplateKind) =>
     ? `/**
  * \`${name}\` — an apiplant lifecycle hook in TypeScript.
  *
- * Point a resource's [hooks] at it (resources/<resource>.toml), and it runs around
+ * Point a resource's [hooks] at it (resources/<resource>.toml) and it runs around
  * that resource's CRUD. \`apiplant build\` strips the types and writes
  * ${name}.js beside this file; the server runs it in a V8 isolate.
  *
- * Return \`{ data }\` to replace the body, throw \`BadRequest\` to reject the
- * request, or return nothing to let it through unchanged.
+ * Return \`{ data }\` to replace the body, throw \`BadRequest\` to reject, or
+ * return nothing to let the request through unchanged.
  */
 
 import { defineFunctions, hook, log, BadRequest } from "apiplant";
@@ -407,9 +407,9 @@ export default defineFunctions({
  * \`${name}\` — an apiplant function in TypeScript.
  *
  * \`apiplant build\` strips the types and writes ${name}.js beside this file; the
- * server runs it in a V8 isolate. Nothing to install: the \`apiplant\` module is
- * provided by the host, and its types come from the apiplant.d.ts that
- * \`apiplant build\` writes into functions/.
+ * server runs it in a V8 isolate. The \`apiplant\` module is provided by the host,
+ * and its types come from the apiplant.d.ts that \`apiplant build\` writes into
+ * functions/.
  *
  * Mounted at POST /functions/${name}.
  */

@@ -1,9 +1,8 @@
 /**
- * The apiplant app-directory model, as the studio holds it in memory.
- *
- * Mirrors `crates/apiplant-core/src/schema.rs` and `config.rs`: every default
- * here is the one the server applies when a key is absent, so the studio can
- * omit unchanged keys from what it writes back.
+ * The apiplant app-directory model, as the studio holds it in memory. Mirrors
+ * `crates/apiplant-core/src/schema.rs` and `config.rs`: every default here is
+ * the one the server applies when a key is absent, so the studio can omit
+ * unchanged keys from what it writes back.
  */
 
 export const FIELD_TYPES = [
@@ -56,12 +55,10 @@ export interface PermissionRule {
 }
 
 /**
- * A whole action's permission.
- *
- * Written back as the tersest shape that says the same thing: one `allow`
- * clause is a bare string, several are an array, and anything using `own` or
- * `deny` needs the table form. Nothing here is denied implicitly — a rule set
- * names everyone who may act, and anyone unmatched is refused.
+ * A whole action's permission. Written back as the tersest shape that says the
+ * same thing: one `allow` clause is a bare string, several are an array, and
+ * anything using `own` or `deny` needs the table form. A rule set names
+ * everyone who may act; anyone unmatched is refused.
  */
 export type PermissionSet = PermissionRule[];
 

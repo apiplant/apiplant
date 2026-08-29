@@ -2,14 +2,12 @@
  * Choosing a password, twice.
  *
  * Every screen where a password is *set* rather than entered from memory
- * (signing up, accepting an invitation, or finishing a reset) collects it in
- * two fields and refuses to submit until they match. A typo in a masked field
- * would otherwise surface at the next sign-in, with the reset flow as the only
- * recovery.
+ * (signing up, accepting an invitation, finishing a reset) collects it in two
+ * fields and refuses to submit until they match. A typo in a masked field
+ * would otherwise surface at the next sign-in.
  *
- * This is intentionally not shared with the *sign-in* form, which has a single
- * field: there is nothing to confirm against a value the server already
- * holds.
+ * Not shared with the *sign-in* form, which has a single field: there is
+ * nothing to confirm against a value the server already holds.
  */
 
 import { createSignal } from "solid-js";

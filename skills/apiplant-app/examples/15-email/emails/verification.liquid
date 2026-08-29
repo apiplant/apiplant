@@ -2,11 +2,9 @@
 subject = "Confirm your address for {{ app_name }}"
 ---
 {% comment %}
-  Named after one of the three messages the framework sends itself, so it
-  replaces that message — the flow around it is untouched. The link and how
-  long it lasts stay the framework's to decide; every sentence here is ours.
-
-  Delete this file and the built-in message comes back.
+  Replaces the framework's verification message; the flow around it is
+  untouched. The link and its lifetime stay the framework's. Delete this file
+  and the built-in message comes back.
 {% endcomment %}
 <!doctype html>
 <html lang="en">
@@ -23,7 +21,7 @@ subject = "Confirm your address for {{ app_name }}"
 </td></tr>
 
 <tr><td style="padding:32px 32px 8px;font-size:16px;line-height:1.6;">
-One tap and you're in. Confirming tells us this mailbox is really yours.
+One tap and you're in. Confirming verifies this mailbox is yours.
 </td></tr>
 
 <tr><td style="padding:20px 32px 8px;">
@@ -37,7 +35,7 @@ Or paste this into your browser: <a href="{{ url }}" style="color:#4b5563;">{{ u
 </td></tr>
 
 <tr><td style="padding:16px 32px 28px;font-size:13px;line-height:1.6;color:#6b7280;">
-The link stops working in {{ expires_in }}. If you didn't sign up, ignore this message — nothing happens until the link is used.
+The link stops working in {{ expires_in }}. If you didn't sign up, ignore this message; nothing happens until the link is used.
 </td></tr>
 
 </table>

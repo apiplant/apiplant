@@ -1044,7 +1044,7 @@ export function AgentPage(props: { agent: AgentManifest; threadId: string | null
             <div class="flex min-h-full flex-1 items-center justify-center">
               <EmptyState
                 title={loadingMessages() ? "Loading messages…" : "No messages yet"}
-                description="Ask the agent something to start the conversation."
+                description="Ask the agent something to start."
               />
             </div>
           }

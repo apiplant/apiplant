@@ -49,11 +49,9 @@ interface ConfigField {
   /** Writes to another table than the section's own — `[email.smtp]` under Email. */
   section?: string;
   /**
-   * What the server does with this key absent, for a switch whose default is
-   * `true`. Without it an unset key draws as off, which reads as "this is
-   * disabled" about something the server has switched on. Toggling back to the
-   * default deletes the key rather than writing it, so the file keeps saying
-   * nothing about a setting nobody changed.
+   * Whether a boolean field's server default is on. Without it an unset key
+   * draws as off, misreading a setting the server has on. Toggling back to the
+   * default deletes the key, so the file records only what changed.
    */
   defaultOn?: boolean;
   /**
@@ -63,14 +61,9 @@ interface ConfigField {
    */
   group?: string;
   /**
-   * Why this field cannot be set right now, when something in another section
-   * has taken it out of play — `[organization] default_org_class` in an app
-   * that has one organisation, say.
-   *
-   * Shown greyed rather than hidden, on purpose: a setting that vanishes reads
-   * as one the studio does not support, and the operator is left looking for
-   * it. A setting that is visibly unavailable *and says why* answers the
-   * question it raises.
+   * Why a field is unavailable because another section took it out of play.
+   * Shown greyed with the reason rather than hidden: a vanished setting reads
+   * as unsupported.
    */
   disabledReason?: string;
 }
@@ -105,10 +98,8 @@ const EMAIL_PROVIDERS = [
 const SMTP_ENCRYPTION = ["starttls", "tls", "none"] as const;
 
 /**
- * What each mailer needs, and nothing else. A key is worth showing only where
- * the provider reads it: `region` means something to SES alone, `domain` to
- * Mailgun alone, and the `[email.smtp]` table only to SMTP — so each provider
- * names its own credentials rather than the form listing every provider's.
+ * Each mailer's own credentials, and nothing else: `region` is SES-only,
+ * `domain` Mailgun-only, `[email.smtp]` SMTP-only.
  */
 const EMAIL_PROVIDER_FIELDS: Record<string, ConfigField[]> = {
   none: [],
@@ -264,13 +255,9 @@ const QUEUE_PUBLISH_OPTIONS = [
 ] as const;
 
 /**
- * Which option a written access string selects. `role:<name>` collapses to
- * `role`, and the name goes in the box beside it.
- *
- * `fallback` is the *server's* default for the setting, which differs: an
- * unwritten `[ai] access` is `authenticated`, an unwritten `[queues] publish`
- * is `private`. Showing the wrong one would make the form disagree with the
- * app it is describing.
+ * Which option a written access string selects; `role:<name>` collapses to
+ * `role` with the name in the box beside it. `fallback` is the server's own
+ * default for the setting, which differs per setting.
  */
 function accessLevelOf(
   value: string | number | boolean | undefined,
@@ -288,24 +275,16 @@ function accessRoleOf(value: string | number | boolean | undefined) {
 }
 
 /**
- * Whether a section's own switch is on.
- *
- * Unset is on: every `enabled` in `main.toml` defaults to `true`, so a file
- * that says nothing about a section describes one that is running. What turns
- * a section off is the word `false`, written down.
+ * Whether a section's switch is on. Unset is on: every `enabled` in
+ * main.toml defaults to `true`; only a written `false` turns a section off.
  */
 function sectionEnabled(table: string): boolean {
   return configValue(table, "enabled") !== false;
 }
 
 /**
- * The switch every optional section now opens with.
- *
- * One grammar for one question. Before this, a section was off because its
- * provider said `none`, or because it had an `enabled` key, or because it had
- * no way to be off at all — three spellings of the same thing, and two of them
- * asked the operator to know which. Naming a provider is a separate decision
- * and now a separate field, asked only once the answer matters.
+ * The switch every optional section opens with. Naming a provider is a
+ * separate field, asked only once the answer matters.
  */
 function enabledField(hint: string, group?: string): ConfigField {
   return {
@@ -324,11 +303,9 @@ function authIsEnabled(): boolean {
 }
 
 /**
- * Whether this app is multitenant.
- *
- * Derived exactly as `Config::organizations_enabled` derives it: an app with no
- * accounts has nobody to be a member of anything, so no-auth is no-tenancy
- * whatever `[organization] enabled` says.
+ * Whether the app is multitenant, derived as `Config::organizations_enabled`
+ * derives it: no accounts means no tenancy, whatever `[organization] enabled`
+ * says.
  */
 function organizationsAreEnabled(): boolean {
   return authIsEnabled() && sectionEnabled("organization");
@@ -343,7 +320,7 @@ function gatedBy(reason: string | null, field: ConfigField): ConfigField {
 
 function authFields(): ConfigField[] {
   const enabled = enabledField(
-    "On by default. Off, this app has no accounts at all: no `/auth/*` endpoints, no sessions, no API keys, and no `user`, `membership`, `api_key`, `invitation` or `auth_token` tables. Every caller is the deployment's administrator and everything in admin is editable — `private` still means private. Organizations go with it, since a membership is a user's.",
+    "On by default. Off: no /auth/* endpoints, sessions, API keys, or user, membership, api_key, invitation or auth_token tables. Every caller acts as the deployment administrator; private stays private. Organizations are disabled with it.",
   );
   if (!authIsEnabled()) return [enabled];
   return [
@@ -354,7 +331,7 @@ function authFields(): ConfigField[] {
       group: "Sessions",
       placeholder: "random per boot",
       kind: "text" as const,
-      hint: "Set it in production — an empty secret means tokens die with the process.",
+      hint: "Set in production; an empty secret means tokens die with the process.",
     },
     {
       key: "session_ttl_secs",
@@ -370,7 +347,7 @@ function authFields(): ConfigField[] {
       group: "Signing up",
       defaultOn: true,
       kind: "boolean" as const,
-      hint: "Whether anybody may create an account for themselves.",
+      hint: "Whether callers may create accounts for themselves.",
     },
     {
       key: "verify_email_redirect",
@@ -378,7 +355,7 @@ function authFields(): ConfigField[] {
       group: "Signing up",
       placeholder: "nowhere — stay on the confirmation screen",
       kind: "text" as const,
-      hint: "Where somebody lands once they confirm their address. An absolute URL or a path on this origin. Confirming signs them in first, so the app is reached already authenticated.",
+      hint: "Redirect after address confirmation: an absolute URL or a path on this origin. Confirmation signs the caller in first.",
     },
   ];
 }
@@ -387,7 +364,7 @@ function organizationFields(): ConfigField[] {
   const enabled = gatedBy(
     authIsEnabled() ? null : NEEDS_AUTH,
     enabledField(
-      "On by default. Off, there is one organisation and everybody is in it: the `X-Organization` header stops selecting anything, `member` and `role:` stop being questions about where a caller stands, and admin drops its organisation switcher. The tables and every `organization_id` column stay exactly where they are, so turning tenancy back on loses nothing.",
+      "On by default. Off: a single organisation containing every caller. The X-Organization header selects nothing, member and role: stop applying, and admin drops its organisation switcher. Tables and organization_id columns are unchanged.",
     ),
   );
   if (!organizationsAreEnabled()) return [enabled];
@@ -399,7 +376,7 @@ function organizationFields(): ConfigField[] {
       group: "Back office",
       placeholder: "private",
       kind: "policy" as const,
-      hint: "The deployment's own administrators — typically a role in a class of its own, e.g. `role:admin` in class `staff`. They write any organisation's `org_class`, list every organisation and every user, and read and write data in all of them: role checks and organisation checks do not apply to them. `private` does — anything marked private is no more reachable for them than for anyone else. `private` means there is no back office.",
+      hint: "Deployment administrators, e.g. `role:admin` in class `staff`. They bypass role and organisation checks: they write any `org_class`, list every organisation and user, and read and write all data. `private` still applies; `private` means no back office.",
     },
     {
       key: "default_org_class",
@@ -407,23 +384,23 @@ function organizationFields(): ConfigField[] {
       group: "Classes",
       placeholder: "none",
       kind: "text" as const,
-      hint: "The class every new organisation starts with, personal ones included. Only fills a gap: a global admin naming a class on create keeps it. Unset leaves new organisations unclassed, which no `@org_class=` permission matches.",
+      hint: "Class every new organisation starts with. Fills a gap only: a class named on create is kept. Unset leaves new organisations unclassed, which no `@org_class=` permission matches.",
     },
     {
       section: "auth",
       key: "allow_impersonation",
       label: "allow impersonation",
-      group: "Acting as somebody else",
+      group: "Impersonation",
       defaultOn: true,
       kind: "boolean" as const,
-      hint: "On by default. An organisation's admins may sign in as one of its members; the session they get is pinned to that organisation, so it reaches nothing the member has anywhere else. The back office above may act as anyone, anywhere, whatever this says.",
+      hint: "On by default. Organisation admins may sign in as one of their members; the session is pinned to that organisation. The global back office above may act as anyone regardless.",
     },
   ];
 }
 
 function aiFields(): ConfigField[] {
   const enabled = enabledField(
-    "On by default, but an app with no provider named below has no assistant either way. Off keeps the model, key and prompts here while `/ai/chat`, the configured agents and `ctx.chat` stop answering.",
+    "On by default; without a provider named below, there is no assistant either way. Off keeps the settings while /ai/chat, configured agents and ctx.chat stop answering.",
   );
   if (!sectionEnabled("ai")) return [enabled];
   const provider = String(configValue("ai", "provider") ?? "none");
@@ -444,7 +421,7 @@ function aiFields(): ConfigField[] {
       group: "Provider & model",
       kind: "select" as const,
       options: AI_PROVIDERS,
-      hint: "Which API the model is asked for. Unset leaves chat and configured agents without a backing provider, whatever the switch says.",
+      hint: "The model API. Unset leaves chat and configured agents without a provider.",
     },
     {
       key: "endpoint",
@@ -493,7 +470,7 @@ function aiFields(): ConfigField[] {
       group: "Generation defaults",
       kind: "number" as const,
       placeholder: "2048",
-      hint: "Cap per reply. Give reasoning models enough room, or they may spend it all on reasoning and return no answer.",
+      hint: "Cap per reply. Reasoning models may spend it all on reasoning and return no answer.",
     },
     {
       key: "temperature",
@@ -501,14 +478,14 @@ function aiFields(): ConfigField[] {
       group: "Generation defaults",
       kind: "number" as const,
       placeholder: "unset",
-      hint: "Leave empty to let the provider decide. Values are sent only when set.",
+      hint: "Empty lets the provider decide; sent only when set.",
     },
     {
       key: "reasoning",
       label: "reasoning traces",
       group: "Generation defaults",
       kind: "boolean" as const,
-      hint: "Off by default. When on, provider reasoning is surfaced to callers and operators can reveal it per message in admin. Individual agents can override this.",
+      hint: "Off by default. When on, provider reasoning is surfaced to callers and can be revealed per message in admin. Agents can override.",
     },
     {
       key: "access",
@@ -524,7 +501,7 @@ function aiFields(): ConfigField[] {
       group: "Access & limits",
       kind: "number" as const,
       placeholder: "300",
-      hint: "Per completion. Long local-model replies are slow, not necessarily broken.",
+      hint: "Per completion.",
     },
     {
       section: "admin.ai_assistance",
@@ -532,7 +509,7 @@ function aiFields(): ConfigField[] {
       label: "Admin AI assistance",
       group: "Admin assistance",
       kind: "boolean" as const,
-      hint: "Shows the admin’s field-writing AI helper when both this and the app-wide AI provider are configured.",
+      hint: "Enables the admin field-writing AI helper; requires the app-wide AI provider.",
     },
     {
       section: "admin.ai_assistance",
@@ -568,13 +545,8 @@ const OTLP_PROTOCOLS = [
 ] as const;
 
 /**
- * `[observability]`, in the order somebody sets it up.
- *
- * Logs come first and are always shown, because they are the half that works
- * with nothing switched on: a server writes to its terminal whether or not
- * anybody is collecting traces. Everything below them is hidden until
- * `enabled`, since a sample ratio for spans nobody is building is a question
- * with no meaning.
+ * `[observability]`, in setup order. Logs are always shown — they work with
+ * nothing enabled; the rest is hidden until `enabled`.
  */
 function observabilityFields(): ConfigField[] {
   const enabled = configValue("observability", "enabled") === true;
@@ -584,7 +556,7 @@ function observabilityFields(): ConfigField[] {
       key: "enabled",
       label: "observability enabled",
       kind: "boolean" as const,
-      hint: "Gives every request a span and an X-Trace-Id, and lets the logs carry its trace id. Nothing leaves the process until an OTLP endpoint is set below.",
+      hint: "Gives every request a span and X-Trace-Id, and puts the trace id in the logs. Nothing leaves the process until an OTLP endpoint is set.",
     },
     {
       section: "observability.logs",
@@ -593,7 +565,7 @@ function observabilityFields(): ConfigField[] {
       group: "Logs",
       kind: "select" as const,
       options: LOG_FORMATS,
-      hint: "`pretty` for a terminal, `json` for anything that parses the line. This one applies whether or not observability is enabled.",
+      hint: "pretty for a terminal, json for parsers. Applies whether or not observability is enabled.",
     },
     {
       section: "observability.logs",
@@ -602,7 +574,7 @@ function observabilityFields(): ConfigField[] {
       group: "Logs",
       placeholder: "info,apiplant=debug,ntex_server=warn",
       kind: "text" as const,
-      hint: "Used only when RUST_LOG is unset — the environment always wins, so a running container can be turned up without editing this.",
+      hint: "Used only when RUST_LOG is unset; the environment always wins.",
     },
     {
       section: "observability.logs",
@@ -611,7 +583,7 @@ function observabilityFields(): ConfigField[] {
       group: "Logs",
       kind: "boolean" as const,
       defaultOn: true,
-      hint: "JSON only. Puts the request's route, method and trace id on every line written during it — which is what makes “every line from the request that failed” a filter.",
+      hint: "JSON only. Puts the request's route, method and trace id on every line written during it.",
     },
   ];
 
@@ -624,7 +596,7 @@ function observabilityFields(): ConfigField[] {
       label: "service name",
       group: "Service identity",
       kind: "text" as const,
-      hint: "What this service is called in a trace. Unset uses OTEL_SERVICE_NAME, then the app's name.",
+      hint: "Service name in traces. Unset uses OTEL_SERVICE_NAME, then the app name.",
     },
     {
       key: "service_version",
@@ -639,7 +611,7 @@ function observabilityFields(): ConfigField[] {
       group: "Service identity",
       placeholder: "production",
       kind: "text" as const,
-      hint: "Exported as deployment.environment.name — the attribute most backends group by first.",
+      hint: "Exported as deployment.environment.name.",
     },
     {
       section: "observability.traces",
@@ -648,7 +620,7 @@ function observabilityFields(): ConfigField[] {
       group: "Traces",
       kind: "boolean" as const,
       defaultOn: true,
-      hint: "On even with no collector: the trace id and the error fields a span carries are worth having in the logs alone.",
+      hint: "On even with no collector: the trace id and span error fields are useful in the logs alone.",
     },
     {
       section: "observability.traces",
@@ -657,7 +629,7 @@ function observabilityFields(): ConfigField[] {
       group: "Traces",
       placeholder: "1.0",
       kind: "number" as const,
-      hint: "Fraction of root requests recorded, 0–1. A request that arrives with a traceparent follows its caller instead. Keeping every failure and a fraction of the rest is tail sampling — a collector's job, not this server's.",
+      hint: "Fraction of root requests recorded, 0–1. A request arriving with a traceparent follows its caller. Tail sampling is a collector's job, not this server's.",
     },
     {
       section: "observability.traces",
@@ -666,7 +638,7 @@ function observabilityFields(): ConfigField[] {
       group: "Traces",
       kind: "boolean" as const,
       defaultOn: true,
-      hint: "Hands the trace id back to the caller, so a bug report becomes a lookup rather than a search by timestamp.",
+      hint: "Returns the trace id to the caller, so a bug report becomes a lookup.",
     },
     {
       section: "observability.traces",
@@ -675,7 +647,7 @@ function observabilityFields(): ConfigField[] {
       group: "Traces",
       placeholder: "/_health",
       kind: "list" as const,
-      hint: "Path prefixes, under base_path. Comma-separated. Health checks are noise you pay for per span. Empty here uses the default, /_health.",
+      hint: "Path prefixes under base_path, comma-separated. Empty uses the default, /_health.",
     },
     {
       section: "observability.traces",
@@ -684,7 +656,7 @@ function observabilityFields(): ConfigField[] {
       group: "Traces",
       placeholder: "x-request-id",
       kind: "list" as const,
-      hint: "Copied onto the span. Comma-separated. authorization, cookie and x-api-key are refused even if named — a captured credential is a credential in your log aggregator.",
+      hint: "Copied onto the span, comma-separated. authorization, cookie and x-api-key are refused even if named.",
     },
     {
       section: "observability.metrics",
@@ -693,7 +665,7 @@ function observabilityFields(): ConfigField[] {
       group: "Metrics",
       kind: "boolean" as const,
       defaultOn: true,
-      hint: "http.server.request.duration and http.server.active_requests, labelled by a route template so a busy table does not become a time series per row. Needs an endpoint below to go anywhere.",
+      hint: "http.server.request.duration and http.server.active_requests, labelled by route template. Needs an endpoint below.",
     },
     {
       section: "observability.metrics",
@@ -710,7 +682,7 @@ function observabilityFields(): ConfigField[] {
       group: "OTLP export",
       placeholder: "http://localhost:4318",
       kind: "text" as const,
-      hint: "Any OTLP/HTTP receiver — the OpenTelemetry Collector, Jaeger, Tempo, Honeycomb, Datadog, Grafana Cloud. /v1/traces and /v1/metrics are appended. Empty falls back to OTEL_EXPORTER_OTLP_ENDPOINT, and unset in both places keeps everything in-process.",
+      hint: "Any OTLP/HTTP receiver; /v1/traces and /v1/metrics are appended. Empty falls back to OTEL_EXPORTER_OTLP_ENDPOINT; unset in both places keeps everything in-process.",
     },
     {
       section: "observability.otlp",
@@ -719,7 +691,7 @@ function observabilityFields(): ConfigField[] {
       group: "OTLP export",
       kind: "select" as const,
       options: OTLP_PROTOCOLS,
-      hint: "Every collector accepts http/protobuf. Transport is HTTP either way — there is no gRPC exporter.",
+      hint: "Every collector accepts http/protobuf; there is no gRPC exporter.",
     },
     {
       section: "observability.otlp",
@@ -728,7 +700,7 @@ function observabilityFields(): ConfigField[] {
       group: "OTLP export",
       placeholder: "10",
       kind: "number" as const,
-      hint: "A batch is dropped rather than blocking the process behind a collector that stopped answering.",
+      hint: "A batch is dropped rather than blocking the process behind an unresponsive collector.",
     },
   ];
 }
@@ -737,7 +709,7 @@ const SECTIONS: ConfigSection[] = [
   {
     id: "application",
     title: "Server",
-    hint: "Naming, networking, routing, the admin dashboard and the API docs, each under its own heading.",
+    hint: "Naming, networking, routing, admin dashboard and API docs.",
     fields: [
       {
         section: "app",
@@ -746,7 +718,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Identity",
         placeholder: "the directory name",
         kind: "text" as const,
-        hint: "Heads the admin dashboard as “<name> admin”. Unset uses the directory name.",
+        hint: "Admin dashboard title, “<name> admin”. Unset uses the directory name.",
       },
       {
         section: "server",
@@ -755,7 +727,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Networking",
         placeholder: "0.0.0.0",
         kind: "text" as const,
-        hint: "Bind address. Unset listens on every interface; set it only to narrow the bind.",
+        hint: "Bind address. Unset listens on every interface.",
       },
       {
         section: "server",
@@ -799,7 +771,7 @@ const SECTIONS: ConfigSection[] = [
         label: "gravatar avatars",
         group: "Admin dashboard",
         kind: "boolean" as const,
-        hint: "Off by default. When on, an account with no avatar_url is drawn with its Gravatar, which means a request to gravatar.com for every face. Initials are the fallback either way.",
+        hint: "Off by default. When on, accounts without an avatar_url render their Gravatar (a request to gravatar.com per face). Initials are the fallback.",
       },
       {
         section: "docs",
@@ -823,7 +795,7 @@ const SECTIONS: ConfigSection[] = [
         group: "API documentation",
         placeholder: "the app name",
         kind: "text" as const,
-        hint: "Only when the published API answers to a different name than the app.",
+        hint: "Set only when the published API has a different name than the app.",
       },
     ],
   },
@@ -894,13 +866,13 @@ const SECTIONS: ConfigSection[] = [
   {
     id: "auth",
     title: "Authentication",
-    hint: "Whether this app has accounts, and what signing in to one is like.",
+    hint: "Whether the app has accounts, and how signing in works.",
     fields: authFields,
   },
   {
     id: "organization",
     title: "Organizations",
-    hint: "The tenant itself. An organisation's `org_class` decides which `@org_class=` permissions apply inside it, and the column is server-owned — no ordinary request writes it, whatever the resource permissions say. The global admin role below is the one thing that names who may set it, for every organisation.",
+    hint: "Tenancy. An organisation's `org_class` selects the `@org_class=` permissions inside it. The column is server-owned; only the global admin role below may set it.",
     fields: organizationFields,
   },
   {
@@ -909,7 +881,7 @@ const SECTIONS: ConfigSection[] = [
     hint: "Outbound mail for functions and auth flows that need a mailbox.",
     fields: () => {
       const enabled = enabledField(
-        "On by default, but an app with no provider named below sends nothing either way. Off keeps the credentials here while the mailbox flows — invitations, address confirmation, password reset — stop being mounted.",
+        "On by default; without a provider named below, nothing is sent either way. Off keeps the credentials while the mailbox flows stop being mounted.",
       );
       if (!sectionEnabled("email")) return [enabled];
       const provider = String(configValue("email", "provider") ?? "none");
@@ -925,7 +897,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Provider",
         kind: "select" as const,
         options: EMAIL_PROVIDERS,
-        hint: "How mail leaves the process. Unset sends nothing, whatever the switch says.",
+        hint: "How mail leaves the process. Unset sends nothing.",
       };
       if (provider === "none") return [enabled, chooser];
       return [
@@ -1011,11 +983,11 @@ const SECTIONS: ConfigSection[] = [
     id: "queues",
     title: "Queues",
     hint:
-      "Work that happens after the response. `publish` writes a row and fires a Postgres NOTIFY; " +
-      "a subscriber claims it and runs a function. No broker to deploy.",
+      "Background work. publish writes a row and fires a Postgres NOTIFY; " +
+      "a subscriber claims it and runs a function. No broker required.",
     fields: () => {
       const enabled = enabledField(
-        "On by default. Off pauses handling without deleting the subscriptions below — publishing still records rows, so nothing is lost while it is off. It is a pause, not a drain.",
+        "On by default. Off pauses handling without deleting the subscriptions; publishing still records rows, so nothing is lost.",
       );
       if (!sectionEnabled("queues")) return [enabled];
       return [
@@ -1026,7 +998,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Handling",
         placeholder: "30",
         kind: "number" as const,
-        hint: "The sweep beneath the NOTIFY. Delivery is immediate either way; this is what catches a missed notification.",
+        hint: "Fallback sweep beneath the NOTIFY; catches a missed notification.",
       },
       {
         key: "batch",
@@ -1041,7 +1013,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Retries",
         placeholder: "5",
         kind: "number" as const,
-        hint: "Then the message is left `failed` for a person to look at. 1 means no retries.",
+        hint: "Then the message is left `failed` for inspection. 1 means no retries.",
       },
       {
         key: "retry_backoff_secs",
@@ -1057,7 +1029,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Retries",
         placeholder: "300",
         kind: "number" as const,
-        hint: "Before a claimed message is offered to another subscriber. Set it above your slowest handler.",
+        hint: "Before a claimed message is offered to another subscriber; set above the slowest handler.",
       },
       {
         key: "retain_hours",
@@ -1073,7 +1045,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Retention",
         placeholder: "apiplant",
         kind: "text" as const,
-        hint: "So two apps sharing one database do not wake each other.",
+        hint: "Prevents two apps sharing one database from waking each other.",
       },
       {
         key: "publish",
@@ -1081,7 +1053,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Publishing over HTTP",
         kind: "select" as const,
         options: QUEUE_PUBLISH_OPTIONS,
-        hint: "Who may POST <base>/queues/{topic}. `private` — the default — means there is no such endpoint.",
+        hint: "Who may POST <base>/queues/{topic}. `private` (the default) means no such endpoint.",
       },
       ];
     },
@@ -1089,10 +1061,10 @@ const SECTIONS: ConfigSection[] = [
   {
     id: "payments",
     title: "Payments",
-    hint: "Taking money. Switched on with a provider named, the app also gains the billing_* resources and the /billing endpoints.",
+    hint: "Payment processing. With a provider named, the app gains the billing_* resources and /billing endpoints.",
     fields: () => {
       const enabled = enabledField(
-        "On by default, but an app with no provider named below takes no money either way. Off keeps the keys and options here while the /billing endpoints and the billing_* tables leave the app.",
+        "On by default; without a provider named below, no payments are processed. Off keeps the keys while the /billing endpoints and billing_* tables leave the app.",
       );
       if (!sectionEnabled("payments")) return [enabled];
       return [
@@ -1103,7 +1075,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Provider",
         kind: "select" as const,
         options: PAYMENT_PROVIDERS,
-        hint: "Who processes the payment. Unset leaves the billing tables out of the app, whatever the switch says.",
+        hint: "Payment processor. Unset leaves the billing tables out of the app.",
       },
       {
         key: "secret_key",
@@ -1127,7 +1099,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Credentials",
         placeholder: "$STRIPE_WEBHOOK_SECRET",
         kind: "text" as const,
-        hint: "The `whsec_…` signing secret. Without it nothing bought is ever recorded.",
+        hint: "The `whsec_…` signing secret; without it, purchases are never recorded.",
       },
       {
         key: "currency",
@@ -1151,7 +1123,7 @@ const SECTIONS: ConfigSection[] = [
         group: "Checkout redirects",
         placeholder: "https://example.com/thanks",
         kind: "text" as const,
-        hint: "Where a buyer lands after paying. Empty uses the dashboard's billing screen.",
+        hint: "Redirect after payment. Empty uses the dashboard's billing screen.",
       },
       {
         key: "cancel_url",
@@ -1187,16 +1159,14 @@ const SECTIONS: ConfigSection[] = [
   {
     id: "observability",
     title: "Observability",
-    hint: "What the server says about itself: structured logs, OpenTelemetry traces and HTTP metrics, exported over OTLP to any collector.",
+    hint: "Structured logs, OpenTelemetry traces and HTTP metrics, exported over OTLP to any collector.",
     fields: observabilityFields,
   },
 ];
 
 /**
- * What a field shows when it is empty: the value the server would actually use,
- * where the studio knows it. The app's name falls back to the directory, and
- * the docs title falls back to the app's name — so both can be shown rather
- * than described.
+ * What an empty field shows: the value the server would use, where the studio
+ * knows it (app name → directory, docs title → app name).
  */
 function fallbackPlaceholder(
   sectionId: string,
@@ -1220,10 +1190,8 @@ function sectionFields(section: ConfigSection): ConfigField[] {
 }
 
 /**
- * The section's fields, in labelled groups. Order follows the field list, so a
- * group appears where it is first named and its fields stay in their declared
- * order; anything without a group leads the section under no heading at all.
- * A section whose fields name no group renders exactly as it did before.
+ * The section's fields in labelled groups, in declared order; ungrouped
+ * fields lead the section under no heading.
  */
 function groupedFields(section: ConfigSection): FieldGroup[] {
   const groups: FieldGroup[] = [];
@@ -1285,20 +1253,12 @@ function selectOptions(sectionId: string, field: ConfigField) {
 }
 
 /**
- * An access string with its optional role, as one control.
- *
- * `role:<name>` is two facts in one value — which level, and which role — so it
- * is a select plus a box that appears only when it means something. Shared by
- * `[ai] access` and `[queues] publish`, which use the same grammar.
+ * An access string with its optional role as one control: a select plus a box
+ * that appears only for `role:`. Shared by `[ai] access` and `[queues] publish`.
  */
 /**
- * The access levels that still mean something in this app.
- *
- * `authenticated` is a question about having an identity, and `member` and
- * `role:` are questions about where a caller stands — so an app with no
- * accounts can answer none of the three, and one with no organisations cannot
- * answer the last two. Offering a level that resolves to "yes, everybody" would
- * be offering a restriction the server does not apply.
+ * The access levels this app can answer: no accounts drops `authenticated`,
+ * no organisations drops `member` and `role:`.
  */
 function availableAccessOptions(
   options: readonly { value: string; label: string }[],
@@ -1367,17 +1327,10 @@ function availablePolicyLevels(): string[] {
 }
 
 /**
- * A whole policy string — who it names and the class it is narrowed to —
- * written as the sentence the resource permissions are written as.
- *
- * A setting like `global_admin_role` is a policy, not a name: typed by hand
- * `role:admn@org_class=staff` parses, saves, and silently names nobody. The
- * role and the class are still free text, because neither is declared anywhere
- * — they are membership and organisation data — but what the project already
- * spells somewhere is offered as completions, which is the only check there is.
- *
- * No effect: a setting like this one holds a single policy, and "allow" is the
- * only thing it could mean — a global admin role is not something you deny.
+ * A whole policy — who it names and the class it is narrowed to — as one
+ * sentence. Role and class are free text with project-wide completions, the
+ * only check available. No effect control: a single-policy setting can only
+ * allow.
  */
 function PolicyField(props: { table: string; field: string }) {
   const current = () =>
@@ -1396,16 +1349,9 @@ function PolicyField(props: { table: string; field: string }) {
 }
 
 /**
- * A list of strings, edited as one comma-separated line.
- *
- * A row-per-entry editor would be the richer control, but these lists are two
- * or three short tokens — header names, path prefixes — and a line of them is
- * quicker to read and quicker to change than a stack of inputs.
- *
- * The text is held locally while it is being typed: splitting on every
- * keystroke would drop the comma the moment it is pressed, and the caret with
- * it. It is written through on each edit all the same, so nothing waits for a
- * blur to be saved.
+ * A list of strings as one comma-separated line. Text is held locally while
+ * typed so the separator being entered is not swallowed; each edit is written
+ * through, so nothing waits for a blur.
  */
 function ListField(props: {
   table: string;
@@ -1451,16 +1397,9 @@ function ListField(props: {
 }
 
 /**
- * `[queues.subscribe]`: which function handles which topic.
- *
- * Its own card because it is a map rather than a set of scalar settings, and
- * because it is the part of `[queues]` anybody actually comes here to change —
- * the rest are knobs with sensible defaults.
- *
- * Nothing here names a *publisher*. A topic is announced by whatever publishes
- * it — a function's `publish`, a model's `[publish]`, the HTTP endpoint — and
- * none of them know this table exists. That indirection is the point: adding a
- * second handler to a topic is one line here and no change anywhere else.
+ * `[queues.subscribe]`: which function handles which topic. A map, not scalar
+ * settings, so it gets its own card. Nothing here names a publisher; adding a
+ * second handler to a topic is one line here and no change elsewhere.
  */
 function SubscriptionsCard() {
   const entries = createMemo(subscriptions);
@@ -1515,7 +1454,7 @@ function SubscriptionsCard() {
     <Card>
       <CardHeader
         title="Subscriptions"
-        hint="Topic → the function(s) that handle it. Each subscriber gets its own retries, so one failing never re-runs another."
+        hint="Topic → the function(s) that handle it. Each subscriber retries independently."
       />
       <datalist id="queue-function-names">
         <For each={known()}>{(name) => <option value={name} />}</For>
@@ -1591,7 +1530,7 @@ function SubscriptionsCard() {
         <div class="border-t border-line px-4 py-3 text-xs leading-relaxed text-warn">
           <Mono>{unknown().join(", ")}</Mono> — no library in{" "}
           <Mono>functions/</Mono> exports that. Messages on its topic will retry
-          and then land in the dead-letter until it is built and dropped in.
+          and then land in the dead-letter until it is built.
         </div>
       </Show>
     </Card>
@@ -1599,12 +1538,8 @@ function SubscriptionsCard() {
 }
 
 /**
- * A string→string table, edited as rows.
- *
- * Its own card for the same reason `[queues.subscribe]` has one: the *keys* are
- * data, not a fixed set of settings, so there is no field list to render. Used
- * twice — resource attributes and export headers — which is why it takes the
- * table and key rather than knowing either.
+ * A string→string table as rows: the keys are data, so there is no field list
+ * to render. Used for resource attributes and export headers.
  */
 function EntriesCard(props: {
   title: string;
@@ -2092,22 +2027,22 @@ export function ConfigPage() {
               >
                 <EntriesCard
                   title="Resource attributes"
-                  hint="Attached to every span and metric this service reports, beside its name and version."
+                  hint="Attached to every span and metric this service reports."
                   table="observability"
                   field="resource_attributes"
                   keyPlaceholder="region"
                   valuePlaceholder="eu-west-1"
-                  empty="None. Add one where a backend needs to tell this deployment apart from another running the same build — region, cluster, tenant."
+                  empty="None. Add one where a backend must distinguish this deployment from another running the same build — region, cluster, tenant."
                   addLabel="Add attribute"
                 />
                 <EntriesCard
                   title="Export headers"
-                  hint="Sent with every export request. This is where a vendor's ingest key goes — write it as $VAR so the key itself stays out of the file."
+                  hint="Sent with every export request. Vendor ingest keys belong here; write them as $VAR to keep them out of the file."
                   table="observability.otlp"
                   field="headers"
                   keyPlaceholder="authorization"
                   valuePlaceholder="$OTEL_TOKEN"
-                  empty="None. A collector on your own network usually needs none; a hosted backend needs its API key."
+                  empty="None. A self-hosted collector usually needs none; a hosted backend needs its API key."
                   addLabel="Add header"
                 />
               </Show>

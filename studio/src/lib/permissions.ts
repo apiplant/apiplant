@@ -1,12 +1,10 @@
 /**
- * Policy strings, taken apart and put back together.
- *
- * A clause is one string — a level, optionally a role name, optionally narrowed
- * to a class of organisation — but the form edits those three separately, and
- * the role and class halves are names nothing in the app directory declares.
- * They are membership and organisation *data*, so the only defence against
- * `role:manger` silently granting nothing is to offer what the project already
- * spells somewhere; that is what `policyVocabulary` collects.
+ * Policy strings, taken apart and put back together. A clause is one string — a
+ * level, optionally a role, optionally narrowed to a class — but the form edits
+ * those separately, and the role and class are names nothing in the app
+ * directory declares. They are membership and organisation *data*, so the only
+ * defence against `role:manger` granting nothing is to offer what the project
+ * already spells; that is what `policyVocabulary` collects.
  */
 
 import {
@@ -77,15 +75,11 @@ export function policyVocabulary(): { roles: string[]; classes: string[] } {
 }
 
 /**
- * What is wrong with one action's clauses, in the reader's own words.
- *
- * The server does not reject any of these — every one of them loads, answers
- * requests, and does something other than what it looks like it says, which is
- * the only kind of permission bug worth a warning. The rules mirror how a set
- * is actually evaluated: `deny` is consulted before anything else, the first
- * positive clause that matches wins, and `private` means "not exposed" only
- * when it is the whole set, so a `private` clause with company is a clause
- * naming nobody on an action that is still very much exposed.
+ * What is wrong with one action's clauses. The server does not reject any of
+ * these — each loads and answers, doing something other than what it looks like
+ * it says. The rules mirror evaluation: `deny` is consulted first, the first
+ * matching positive clause wins, and `private` means "not exposed" only when it
+ * is the whole set.
  */
 export function permissionConflicts(
   rules: PermissionSet,
@@ -104,7 +98,7 @@ export function permissionConflicts(
     )
   ) {
     issues.push(
-      "`owner` makes no sense on create: there is no row to own yet. The server refuses to start with this. Use `member`, a role, or `authenticated`.",
+      "`owner` is invalid on create: there is no row to own yet. Use `member`, a role, or `authenticated`.",
     );
   }
 
@@ -123,7 +117,7 @@ export function permissionConflicts(
   // else can say it — see `PolicySet::is_private` on the server.
   if (rules.some((rule) => levelOf(rule) === "private") && rules.length > 1) {
     issues.push(
-      "A clause naming no-one only closes the action when it is the only clause; here the others still expose it, and it grants nobody anything.",
+      "A clause naming no-one only closes the action when it is the only clause; the others still expose it.",
     );
   }
 

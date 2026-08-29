@@ -3,11 +3,10 @@
  * generated from `crates/apiplant-core/src/defaults.rs` by
  * `scripts/gen-builtins.mjs` — do not edit by hand.
  *
- * The studio shows them alongside custom resources; editing one writes a
- * `resources/*.toml` that replaces the default, exactly as the framework intends.
- * Two sets are conditional, and the studio lists them on exactly the conditions
- * the framework adds them under: the account tables when `[auth]` is enabled,
- * and the billing tables when `[payments]` is on and names a provider.
+ * Editing one writes a `resources/*.toml` that replaces the default. Two sets
+ * are conditional, listed on the conditions the framework adds them under:
+ * account tables when `[auth]` is on, billing tables when `[payments]` is on
+ * and names a provider.
  */
 
 import { parseResource } from "./toml";
@@ -72,7 +71,7 @@ export const BUILTIN_SUMMARY: Record<BuiltinName, string> = {
   oauth_connection: "Links a user to an external identity provider.",
   invitation: "A pending invite to an organisation, issued by POST /auth/invitations.",
   auth_token: "Single-use email tokens for address verification and password reset. Private throughout.",
-  billing_product: "Something you sell, mirrored from the payment provider's catalogue.",
+  billing_product: "A product for sale, mirrored from the payment provider's catalogue.",
   billing_price: "What a product costs — one-off or recurring, per currency.",
   billing_customer: "Ties a user or organisation to the provider's customer record.",
   billing_subscription: "An active recurring plan and where it is in its cycle.",

@@ -2,11 +2,9 @@
 subject = "Welcome to {{ app_name }}, {{ name }}"
 ---
 {% comment %}
-  A template of this app's own: nothing sends it by itself, `welcome_email` in
-  functions/mail.rs asks for it by name and hands it `name` and `sign_in_url`.
-
-  Tables and inline styles, because a mail client is not a browser — Outlook
-  lays out with tables and Gmail drops <style> blocks.
+  This app's own template: `welcome_email` in functions/mail.rs asks for it by
+  name and hands it `name` and `sign_in_url`. Tables and inline styles, because
+  a mail client is not a browser.
 {% endcomment %}
 <!doctype html>
 <html lang="en">

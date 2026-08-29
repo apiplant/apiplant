@@ -2,12 +2,9 @@
 subject = "{{ inviter }} would like you in {{ organization }}"
 ---
 {% comment %}
-  The third of the framework's own messages, overridden the same way the
-  other two are — this file replaces it and the flow around it is untouched.
-
-  It is the only one given `organization` and `inviter`, which is what lets
-  the copy name both. `inviter` is empty when the invite came from somewhere
-  with no name attached, so the greeting has to read either way.
+  Overrides the framework's invitation message; the flow around it is
+  untouched. It is the only one given `organization` and `inviter`. `inviter`
+  is empty when the invite has no name, so the greeting reads either way.
 {% endcomment %}
 <!doctype html>
 <html lang="en">
@@ -25,7 +22,7 @@ subject = "{{ inviter }} would like you in {{ organization }}"
 
 <tr><td style="padding:32px 32px 8px;font-size:16px;line-height:1.6;">
 {% if inviter != '' %}{{ inviter }} would like you in <strong>{{ organization }}</strong>.{% else %}You have been asked to join <strong>{{ organization }}</strong>.{% endif %}
-Accepting sets a password and puts you straight inside — there is nothing to sign up for first.
+Accepting sets a password and puts you inside; there is nothing to sign up for first.
 </td></tr>
 
 <tr><td style="padding:20px 32px 8px;">
@@ -39,7 +36,7 @@ Or paste this into your browser: <a href="{{ url }}" style="color:#4b5563;">{{ u
 </td></tr>
 
 <tr><td style="padding:16px 32px 28px;font-size:13px;line-height:1.6;color:#6b7280;">
-The invitation stops working in {{ expires_in }}. If you weren't expecting it, ignore this message — nothing happens until the link is used.
+The invitation stops working in {{ expires_in }}. If you weren't expecting it, ignore this message; nothing happens until the link is used.
 </td></tr>
 
 </table>

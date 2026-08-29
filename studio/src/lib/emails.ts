@@ -1,16 +1,8 @@
 /**
- * The `emails/` directory, as the studio sees it.
- *
- * The server compiles `emails/*.liquid` at boot and sends them in place of its
- * own messages ([`email_templates.rs`]). Everything here mirrors that reading
- * of the directory — which files pair up, where the front matter ends, what
- * variables a message is rendered with — so that what the studio previews is
- * what the server will send.
- *
- * Rendering itself is LiquidJS, the same template language in a browser build.
- * It is not the Rust implementation, so a difference is possible in principle;
- * in practice the overlap that matters for an email — interpolation, `if`,
- * `for`, the standard filters — is the part both implement to the same spec.
+ * The `emails/` directory, as the studio sees it. The server compiles
+ * `emails/*.liquid` at boot and sends them in place of its own messages;
+ * everything here mirrors that reading so the preview is what the server sends.
+ * Rendering is LiquidJS (a browser build), not the Rust implementation.
  */
 
 import { Liquid } from "liquidjs";
@@ -67,7 +59,7 @@ export const BUILTIN_EMAILS: BuiltinEmail[] = [
     name: "password_reset",
     title: "Password reset",
     description:
-      "Sent when somebody asks to reset a password. The existing password keeps working until the link is used.",
+      "Sent when a password reset is requested. The existing password keeps working until the link is used.",
     subject: "Reset your {{ app_name }} password",
     variables: [],
   },
@@ -75,7 +67,7 @@ export const BUILTIN_EMAILS: BuiltinEmail[] = [
     name: "invitation",
     title: "Organisation invitation",
     description:
-      "Sent when a member invites somebody to an organisation. Opening the link lets them choose a password and join.",
+      "Sent when a member invites a user to an organisation. Opening the link lets them choose a password and join.",
     subject: "You're invited to join {{ organization }}",
     variables: [
       { name: "organization", description: "The organisation being joined.", sample: "Acme Ltd" },
@@ -126,11 +118,8 @@ export function emailTextPath(name: string): string {
 }
 
 /**
- * The templates in a scanned directory.
- *
- * A lone `<name>.text.liquid` is an error on the server — it has no message to
- * be the text half of — so it is surfaced as a problem rather than listed as a
- * template that would fail to boot.
+ * The templates in a scanned directory. A lone `<name>.text.liquid` is an error
+ * on the server, so it is surfaced as a problem rather than listed.
  */
 export function detectEmails(scanned: ScannedFile[]): {
   entries: EmailEntry[];
@@ -305,15 +294,10 @@ function attr(tag: string, name: string): string | null {
 const engine = new Liquid({ cache: false });
 
 /**
- * The names a template binds for itself, which are therefore not values
- * anybody has to pass in.
- *
- * LiquidJS reports every name it sees, including the ones the template creates
- * — `{% assign %}`, `{% capture %}`, a `for` variable, `forloop` inside one.
- * Offering those in the values form would invite somebody to fill in a box that
- * cannot affect anything. They come out of the source rather than the parse
- * tree because LiquidJS does not expose scope; the shapes are fixed enough by
- * the tag syntax for that to be reliable.
+ * The names a template binds for itself, which are therefore not values to pass
+ * in. LiquidJS reports every name it sees, including ones the template creates
+ * (`assign`, `capture`, `for` variables, `forloop`); those are read from the
+ * source rather than the parse tree, since LiquidJS does not expose scope.
  */
 function locallyBound(source: string): Set<string> {
   const bound = new Set(["forloop", "tablerowloop"]);
@@ -331,10 +315,7 @@ function locallyBound(source: string): Set<string> {
 
 /**
  * Every value a template actually reads, as dotted paths — `url`, `org.name`.
- *
- * `null` when the source does not parse, which is most keystrokes while a tag
- * is being typed: the caller keeps what it last had rather than emptying the
- * form under the cursor.
+ * `null` when the source does not parse; the caller keeps what it last had.
  */
 export function usedVariables(source: string): string[] | null {
   let paths: string[];
@@ -350,10 +331,7 @@ export function usedVariables(source: string): string[] | null {
 
 /**
  * Turn the flat form — keys like `org.name` — into the object Liquid reads.
- *
- * Shallower keys are set first, so a template using both `{{ org }}` and
- * `{{ org.name }}` ends up with the object: a name with something under it is
- * the more specific statement about what the value is.
+ * Shallower keys are set first, so `{{ org }}` and `{{ org.name }}` both work.
  */
 export function expandValues(values: Record<string, string>): Record<string, unknown> {
   const scope: Record<string, unknown> = {};
@@ -376,10 +354,8 @@ export function expandValues(values: Record<string, string>): Record<string, unk
 
 /**
  * The variables a whole message reads: its subject, its body, and the written
- * text half when there is one.
- *
- * The front matter is skipped — it is TOML, not markup — but the subject inside
- * it is a template of its own, so it is scanned as one.
+ * text half when there is one. The front matter is skipped (it is TOML), but
+ * the subject inside it is a template of its own and is scanned as one.
  */
 export function usedVariablesIn(source: string, textSource?: string | null): string[] | null {
   const parts = [
@@ -416,11 +392,8 @@ export interface FormVariable extends EmailVariable {
 
 /**
  * The values form for a template: what the framework passes, plus whatever the
- * template turned out to read.
- *
- * Both directions matter. A name the template reads that nothing passes renders
- * as nothing in the sent message — which looks like a preview problem and is
- * not — and a declared name the template ignores is just a value going spare.
+ * template turned out to read. A name the template reads that nothing passes
+ * renders as nothing in the sent message; a declared name it ignores goes spare.
  */
 export function formVariables(
   name: string,
@@ -549,11 +522,8 @@ function copyFor(name: string): { lead: string; call: string; note: string } {
 
 /**
  * A starting template: the framework's own layout, written out as a file.
- *
- * Tables and inline styles throughout, because a mail client is not a browser —
- * Outlook lays out with tables and Gmail strips `<style>` blocks. Starting from
- * this rather than from an empty file means an edited subject line or a changed
- * sentence does not also cost the message its rendering in half the clients.
+ * Tables and inline styles throughout, because a mail client is not a browser
+ * (Outlook lays out with tables, Gmail strips `<style>` blocks).
  */
 export function scaffoldEmail(name: string): string {
   const builtin = builtinEmail(name);

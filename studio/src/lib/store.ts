@@ -2,11 +2,11 @@
  * The open project: one directory, everything it holds, and the edits waiting
  * to be written back.
  *
- * Files are the single source of truth for what gets saved. Every form in the
- * studio edits a resource (a `Resource`, the config table) and immediately re-emits
- * that resource into `files[path].current`; saving then walks the file map and
- * writes only what differs from what was read. That keeps "what will change on
- * disk" answerable at any moment, and makes discarding a rescan.
+ * Files are the single source of truth for what gets saved. Every form edits a
+ * resource and immediately re-emits it into `files[path].current`; saving walks
+ * the file map and writes only what differs from what was read. That keeps
+ * "what will change on disk" answerable at any moment, and makes discarding a
+ * rescan.
  */
 
 import { createStore, snapshot } from "solid-js";
@@ -548,19 +548,12 @@ export async function saveAll(): Promise<void> {
 // ---- config -----------------------------------------------------------------
 
 /**
- * Edit `main.toml` and re-emit it.
- *
- * The edit is made on a plain copy rather than through the store's draft, and
- * the copy is what gets written *and* what gets emitted. Solid 2 commits store
- * writes on the next microtask, so reading the config back here to serialise it
- * would serialise the version from before the edit.
- *
- * The copy has to be a real clone: `snapshot` hands back the very object the
- * store wraps, so mutating it would edit the store behind its back and the
- * assignment below would then be a no-op — nothing reading the config would
- * ever re-render. That is invisible for a text box, which already shows what
- * was typed, but not for a form whose *fields* depend on a value, like the
- * mailer's provider.
+ * Edit `main.toml` and re-emit it. The edit is made on a plain copy, and the
+ * copy is what gets written and emitted: Solid 2 commits store writes on the
+ * next microtask, so reading the config back here would serialise the version
+ * from before the edit. The copy must be a real clone — `snapshot` hands back
+ * the object the store wraps, so mutating it would edit the store behind its
+ * back and the assignment below would be a no-op.
  */
 function mutateConfig(mutate: (config: TomlTable) => void): TomlTable | undefined {
   const project = state.project;
@@ -606,12 +599,9 @@ export function setConfigValue(section: string, key: string, value: string | num
 }
 
 /**
- * Write one key, then delete every table the write left empty.
- *
- * The pruning is what keeps the file readable: a setting turned back to its
- * default should leave no trace, not a `[observability.otlp]` header with
- * nothing under it. Shared by every writer below, since a list and a map empty
- * out exactly like a scalar does.
+ * Write one key, then delete every table the write left empty. The pruning
+ * keeps the file readable: a setting turned back to its default leaves no
+ * trace. Shared by every writer below.
  */
 function writeConfig(section: string, key: string, value: TomlValue | undefined): TomlTable | undefined {
   return mutateConfig((config) => {
@@ -686,14 +676,11 @@ export function setConfigEntries(section: string, key: string, entries: ConfigEn
 }
 
 /**
- * Follow `[payments].provider` with the billing resources.
- *
- * The framework adds the six `billing_*` built-ins when a provider is named and
- * leaves them out otherwise, so naming one in the studio has to make them
- * appear then and there — a resource list that only agreed with the app at the
- * moment the project was opened would be worse than none. A billing resource
- * the app has a file for stays either way; turning payments off just makes it
- * an ordinary resource of the app's own, which is what it then is.
+ * Follow `[payments].provider` with the billing resources. The framework adds
+ * the six `billing_*` built-ins when a provider is named and leaves them out
+ * otherwise, so naming one in the studio makes them appear then and there. A
+ * billing resource the app has a file for stays either way; turning payments
+ * off just makes it an ordinary resource of the app's own.
  */
 function syncBillingBuiltins(config: TomlTable) {
   syncConditionalBuiltins(BILLING_BUILTIN_NAMES, paymentsEnabled(config));
@@ -812,14 +799,11 @@ export function subscriptions(): Subscription[] {
 }
 
 /**
- * Replace the whole subscription table.
- *
- * A single subscriber is written as a bare string rather than a one-element
- * list, because that is what somebody reading the file would have written —
- * and the server reads both.
- *
- * An entry with no topic, or a topic with no functions, is dropped: it is a row
- * mid-edit in the form, and neither spelling means anything to the server.
+ * Replace the whole subscription table. A single subscriber is written as a
+ * bare string rather than a one-element list, because that is what a reader
+ * would have written — and the server reads both. An entry with no topic, or a
+ * topic with no functions, is dropped: it is a row mid-edit, and neither
+ * spelling means anything to the server.
  */
 export function setSubscriptions(list: Subscription[]) {
   mutateConfig((config) => {

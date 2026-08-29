@@ -2,15 +2,15 @@
 //!
 //! The [main contract](crate) is expressed in [`abi_stable`] types — `RString`,
 //! `RResult`, `#[sabi_trait]` vtables, a root module whose header carries type
-//! layout metadata the host verifies at load time. That machinery is what makes
-//! the Rust-to-Rust boundary safe across compiler versions, but it is not
-//! something you can hand-write in C, Zig or Go.
+//! layout metadata the host verifies at load time. That machinery makes the
+//! Rust-to-Rust boundary safe across compiler versions, but it is not something
+//! you can hand-write in C, Zig or Go.
 //!
 //! So a library may instead export the six plain C symbols below. The host tries
 //! the `abi_stable` root module first and falls back to these, wrapping whatever
 //! it finds in the same [`Function`](crate::Function) trait object — so a C
-//! function is mounted, authenticated, documented in the OpenAPI spec and usable
-//! as a lifecycle hook exactly like a Rust one.
+//! function is mounted, authenticated, documented and usable as a lifecycle hook
+//! exactly like a Rust one.
 //!
 //! ## What the library exports
 //!
@@ -32,11 +32,10 @@
 //! ```
 //!
 //! Only `name` is required. `visibility` takes the same strings as a resource's
-//! permissions (`"public"`, `"authenticated"`, `"role:admin"`, `"private"`, and
-//! it defaults to `"private"` — the safe direction, so a typo hides an endpoint
-//! rather than exposing it). `method` defaults to `"POST"`. The two schema fields
-//! are optional and may be given as an object or as a JSON string; they only feed
-//! the generated docs.
+//! permissions (defaulting to `"private"` — the safe direction, so a typo hides
+//! an endpoint rather than exposing it). `method` defaults to `"POST"`. The two
+//! schema fields are optional and may be an object or a JSON string; they only
+//! feed the generated docs.
 //!
 //! ## Memory
 //!

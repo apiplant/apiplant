@@ -15,8 +15,8 @@
 //!
 //! Because paying is not a thing you do to yourself, it is a thing you do to
 //! an organisation's card. A member who can start a subscription can commit
-//! their employer to a recurring charge, and every billing system that allowed
-//! that learned not to. The catalogue is public, the checkout is not.
+//! their employer to a recurring charge. The catalogue is public, the checkout
+//! is not.
 //!
 //! ## Why the webhook writes and nothing else does
 //!

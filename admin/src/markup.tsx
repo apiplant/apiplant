@@ -2,15 +2,14 @@
  * Editing markup: Markdown and HTML.
  *
  * A `text` field can declare its content type (`[fields.x.admin] format =
- * "markdown"`). Storage is unaffected, since the API stores and returns the
- * same characters, but the editor highlights the markup and shows the rendered
- * result beside it, or behind a tab when the screen is too narrow for two
- * columns.
+ * "markdown"`). Storage is unaffected — the API stores and returns the same
+ * characters — but the editor highlights the markup and shows the rendered
+ * result beside it, or behind a tab when the screen is too narrow.
  *
- * Everything here is intentionally dependency-free. The renderer covers the
- * Markdown typically used in a description, and the HTML preview is sanitised,
- * since the stored text is operator input and must never be able to run script
- * in the dashboard.
+ * Everything here is dependency-free. The renderer covers the Markdown
+ * typically used in a description, and the HTML preview is sanitised, since
+ * the stored text is operator input and must never run script in the
+ * dashboard.
  */
 
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";

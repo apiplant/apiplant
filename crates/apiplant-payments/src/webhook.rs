@@ -2,10 +2,9 @@
 //!
 //! A checkout that completes tells the *buyer* something; it tells the app
 //! nothing at all. The buyer's browser goes to `success_url` — a page they may
-//! close, a redirect they may never follow, a tab their laptop may sleep
-//! through — and the only thing that reliably reports what was actually paid
-//! for is the webhook. So this is not an optimisation or an extra: without it
-//! the `billing_subscription` table stays empty while customers are billed.
+//! close, a redirect they may never follow — and the only thing that reliably
+//! reports what was actually paid for is the webhook. Without it the
+//! `billing_subscription` table stays empty while customers are billed.
 //!
 //! ## Verifying
 //!

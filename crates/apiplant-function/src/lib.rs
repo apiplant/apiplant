@@ -35,8 +35,9 @@
 //! The macro generates the root module, reads/writes JSON, resolves typed config
 //! and input, and turns your `Err(_)` into a `400`. Types are inferred from the
 //! handler's signature — you never name them twice. With the default `schema`
-//! feature the input and output types must also derive [`JsonSchema`](prelude::JsonSchema)
-//! so the endpoint shows up typed in the OpenAPI docs.
+//! feature the input and output types must also derive
+//! [`JsonSchema`](prelude::JsonSchema) so the endpoint shows up typed in the
+//! OpenAPI docs.
 //!
 //! Use [`functions!`] to export several from one library — each with its own
 //! name, manifest and handler.
@@ -44,11 +45,11 @@
 //! ## Functions as lifecycle hooks
 //!
 //! A function can also be attached to a resource's lifecycle from
-//! `resources/<name>.toml`, in which case [`Context::hook`] carries the operation's
-//! context — the row created or fetched, the rows a list returned, the request
-//! URL, the caller's auth status — and the [`reply`] helpers say what should
-//! happen next. One function per event, so a handler never has to work out why
-//! it was called:
+//! `resources/<name>.toml`, in which case [`Context::hook`] carries the
+//! operation's context — the row created or fetched, the rows a list returned,
+//! the request URL, the caller's auth status — and the [`reply`] helpers say
+//! what should happen next. One function per event, so a handler never has to
+//! work out why it was called:
 //!
 //! ```no_run
 //! # use apiplant_function::prelude::*;

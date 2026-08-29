@@ -1,10 +1,6 @@
 /**
  * One email template: the file on the left, what it will send on the right.
- *
- * The preview renders with LiquidJS against sample values the user can change,
- * because a template is only wrong in a way you can see once it has values in
- * it — a subject line that reads well with "Acme" in it and badly with a long
- * organisation name is the sort of thing this page exists to show.
+ * The preview renders with LiquidJS against sample values the user can change.
  */
 
 import { For, Show, createMemo, createSignal } from "solid-js";
@@ -122,15 +118,15 @@ export function EmailPage(props: { entry: EmailEntry }) {
             when={builtin()}
             fallback={
               <>
-                A template of your own. Nothing sends it on its own — a function asks for it by name
-                through <Mono>send_email</Mono>, passing the variables it uses.
+                A custom template. Sent only when a function requests it by name through <Mono>send_email</Mono>,
+                passing the variables it uses.
               </>
             }
           >
             {(entry) => <>{entry().description} This file replaces the message the framework would send.</>}
           </Show>{" "}
-          Lives at <Mono>{props.entry.path}</Mono>, compiled at boot: a template that does not parse stops
-          the app rather than surfacing as a failed send later.
+          Lives at <Mono>{props.entry.path}</Mono> and is compiled at boot: a template that does not parse stops
+          the app.
         </p>
       </header>
 
@@ -147,7 +143,7 @@ export function EmailPage(props: { entry: EmailEntry }) {
           <Card>
             <CardHeader
               title="Subject"
-              hint="TOML front matter at the top of the file. A template too, so it can name the app."
+              hint="TOML front matter; also a template, so it can name the app."
             />
             <div class="px-3 pb-3 pt-1">
               <TextInput
@@ -195,9 +191,8 @@ export function EmailPage(props: { entry: EmailEntry }) {
                 <div class="space-y-2 px-3 py-4">
                   <p class="text-xs leading-relaxed text-muted">
                     No <Mono>{props.entry.name}.text.liquid</Mono>, so the text half is derived from the
-                    rendered HTML — tags dropped, links kept as their URL. That is worth more than no text
-                    part at all, since a message with only HTML is scored as spam by most of the things
-                    that score messages.
+                    rendered HTML — tags dropped, links kept as their URL. An HTML-only message is scored as
+                    spam by most filters.
                   </p>
                   <Button size="sm" variant="ghost" onClick={() => addEmailTextHalf(props.entry.name)}>
                     Write one instead
@@ -228,7 +223,7 @@ export function EmailPage(props: { entry: EmailEntry }) {
           <Card>
             <CardHeader
               title="Values"
-              hint="What this message is rendered with — the ones it is passed, plus whatever the template reads. Edited here only to see the preview change."
+              hint="Values used to render this message: those passed to it plus those the template reads. Edited here only to preview."
             />
             <div class="space-y-3 px-3 py-3">
               <For each={variables()}>

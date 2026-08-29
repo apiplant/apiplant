@@ -1,15 +1,8 @@
 /**
- * A permission written as a sentence.
- *
- * A policy is three decisions — what it does, who it names, and which class of
- * organisation it is narrowed to — and a row of three controls says all of it
- * without ever saying it out loud. Written as a phrase, the same three
- * decisions read as the rule they are: "allow for members of the active
- * organisation in organisation with any class". The parts that can be changed
- * are words inside that sentence, accent-coloured and dotted-underlined; a
- * click turns one into the control it always was, and it goes back to being a
- * word as soon as it is done. Nothing about the model is hidden — the same
- * `Subject` goes in and out — but the form now reads like the rule it writes.
+ * A permission written as a sentence. A policy is three decisions — what it
+ * does, who it names, and which organisation class it is narrowed to — shown
+ * as words in a phrase; a click turns a word into its control, and it reverts
+ * to a word when done. The same `Subject` goes in and out.
  */
 
 import { For, Show, createMemo, createSignal, createUniqueId } from "solid-js";
@@ -33,12 +26,8 @@ const WHO: Record<string, { word: string; label: string }> = {
 };
 
 /**
- * Levels the organisation class cannot narrow.
- *
- * A class is a test on the organisation the caller is acting in, and neither of
- * these is acting in one: `public` is an unauthenticated request, and `no-one`
- * is the absence of a caller altogether. Trailing the sentence with "in
- * organisation with any class" there would offer a narrowing that does nothing.
+ * Levels the organisation class cannot narrow: `public` is unauthenticated and
+ * `private` is the absence of a caller, so a class narrowing would do nothing.
  */
 const UNCLASSED = ["public", "private"];
 
@@ -61,11 +50,8 @@ export const effectWord = (effect: Effect) =>
   EFFECTS.find((option) => option.value === effect)?.word ?? effect;
 
 /**
- * One word in the sentence that opens a menu.
- *
- * The select replaces the word in place rather than sitting beside it, so the
- * line never reflows when it is opened, and it closes on the first choice —
- * picking a level is one decision, not a form to be dismissed.
+ * One word in the sentence that opens a menu. The select replaces the word in
+ * place so the line never reflows, and closes on the first choice.
  */
 function TokenSelect(props: {
   value: string;
@@ -122,13 +108,10 @@ function TokenSelect(props: {
 }
 
 /**
- * One word in the sentence that is typed rather than chosen.
- *
- * Roles and classes are declared nowhere — they are membership and
- * organisation data — so the input is free text with the project's own
- * vocabulary offered as completions. It is sized to what it holds so the
- * sentence keeps its shape, and commits on blur or Enter: a keystroke-by-
- * keystroke write would rewrite the policy string under the caret.
+ * One word in the sentence that is typed rather than chosen. Roles and classes
+ * are declared nowhere, so the input is free text with the project's own
+ * vocabulary as completions. Commits on blur or Enter: a per-keystroke write
+ * would rewrite the policy string under the caret.
  */
 function TokenText(props: {
   value: string;

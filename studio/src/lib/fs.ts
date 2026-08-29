@@ -1,9 +1,7 @@
 /**
  * The File System Access API, narrowed to what the studio needs: pick a
- * directory once, read it, write back only what changed.
- *
- * Nothing here leaves the machine — there is no server, and the app never
- * uploads a byte. The directory handle is the whole permission model.
+ * directory once, read it, write back only what changed. Nothing leaves the
+ * machine; the directory handle is the whole permission model.
  */
 
 const TEXT_EXTENSIONS = new Set([

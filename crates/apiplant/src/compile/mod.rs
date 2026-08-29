@@ -11,10 +11,10 @@
 //! └── libhello.so       # ← also produced by `apiplant build`
 //! ```
 //!
-//! Four of the five compile to a shared library, and the difference between them
-//! is only how much scaffolding the toolchain insists on. The fifth, TypeScript,
-//! has nothing to link: it is transpiled here and run in a V8 isolate by the
-//! server (see `apiplant_js`), so what lands beside the source is `greet.js`.
+//! Four of the five compile to a shared library; the difference is only how much
+//! scaffolding the toolchain insists on. The fifth, TypeScript, has nothing to
+//! link: it is transpiled here and run in a V8 isolate by the server (see
+//! `apiplant_js`), so what lands beside the source is `greet.js`.
 //!
 //! | Source | Built with | Scaffolding |
 //! |--------|------------|-------------|
@@ -25,18 +25,17 @@
 //! | `.ts`  | transpiled in-process (oxc) | none - output is `greet.js` |
 //!
 //! Scaffolding lives in `.apiplant-build/` inside the app directory. Rust gets a
-//! throwaway crate around the file plus one shared `target/`, so dependencies are
-//! compiled once and rebuilds stay incremental; Go gets a module, because
-//! `go build` will not work without one. C and Zig are single translation units
-//! that go straight from source to shared library.
+//! throwaway crate around the file plus one shared `target/`, so dependencies
+//! compile once and rebuilds stay incremental; Go gets a module, because
+//! `go build` will not work without one. C and Zig go straight from source to
+//! shared library.
 //!
 //! ## Directories: functions that need dependencies
 //!
 //! A single file is enough until a function needs a third-party crate, a second
 //! source file, or a linked library. For that, an entry in `functions/` may be a
 //! **directory** instead of a file — a self-contained project in the language's
-//! own native form, which is exactly where its dependency machinery already
-//! lives:
+//! own native form, where its dependency machinery already lives:
 //!
 //! ```text
 //! my-app/functions/

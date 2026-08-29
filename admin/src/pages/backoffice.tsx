@@ -2,20 +2,17 @@
  * The two screens the deployment's own administrators get, and nobody else:
  * every organisation, and every account.
  *
- * The rest of the dashboard is written from inside one organisation — the team
- * screen is *your* team, the organization screen is the one you have selected.
- * A global admin's questions are the other shape ("which tenant is this person
- * in", "who is in that one"), and answering them by paging through the generic
- * resource tables means knowing that `membership` is a join row. These two
- * screens ask the API the same questions a support conversation does.
+ * The rest of the dashboard is written from inside one organisation. A global
+ * admin's questions are the other shape ("which tenant is this person in",
+ * "who is in that one"), and these two screens ask the API the same questions a
+ * support conversation does.
  *
  * Both are gated on {@link isGlobalAdmin} rather than on a policy: the server
  * lifts role and organisation checks for exactly these callers, so what makes
  * the screens work is the same thing that makes them appear.
  *
- * Neither screen filters anything by default. The first thing a back office
- * wants is the whole deployment; the search and the drop-downs narrow it, and
- * the pager is what keeps "everything" a page long.
+ * Neither screen filters anything by default; the search and drop-downs narrow
+ * it, and the pager keeps "everything" a page long.
  */
 
 import { For, Show, createEffect, createMemo, createSignal, isPending, latest, refresh } from "solid-js";

@@ -26,8 +26,8 @@
 //! [`Authenticator::generate_link_token`]). Each is single-use and expires;
 //! spending one stamps the row so the copy left in a mailbox is inert. A
 //! password reset additionally invalidates every *other* outstanding reset for
-//! that account, because "I asked twice and used the first" should not leave a
-//! second key under the mat.
+//! that account, so using the first of two requests does not leave a second
+//! key behind.
 //!
 //! ## What is deliberately not said out loud
 //!

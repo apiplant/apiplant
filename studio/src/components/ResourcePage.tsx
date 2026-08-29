@@ -66,18 +66,9 @@ type TabId = "fields" | "permissions" | "hooks" | "settings" | "toml";
 /**
  * Levels a clause of each effect may name.
  *
- * `owner` is deliberately absent: as a level it says the same thing as an
- * ownership clause — "allow only if they own the row" — and offering both
- * spellings of one policy is how a form teaches the model wrong. Files that
- * already use it, several built-ins among them, keep working: the sentence
- * still says what they say, and offers to rewrite itself.
- *
- * Ownership is a comparison against the caller, so `public` cannot be one:
- * an anonymous request owns nothing, and the clause would match nobody however
- * the data looked. `private` — "no-one" — is not a caller at all but the
- * absence of an endpoint, so only an `allow` clause can say it: denying no-one
- * is a clause that does nothing, and the way to shut an action to everybody is
- * to allow no-one, or to deny everybody.
+ * `owner` is absent: as a level it duplicates an ownership clause. `public`
+ * cannot own (an anonymous request owns nothing), and `private` is the absence
+ * of an endpoint, so only `allow` can say it.
  */
 const LEVELS_BY_EFFECT: Record<Effect, string[]> = {
   allow: ["public", "authenticated", "member", "role", "private"],
@@ -301,10 +292,9 @@ function FieldsTab(props: {
   const resource = () => props.entry.resource;
 
   /**
-   * Only one field is open at a time. A schema is read far more often than it is
-   * edited, so the list defaults to one scannable line per column and the full
-   * set of controls belongs to whichever field is actually being worked on.
-   * Tracked by position, which is what moving a field changes.
+   * Only one field is open at a time: the list is one scannable line per
+   * column, the full controls open on the field being edited. Tracked by
+   * position, which is what moving a field changes.
    */
   const [openIndex, setOpenIndex] = createSignal<number | null>(null);
   const toggleOpen = (index: number) =>
@@ -338,7 +328,7 @@ function FieldsTab(props: {
       <Card>
         <CardHeader
           title="Columns"
-          hint="Each one becomes a column and a documented property on every response."
+          hint="Each becomes a column and a documented property on every response."
         >
           <Button size="sm" variant="primary" onClick={addField}>
             Add field
@@ -795,12 +785,8 @@ function FieldRow(props: {
 const DEFAULT_CLAUSE: PermissionRule = { policy: "member", effect: "allow" };
 
 /**
- * The access policy, one action per block and one sentence per clause.
- *
- * The clauses are the whole model: a caller no sentence names is refused, so
- * reading the list top to bottom *is* reading the rule. Effect used to be the
- * column a clause sat in; it is now the first word of the sentence, which says
- * the same thing in the place somebody looking for it would read.
+ * The access policy, one action per block and one sentence per clause. The
+ * clauses are the whole model: a caller no clause names is refused.
  */
 function PermissionsTab(props: {
   resource: Resource;
@@ -811,11 +797,9 @@ function PermissionsTab(props: {
     props.resource.permissions[action] ?? DEFAULT_PERMISSIONS[action];
 
   /**
-   * Rewrite one action's clauses.
-   *
-   * Emptying the list cannot leave the action out of the file: an omitted
-   * action is the `member` default, which is the opposite of what clearing it
-   * means, so it is written as `private` instead.
+   * Rewrite one action's clauses. Emptying the list writes `private` rather
+   * than omitting the action: an omitted action is the `member` default, the
+   * opposite of clearing it.
    */
   const setRules = (action: Action, rules: PermissionRule[]) =>
     props.onEdit((draft) => {
@@ -846,11 +830,9 @@ function PermissionsTab(props: {
 
   /**
    * Change what a clause does, keeping who it names where that still parses.
-   *
-   * The levels differ by effect — nobody owns a row anonymously, and a denial
-   * naming everybody leaves nothing behind — so a level the new effect cannot
-   * take falls back to the signed-in caller rather than being written out as
-   * something the server would reject.
+   * Levels differ by effect, so a level the new effect cannot take falls back
+   * to the signed-in caller rather than being written as something the server
+   * would reject.
    */
   const setEffect = (action: Action, index: number, effect: Effect) =>
     editRule(action, index, (rule) => {
@@ -887,7 +869,7 @@ function PermissionsTab(props: {
     <Card>
       <CardHeader
         title="Access policy"
-        hint="Evaluated after authentication. A caller no clause names is refused, and deny is consulted before the rest."
+        hint="Evaluated after authentication. Callers no clause names are refused; deny takes precedence."
       />
 
       <div class="divide-y divide-line">
@@ -981,9 +963,9 @@ function PermissionsTab(props: {
         </Show>
         <Show when={usesEffect("deny")}>
           A <Mono>deny</Mono> outranks every <Mono>allow</Mono> the same caller
-          matches, and matches only a role somebody actually holds — never the
-          blanket one an <Mono>admin</Mono> gets, which would lock the
-          organisation's own administrators out.
+          matches, and matches only a role the caller actually holds — never the
+          blanket <Mono>admin</Mono> role, which would lock out the organisation's
+          administrators.
         </Show>
       </div>
     </Card>
@@ -1122,7 +1104,7 @@ function HooksTab(props: {
     <Card>
       <CardHeader
         title="Lifecycle hooks"
-        hint="One function per event. Hooks ignore visibility, so hook functions are usually Private."
+        hint="One function per event. Hooks ignore visibility; hook functions are usually Private."
       />
       <datalist id="function-names">
         <For each={names()}>{(name) => <option value={name} />}</For>
@@ -1177,7 +1159,7 @@ function HooksTab(props: {
         <div class="border-t border-line px-4 py-3 text-xs leading-relaxed text-warn">
           A hook names a function no library in <Mono>functions/</Mono> exports.
           Requests on that operation fail closed with a 500 until the library is
-          built and dropped in.
+          built.
         </div>
       </Show>
     </Card>
@@ -1268,7 +1250,7 @@ function SettingsTab(props: {
           </Labelled>
           <Labelled
             label="scope"
-            hint="Organisation-scoped resources are isolated per tenant automatically."
+            hint="Organization-scoped resources are isolated per tenant."
           >
             <Select
               value={resource().scope}
@@ -1313,7 +1295,7 @@ function SettingsTab(props: {
       <Card>
         <CardHeader
           title="Search"
-          hint="What one ?search= term is matched against — in the API, and in the dashboard's search box."
+          hint="Columns a ?search= term is matched against, in the API and the dashboard search box."
         />
         <div class="px-4 py-4">
           <Show
@@ -1361,7 +1343,7 @@ function SettingsTab(props: {
         <Card>
           <CardHeader
             title="Authentication"
-            hint="Only meaningful on the user resource — what /auth/login and /auth/register work against."
+            hint="User resource only: what /auth/login and /auth/register work against."
           />
           <div class="grid gap-4 px-4 py-4 sm:grid-cols-2">
             <Labelled
@@ -1439,8 +1421,8 @@ function SettingsTab(props: {
           }
           hint={
             props.entry.builtin
-              ? "Removes the file; the framework goes back to shipping its own definition."
-              : "Removes the resource file. The table and its rows stay in Postgres — apiplant never drops anything."
+              ? "Removes the file; the framework's built-in definition applies again."
+              : "Removes the resource file. The table and its rows remain in Postgres; apiplant never drops data."
           }
         >
           <Show

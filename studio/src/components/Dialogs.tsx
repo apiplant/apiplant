@@ -51,8 +51,8 @@ export function NewAgentDialog(props: { onClose: () => void }) {
         </div>
 
         <p class="rounded-lg border border-line bg-surface-2 px-3 py-2 text-[0.6875rem] leading-relaxed text-muted">
-          The studio starts the file with authenticated chat access and a placeholder prompt. Tweak the TOML after
-          creation for resource overrides, scope, and a fuller system prompt.
+          The file starts with authenticated chat access and a placeholder prompt. Edit the TOML after
+          creation for resource overrides, scope and a fuller system prompt.
         </p>
 
         <div class="flex justify-end gap-2">
@@ -69,12 +69,8 @@ export function NewAgentDialog(props: { onClose: () => void }) {
 }
 
 /**
- * A new `emails/*.liquid`.
- *
- * The three built-in messages are offered by name, because overriding one is
- * what most apps come here to do and the name is the whole of how the server
- * knows which message a file replaces — typing it slightly wrong produces a
- * template nothing sends, with nothing to say so.
+ * A new `emails/*.liquid`. The three built-in messages are offered by name:
+ * the name is how the server knows which message a file replaces.
  */
 export function NewEmailDialog(props: { onClose: () => void }) {
   const [name, setName] = createSignal("");
@@ -124,7 +120,7 @@ export function NewEmailDialog(props: { onClose: () => void }) {
 
         <Labelled
           label="or a template of your own"
-          hint="Nothing sends it on its own — a function asks for it by name through send_email."
+          hint="Sent only when a function requests it by name through send_email."
         >
           <TextInput
             mono
@@ -229,9 +225,9 @@ export function NewResourceDialog(props: { onClose: () => void }) {
 }
 
 const LAYOUT_NOTE: Record<Language, string> = {
-  rust: "A directory becomes a crate you own — any crates.io dependency, any module layout.",
+  rust: "A directory becomes a crate: any crates.io dependency, any module layout.",
   typescript:
-    "A single file imports only `apiplant` and needs no toolchain. A directory is an npm project: your package.json, your dependencies, your bundler.",
+    "A single file imports only `apiplant` and needs no toolchain. A directory is an npm project with its own package.json and dependencies.",
   go: "A directory brings its own go.mod, so it can require other modules and split across files.",
   c: "A directory compiles every .c it holds, with itself on the include path.",
   zig: "A directory builds from a root <name>.zig that may @import its siblings.",
@@ -279,7 +275,7 @@ export function NewFunctionDialog(props: { onClose: () => void }) {
             hint={
               language() === "typescript"
                 ? "A single .ts file needs no toolchain at all; a directory needs node and its package manager."
-                : "Each needs its own toolchain on PATH when you build."
+                : "Each needs its own toolchain on PATH at build time."
             }
           >
             <div class="flex gap-1">

@@ -251,15 +251,15 @@ async function gravatarUrl(email: string): Promise<string | null> {
 }
 
 /**
- * Somebody — or something — in a circle: their picture when there is one, and
+ * Somebody — or something — in a circle: their picture when there is one,
  * their initials when there is not.
  *
  * `src` is whatever `avatar_url` holds, which for a person is usually the
  * picture their identity provider had (see [OAuth]). With no `avatar_url` — or
- * with one that fails to load, since the source is a third party's CDN and
- * those go away — the `email` is tried against Gravatar, and initials are the
- * last resort. Each source is only abandoned when the browser reports it dead,
- * so a broken URL degrades instead of leaving a broken image.
+ * one that fails to load, since the source is a third party's CDN — the
+ * `email` is tried against Gravatar, and initials are the last resort. Each
+ * source is abandoned only when the browser reports it dead, so a broken URL
+ * degrades instead of leaving a broken image.
  *
  * [OAuth]: https://docs.rs/apiplant-oauth
  */
