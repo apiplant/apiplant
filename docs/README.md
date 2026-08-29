@@ -86,17 +86,17 @@ with a `.sha256` next to it:
 
 ```bash
 # Linux x86_64 — swap the target triple for yours.
-curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.9.1-x86_64-unknown-linux-gnu.tar.gz \
+curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.10.0-x86_64-unknown-linux-gnu.tar.gz \
   | tar xz --strip-components=1
 sudo mv apiplant /usr/local/bin/
 ```
 
 Or run the container image, published to the GitHub registry for `linux/amd64`
-and `linux/arm64`. The image tags carry no `v` prefix — `0.9.1`, `0.9`, or
+and `linux/arm64`. The image tags carry no `v` prefix — `0.10.0`, `0.10`, or
 `latest`:
 
 ```bash
-docker pull ghcr.io/apiplant/apiplant:0.9.1   # or :0.9, or :latest
+docker pull ghcr.io/apiplant/apiplant:0.10.0   # or :0.10, or :latest
 docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 

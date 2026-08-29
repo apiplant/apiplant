@@ -20,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.1"
+version = "0.10.0"
 edition = "2021"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
@@ -29,24 +29,24 @@ repository = "https://github.com/apiplant/apiplant"
 
 [workspace.dependencies]
 # Internal crates
-apiplant-abi = { path = "crates/apiplant-abi", version = "0.9.1" }
-apiplant-assets = { path = "crates/apiplant-assets", version = "0.9.1" }
-apiplant-function = { path = "crates/apiplant-function", version = "0.9.1" }
-apiplant-core = { path = "crates/apiplant-core", version = "0.9.1" }
-apiplant-db = { path = "crates/apiplant-db", version = "0.9.1" }
-apiplant-auth = { path = "crates/apiplant-auth", version = "0.9.1" }
-apiplant-email = { path = "crates/apiplant-email", version = "0.9.1" }
-apiplant-cache = { path = "crates/apiplant-cache", version = "0.9.1" }
-apiplant-storage = { path = "crates/apiplant-storage", version = "0.9.1" }
-apiplant-queue = { path = "crates/apiplant-queue", version = "0.9.1" }
-apiplant-payments = { path = "crates/apiplant-payments", version = "0.9.1" }
-apiplant-oauth = { path = "crates/apiplant-oauth", version = "0.9.1" }
-apiplant-ai = { path = "crates/apiplant-ai", version = "0.9.1" }
-apiplant-js = { path = "crates/apiplant-js", version = "0.9.1" }
+apiplant-abi = { path = "crates/apiplant-abi", version = "0.10.0" }
+apiplant-assets = { path = "crates/apiplant-assets", version = "0.10.0" }
+apiplant-function = { path = "crates/apiplant-function", version = "0.10.0" }
+apiplant-core = { path = "crates/apiplant-core", version = "0.10.0" }
+apiplant-db = { path = "crates/apiplant-db", version = "0.10.0" }
+apiplant-auth = { path = "crates/apiplant-auth", version = "0.10.0" }
+apiplant-email = { path = "crates/apiplant-email", version = "0.10.0" }
+apiplant-cache = { path = "crates/apiplant-cache", version = "0.10.0" }
+apiplant-storage = { path = "crates/apiplant-storage", version = "0.10.0" }
+apiplant-queue = { path = "crates/apiplant-queue", version = "0.10.0" }
+apiplant-payments = { path = "crates/apiplant-payments", version = "0.10.0" }
+apiplant-oauth = { path = "crates/apiplant-oauth", version = "0.10.0" }
+apiplant-ai = { path = "crates/apiplant-ai", version = "0.10.0" }
+apiplant-js = { path = "crates/apiplant-js", version = "0.10.0" }
 # `default-features = false` here so that `crates/apiplant` can decide: its own
 # `typescript` feature turns the server's back on. Cargo ignores a member's
 # `default-features` unless the workspace declaration states one too.
-apiplant-server = { path = "crates/apiplant-server", version = "0.9.1", default-features = false }
+apiplant-server = { path = "crates/apiplant-server", version = "0.10.0", default-features = false }
 
 # Stable ABI for dynamically loaded functions
 abi_stable = "0.11"

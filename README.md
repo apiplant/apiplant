@@ -92,7 +92,7 @@ next to it:
 
 ```bash
 # Linux x86_64 — swap the target triple for yours.
-curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.9.1-x86_64-unknown-linux-gnu.tar.gz \
+curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-v0.10.0-x86_64-unknown-linux-gnu.tar.gz \
   | tar xz --strip-components=1
 sudo mv apiplant /usr/local/bin/
 ```
@@ -108,7 +108,7 @@ the image tags carry a `-slim` suffix:
 curl -sSfL https://github.com/apiplant/apiplant/releases/latest/download/apiplant-slim-v0.9.1-x86_64-unknown-linux-gnu.tar.gz \
   | tar xz --strip-components=1
 
-docker pull ghcr.io/apiplant/apiplant:0.9.1-slim   # or :0.9-slim, or :latest-slim
+docker pull ghcr.io/apiplant/apiplant:0.10.0-slim   # or :0.10-slim, or :latest-slim
 ```
 
 An app whose functions are Rust, C, Zig or Go behaves identically — same
@@ -128,10 +128,10 @@ replaces the other rather than failing over the shared path.
 The image is published to the GitHub registry for `linux/amd64` and
 `linux/arm64`:
 
-The image tags carry no `v` prefix — `0.9.1`, `0.9`, or `latest`:
+The image tags carry no `v` prefix — `0.10.0`, `0.10`, or `latest`:
 
 ```bash
-docker pull ghcr.io/apiplant/apiplant:0.9.1   # or :0.9, or :latest
+docker pull ghcr.io/apiplant/apiplant:0.10.0   # or :0.10, or :latest
 docker run --rm -p 8080:8080 -v "$PWD:/app" ghcr.io/apiplant/apiplant:latest run /app
 ```
 
