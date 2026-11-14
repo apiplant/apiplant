@@ -14,19 +14,19 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::optional::Ai;
+use crate::optional::Cache;
+use crate::optional::Mailer;
+use crate::optional::Payments;
+use crate::optional::Queue;
 use abi_stable::library::{lib_header_from_raw_library, RawLibrary};
 use abi_stable::sabi_trait::TD_Opaque;
 use abi_stable::std_types::{RResult, RStr, RString};
 use apiplant_abi::{
     BoxedFunction, FunctionManifest, FunctionMod_Ref, HostApi, HostApi_TO, LogLevel,
 };
-use apiplant_ai::Ai;
-use apiplant_cache::Cache;
 use apiplant_core::RateLimitRule;
 use apiplant_db::Db;
-use apiplant_email::Mailer;
-use apiplant_payments::Payments;
-use apiplant_queue::Queue;
 
 /// A function implemented in the framework itself rather than loaded from a
 /// library: an ordinary Rust `fn` over the same [`HostBridge`] a dynamic
@@ -365,7 +365,7 @@ pub struct HostBridge {
     /// The app's own email templates, from its `emails/` directory. Lets a
     /// function send one by name instead of composing a message itself, so the
     /// copy an app mails lives in one place whoever sends it.
-    email_templates: Option<Arc<crate::email_templates::EmailTemplates>>,
+    email_templates: Option<Arc<crate::optional::EmailTemplates>>,
     /// The app's configured cache, when it has one.
     cache: Option<Cache>,
     /// The app's configured payment provider, when it has one.
@@ -414,10 +414,7 @@ impl HostBridge {
 
     /// Lend the function the app's email templates, so `send_email` can name
     /// one instead of spelling out a subject and a body.
-    pub fn with_email_templates(
-        mut self,
-        templates: Arc<crate::email_templates::EmailTemplates>,
-    ) -> Self {
+    pub fn with_email_templates(mut self, templates: Arc<crate::optional::EmailTemplates>) -> Self {
         self.email_templates = Some(templates);
         self
     }
@@ -457,6 +454,7 @@ impl HostBridge {
 
     /// Ask the assistant and pass every token to whoever is listening, on its
     /// way to assembling the complete answer.
+    #[cfg(feature = "ai")]
     ///
     /// This is what makes a *function* able to stream a model's output rather
     /// than only relay it: the function still gets one return value, and its
@@ -536,6 +534,16 @@ impl HostApi for HostBridge {
         }
     }
 
+    #[cfg(not(feature = "email"))]
+    fn send_email(&self, _request: RStr<'_>) -> RResult<RString, RString> {
+        RResult::RErr(
+            "no email provider configured — this build has no `email` feature"
+                .to_string()
+                .into(),
+        )
+    }
+
+    #[cfg(feature = "email")]
     fn send_email(&self, request: RStr<'_>) -> RResult<RString, RString> {
         let Some(mailer) = &self.mailer else {
             return RResult::RErr(
@@ -608,6 +616,18 @@ impl HostApi for HostBridge {
         }
     }
 
+    #[cfg(not(feature = "ai"))]
+    fn ai(&self, _request: RStr<'_>) -> RResult<RString, RString> {
+        // `self.ai` can hold no value in this build (see `crate::optional`), so
+        // the answer is the same one an app without `[ai]` gets.
+        RResult::RErr(
+            "no ai provider configured — this build has no `ai` feature"
+                .to_string()
+                .into(),
+        )
+    }
+
+    #[cfg(feature = "ai")]
     fn ai(&self, request: RStr<'_>) -> RResult<RString, RString> {
         let Some(ai) = &self.ai else {
             return RResult::RErr(
@@ -702,6 +722,7 @@ impl HostApi for HostBridge {
 
 /// The `template` a `send_email` request names, if it names one.
 ///
+#[cfg(feature = "email")]
 /// Read off the raw JSON rather than off [`apiplant_email::Message`], because a
 /// template is a property of the *request* — how the body is to be produced —
 /// and not of the message that comes out of it.
@@ -715,6 +736,7 @@ fn template_name(request: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(feature = "email")]
 /// The `vars` object a `send_email` request carries, as Liquid values.
 ///
 /// Absent or malformed means no variables, not an error: a template that names

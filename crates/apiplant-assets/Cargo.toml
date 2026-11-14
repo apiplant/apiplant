@@ -10,4 +10,11 @@ description = "The admin and studio front-end builds, embedded in the apiplant b
 # `assets/` is where `pnpm build` in admin/ and studio/ writes, and it is tracked.
 include = ["src/**/*", "build.rs", "assets/**/*", "Cargo.toml"]
 
+[features]
+# Which front-end builds to embed. Each is a few megabytes of bytes in the
+# binary; a crate that serves neither (a program embedding apiplant without
+# the dashboard) embeds an empty table instead.
+admin = []
+studio = []
+
 [dependencies]

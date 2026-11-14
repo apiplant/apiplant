@@ -28,15 +28,15 @@ async fn asset(req: HttpRequest) -> HttpResponse {
         None if !path.contains('.') => HttpResponse::Ok()
             .content_type(apiplant_assets::content_type("index.html"))
             .body(apiplant_assets::find(apiplant_assets::STUDIO, "index.html").unwrap()),
-        None => HttpResponse::NotFound().finish(),
+        None => HttpResponse::NotFound().build(),
     }
 }
 
 pub async fn serve(host: &str, port: u16) -> anyhow::Result<()> {
     let (listener, port) = apiplant_server::bind::listener(host, port)?;
     let addr = format!("{host}:{port}");
-    let server =
-        HttpServer::new(|| WebApp::new().default_service(web::to(asset))).listen(listener)?;
+    let server = HttpServer::new(async |_: &()| WebApp::new().default_service(web::to(asset)))
+        .listen(listener, ntex::SharedCfg::default())?;
 
     // The same wordmark-and-box the server prints, because `studio` is the
     // other command that starts something and then sits there: what the user

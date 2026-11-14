@@ -94,7 +94,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/auth/apikeys")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"name":"ci"}).to_string()),
+                .payload(json!({"name":"ci"}).to_string()),
             &token,
         )
         .to_request(),
@@ -416,7 +416,7 @@ hidden = true
             test::TestRequest::patch()
                 .uri(&format!("/api/organization/{org_id}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"name":"Acme Logistics"}).to_string()),
+                .payload(json!({"name":"Acme Logistics"}).to_string()),
             &token,
         )
         .header("x-organization", org_id.as_str())

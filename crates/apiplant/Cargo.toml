@@ -24,10 +24,14 @@ typescript = ["dep:apiplant-js", "apiplant-server/typescript"]
 
 [dependencies]
 apiplant-abi.workspace = true
-apiplant-assets.workspace = true
+apiplant-assets = { workspace = true, features = ["admin", "studio"] }
 apiplant-core.workspace = true
 apiplant-db.workspace = true
-apiplant-server.workspace = true
+# The binary is the whole framework: every optional subsystem of the server is
+# on, in the slim build too — slim means "no V8", not "fewer features".
+apiplant-server = { workspace = true, features = [
+    "payments", "ai", "cache", "telemetry", "email", "oauth", "storage", "queues", "admin",
+] }
 apiplant-js = { workspace = true, features = ["transpile"], optional = true }
 ntex.workspace = true
 tokio.workspace = true

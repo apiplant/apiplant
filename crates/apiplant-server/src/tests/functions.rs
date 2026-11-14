@@ -83,7 +83,7 @@ async fn function_permissions_gate_endpoints_by_membership_and_role() {
         let mut request = test::TestRequest::post()
             .uri(uri)
             .header(CONTENT_TYPE, "application/json")
-            .set_payload("{}".to_string());
+            .payload("{}".to_string());
         if let Some(token) = token {
             request = request.header("authorization", format!("Bearer {token}"));
         }
@@ -163,7 +163,7 @@ async fn function_permissions_gate_endpoints_by_membership_and_role() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"name":"Alpha","slug":"alpha"}).to_string()),
+                    .payload(json!({"name":"Alpha","slug":"alpha"}).to_string()),
                 &ana,
             )
             .to_request(),
@@ -210,7 +210,7 @@ async fn function_permissions_gate_endpoints_by_membership_and_role() {
                 .uri("/api/membership")
                 .header(CONTENT_TYPE, "application/json")
                 .header("x-organization", org_id.as_str())
-                .set_payload(json!({"user_id":ben_id,"role":"member"}).to_string()),
+                .payload(json!({"user_id":ben_id,"role":"member"}).to_string()),
             &ana,
         )
         .to_request(),
@@ -314,7 +314,7 @@ async fn a_function_streams_what_it_emits_and_ends_with_what_it_returned() {
         test::TestRequest::post()
             .uri(uri)
             .header(CONTENT_TYPE, "application/json")
-            .set_payload("{}".to_string())
+            .payload("{}".to_string())
             .to_request()
     };
 

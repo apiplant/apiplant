@@ -24,11 +24,12 @@
 //! open proxy to your provider account — a thing an app should have to write
 //! down rather than get by leaving a line out.
 
+use crate::state::State;
 use apiplant_abi::{FunctionAccess, FunctionPolicy};
 use apiplant_ai::{ChatRequest, Event};
 use futures_util::StreamExt;
 use ntex::util::Bytes;
-use ntex::web::types::{Json, State};
+use ntex::web::types::Json;
 use ntex::web::{HttpRequest, HttpResponse};
 use serde::Deserialize;
 use serde_json::json;

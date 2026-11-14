@@ -117,7 +117,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/organization")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"name":"Acme","slug":"acme"}).to_string()),
+                .payload(json!({"name":"Acme","slug":"acme"}).to_string()),
             &alice_token,
         )
         .to_request(),
@@ -133,7 +133,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/post")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(
+                .payload(
                     json!({
                         "title":"hello",
                         "owner_id": Uuid::new_v4(),
@@ -159,7 +159,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/post")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"later"}).to_string()),
+                .payload(json!({"title":"later"}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_a_id.as_str())
@@ -176,7 +176,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/post")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"hello"}).to_string()),
+                .payload(json!({"title":"hello"}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_a_id.as_str())
@@ -191,7 +191,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/comment")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"body":"nice","post_id":post_id}).to_string()),
+                .payload(json!({"body":"nice","post_id":post_id}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_a_id.as_str())
@@ -206,7 +206,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/comment")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"body":"oops","post_id":Uuid::new_v4()}).to_string()),
+                .payload(json!({"body":"oops","post_id":Uuid::new_v4()}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_a_id.as_str())
@@ -237,7 +237,7 @@ type = "string"
             test::TestRequest::put()
                 .uri(&format!("/api/post/{post_id}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"hello-updated"}).to_string()),
+                .payload(json!({"title":"hello-updated"}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_a_id.as_str())
@@ -267,7 +267,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/organization")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"name":"Beta","slug":"beta"}).to_string()),
+                .payload(json!({"name":"Beta","slug":"beta"}).to_string()),
             &bob_token,
         )
         .to_request(),
@@ -298,7 +298,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/membership")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"user_id":bob_id,"role":"member"}).to_string()),
+                .payload(json!({"user_id":bob_id,"role":"member"}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_a_id.as_str())
@@ -342,7 +342,7 @@ type = "string"
                 .uri(&format!("/api/post/{post_id}"))
                 .header("x-organization", org_a_id.as_str())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"nope"}).to_string()),
+                .payload(json!({"title":"nope"}).to_string()),
             &bob_token,
         )
         .to_request(),
@@ -357,7 +357,7 @@ type = "string"
                 .uri("/api/membership")
                 .header("x-organization", org_a_id.as_str())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"user_id":alice_id,"role":"member"}).to_string()),
+                .payload(json!({"user_id":alice_id,"role":"member"}).to_string()),
             &bob_token,
         )
         .to_request(),
@@ -487,7 +487,7 @@ type = "integer"
         test::TestRequest::post()
             .uri("/api/note")
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(json!({"title": title, "secret": secret, "pages": pages}).to_string())
+            .payload(json!({"title": title, "secret": secret, "pages": pages}).to_string())
             .to_request()
     };
     for (title, secret, pages) in [

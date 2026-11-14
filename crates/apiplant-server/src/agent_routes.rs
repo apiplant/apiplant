@@ -11,6 +11,7 @@ use std::rc::Rc;
 // The budgets, prompts and sanitiser a rolling summary needs live in
 // `apiplant_ai::summary`; this module only maps an agent's configuration onto
 // them and persists what comes back.
+use crate::state::State;
 use apiplant_ai::summary::{self, Summary, SummaryLimits};
 use apiplant_ai::{ChatReply, ChatRequest, Done, Event, Message, Role, ToolCall, ToolDefinition};
 use apiplant_auth::{Principal, ADMIN_ROLE};
@@ -19,7 +20,7 @@ use apiplant_db::Filter;
 use chrono::Utc;
 use futures_util::StreamExt;
 use ntex::util::Bytes;
-use ntex::web::types::{Json, Path, State};
+use ntex::web::types::{Json, Path};
 use ntex::web::{HttpRequest, HttpResponse};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};

@@ -25,11 +25,12 @@
 //! claiming otherwise is worse than no row — it is an entitlement somebody
 //! granted themselves. The webhook is the one path, and it is signed.
 
+use crate::state::State;
 use apiplant_payments::{
     Change, CheckoutOutcome, CheckoutSpec, CustomerSpec, CustomerState, Delivery, PaymentRecord,
     SubscriptionState,
 };
-use ntex::web::types::{Json, State};
+use ntex::web::types::Json;
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;

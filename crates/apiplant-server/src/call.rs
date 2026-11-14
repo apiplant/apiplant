@@ -69,15 +69,11 @@ pub async fn call(app: &App, name: &str, options: Options) -> anyhow::Result<Str
     )
     .await?;
 
-    let mailer = apiplant_email::Mailer::from_config(&app.config.email)?;
-    let brand = crate::emails::Links::from_app(app);
-    let email_templates = std::sync::Arc::new(
-        crate::email_templates::EmailTemplates::load(&app.root)?
-            .with_brand(&brand.app_name, brand.logo_url.as_deref()),
-    );
-    let cache = apiplant_cache::Cache::connect(&app.config.cache).await?;
-    let ai = apiplant_ai::Ai::from_config(&app.config.ai)?;
-    let payments = apiplant_payments::Payments::from_config(
+    let mailer = crate::optional::Mailer::from_config(&app.config.email)?;
+    let email_templates = crate::optional::email_templates(app)?;
+    let cache = crate::optional::Cache::connect(&app.config.cache).await?;
+    let ai = crate::optional::Ai::from_config(&app.config.ai)?;
+    let payments = crate::optional::Payments::from_config(
         &app.config.payments,
         &app.config.server.public_origin(),
     )?;
@@ -85,7 +81,7 @@ pub async fn call(app: &App, name: &str, options: Options) -> anyhow::Result<Str
     // one message per row it found. Nothing here *subscribes*, though: the
     // messages are handled by the running server, not by this process, which
     // exits as soon as the function returns.
-    let queue = apiplant_queue::Queue::new(&db, app);
+    let queue = crate::optional::Queue::new(&db, app);
 
     // The chunks are drained on this task while the function runs on a blocking
     // one, so a chatty function can't fill the channel unread.

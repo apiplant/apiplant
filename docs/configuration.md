@@ -148,6 +148,10 @@ apiplant targets **PostgreSQL**, using `to_jsonb`, `gen_random_uuid()`,
 | `password_reset_ttl_secs` | `3600` (1h) | How long a reset link stays valid. Deliberately short, since it is a live credential sitting in a mailbox. |
 | `verify_email_redirect` | unset | Where somebody lands once they confirm their address. An absolute URL or a path on this origin; unset means they stay on the confirmation screen. |
 | `allow_impersonation` | `true` | Let an organisation's admins act as one of its members. The session they get is pinned to that organisation. Whoever `[organization] global_admin_role` names may act as *anyone*, anywhere, regardless of this flag. See [Acting as somebody else](authentication.md#acting-as-somebody-else). |
+| `cookie` | `false` | Also carry the session JWT in an `HttpOnly` cookie, for requests a browser makes on its own (`<img>`, `<video>`, downloads, WebSockets). Cookie-authenticated writes need `X-CSRF-Token`. Adds `POST /auth/logout`. See [The session in a cookie](authentication.md#the-session-in-a-cookie). |
+| `cookie_name` | `apiplant_session` | The session cookie; the CSRF cookie is this name plus `_csrf`. |
+| `cookie_secure` | `true` | Send the cookies with `Secure`. Browsers accept that from `http://localhost`. |
+| `cookie_domain` | *(empty)* | The cookies' `Domain`. Empty pins them to the host that set them. |
 
 The three "follows `[email]`" flags are the only defaults here that are not
 constant. Configuring a provider enables all three; configuring none leaves them

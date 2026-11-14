@@ -257,7 +257,7 @@ async fn organizations_disabled_put_everybody_in_one_tenant() {
             test::TestRequest::post()
                 .uri("/api/note")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "title": "shared" }).to_string()),
+                .payload(json!({ "title": "shared" }).to_string()),
             &alice_token,
         )
         .to_request(),

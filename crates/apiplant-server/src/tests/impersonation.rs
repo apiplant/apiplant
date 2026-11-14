@@ -73,7 +73,7 @@ async fn an_org_admin_may_act_as_a_member_of_their_own_organisation() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({ "name": "Acme" }).to_string()),
+                    .payload(json!({ "name": "Acme" }).to_string()),
                 &boss_token,
             )
             .to_request(),
@@ -89,7 +89,7 @@ async fn an_org_admin_may_act_as_a_member_of_their_own_organisation() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({ "name": "Their side project" }).to_string()),
+                    .payload(json!({ "name": "Their side project" }).to_string()),
                 &member_token,
             )
             .to_request(),
@@ -103,7 +103,7 @@ async fn an_org_admin_may_act_as_a_member_of_their_own_organisation() {
         let mut req = test::TestRequest::post()
             .uri("/api/auth/impersonate")
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(body.to_string());
+            .payload(body.to_string());
         if let Some(active) = active {
             req = req.header("x-organization", active.to_string());
         }
@@ -180,7 +180,7 @@ async fn an_org_admin_may_act_as_a_member_of_their_own_organisation() {
                 .uri("/api/note")
                 .header("x-organization", elsewhere_id.clone())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "title": "Private to them" }).to_string()),
+                .payload(json!({ "title": "Private to them" }).to_string()),
             &member_token,
         )
         .to_request(),
@@ -300,7 +300,7 @@ async fn only_a_global_admin_may_act_as_a_stranger() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({ "name": "Ops" }).to_string()),
+                    .payload(json!({ "name": "Ops" }).to_string()),
                 &staff_token,
             )
             .to_request(),
@@ -315,7 +315,7 @@ async fn only_a_global_admin_may_act_as_a_stranger() {
             test::TestRequest::post()
                 .uri("/api/auth/impersonate")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "user_id": target }).to_string()),
+                .payload(json!({ "user_id": target }).to_string()),
             token,
         )
         .to_request()

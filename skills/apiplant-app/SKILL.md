@@ -105,6 +105,7 @@ is only the map.
 | [cli.md](references/cli.md) | `apiplant cli`: the dashboard in a terminal |
 | [security.md](references/security.md) | What to configure before exposing the server |
 | [openapi.md](references/openapi.md) | The generated spec and Swagger UI |
+| [embedding.md](references/embedding.md) | apiplant as a Rust library: `Platform`, `Caller`, your routes, Cargo features |
 
 ## Example apps
 

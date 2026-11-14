@@ -33,11 +33,12 @@
 //! session with parallel bugs: every permission, hook and `owner`-scoped query
 //! in the app accepts it without knowing OAuth exists.
 
+use crate::state::State;
 use apiplant_auth::Authenticator;
 use apiplant_core::AuthEvent;
 use apiplant_oauth::{Profile, Provider};
 use chrono::{Duration, Utc};
-use ntex::web::types::{Json, Path, State};
+use ntex::web::types::{Json, Path};
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -138,7 +139,7 @@ pub async fn start_redirect(
             // A consent screen the browser cached would be a sign-in that
             // reuses a spent `state`.
             .header("cache-control", "no-store")
-            .finish(),
+            .build(),
         Err(response) => response,
     }
 }
@@ -291,7 +292,7 @@ pub async fn callback_redirect(
 
     let provider = path.into_inner();
     match complete(&req, &state, &provider, incoming).await {
-        Ok(success) => deliver(success),
+        Ok(success) => deliver(&state, success),
         Err(response) => failure(&state, response),
     }
 }
@@ -309,7 +310,11 @@ pub async fn callback_json(
     body: Json<Callback>,
 ) -> HttpResponse {
     match complete(&req, &state, &path.into_inner(), body.into_inner()).await {
-        Ok(success) => HttpResponse::Ok().json(&success.body),
+        Ok(success) => crate::session_cookie::respond(
+            &state.app.config.auth,
+            HttpResponse::Ok().json(&success.body),
+            &success.token,
+        ),
         Err(response) => response,
     }
 }
@@ -900,10 +905,14 @@ pub async fn unlink(req: HttpRequest, state: State<AppState>, path: Path<String>
 // ---------------------------------------------------------------------------
 
 /// Turn a completed sign-in into what the browser gets.
-fn deliver(success: Success) -> HttpResponse {
+fn deliver(state: &AppState, success: Success) -> HttpResponse {
     let delivery = success.delivery.as_str();
     if delivery == "json" {
-        return HttpResponse::Ok().json(&success.body);
+        return crate::session_cookie::respond(
+            &state.app.config.auth,
+            HttpResponse::Ok().json(&success.body),
+            &success.token,
+        );
     }
 
     // A fragment is never sent to a server: it stays out of access logs, out of
@@ -921,10 +930,17 @@ fn deliver(success: Success) -> HttpResponse {
         success.return_to,
         urlencoding(&success.token),
     );
-    HttpResponse::Found()
-        .header("location", target)
-        .header("cache-control", "no-store")
-        .finish()
+    // The session rides on the redirect as a cookie too, when the app keeps
+    // one: a landing page that never reads the token out of its URL is then
+    // signed in all the same.
+    crate::session_cookie::respond(
+        &state.app.config.auth,
+        HttpResponse::Found()
+            .header("location", target)
+            .header("cache-control", "no-store")
+            .build(),
+        &success.token,
+    )
 }
 
 /// Turn a failure into what the browser gets.
@@ -949,7 +965,7 @@ fn failure(state: &AppState, response: HttpResponse) -> HttpResponse {
             ),
         )
         .header("cache-control", "no-store")
-        .finish()
+        .build()
 }
 
 // ---------------------------------------------------------------------------

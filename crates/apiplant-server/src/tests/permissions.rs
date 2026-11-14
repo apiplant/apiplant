@@ -48,7 +48,7 @@ async fn updates_cannot_move_a_row_between_organisations_or_write_a_password() {
             test::TestRequest::post()
                 .uri("/api/organization")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "name": name }).to_string()),
+                .payload(json!({ "name": name }).to_string()),
             token,
         )
         .to_request()
@@ -83,7 +83,7 @@ async fn updates_cannot_move_a_row_between_organisations_or_write_a_password() {
                 .uri(&format!("/api/membership/{membership_id}"))
                 .header("x-organization", mine_id.clone())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "organization_id": theirs_id }).to_string()),
+                .payload(json!({ "organization_id": theirs_id }).to_string()),
             &mallory_token,
         )
         .to_request(),
@@ -116,7 +116,7 @@ async fn updates_cannot_move_a_row_between_organisations_or_write_a_password() {
             test::TestRequest::patch()
                 .uri(&format!("/api/user/{mallory_id}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(
+                .payload(
                     json!({
                         "display_name": "Mallory",
                         "password_hash": "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$forged"
@@ -189,7 +189,7 @@ async fn org_members_can_read_each_other_but_strangers_cannot() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"name":"Acme"}).to_string()),
+                    .payload(json!({"name":"Acme"}).to_string()),
                 &admin_token,
             )
             .to_request(),
@@ -206,7 +206,7 @@ async fn org_members_can_read_each_other_but_strangers_cannot() {
                 .uri("/api/membership")
                 .header("x-organization", org_id.clone())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"user_id": colleague_id, "role": "member"}).to_string()),
+                .payload(json!({"user_id": colleague_id, "role": "member"}).to_string()),
             &admin_token,
         )
         .to_request(),
@@ -332,7 +332,7 @@ required = true
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"name":"Acme"}).to_string()),
+                    .payload(json!({"name":"Acme"}).to_string()),
                 &admin_token,
             )
             .to_request(),
@@ -355,7 +355,7 @@ required = true
             test::TestRequest::post()
                 .uri("/api/membership")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"email":"member@example.com","role":"member"}).to_string()),
+                .payload(json!({"email":"member@example.com","role":"member"}).to_string()),
         ),
     )
     .await;
@@ -367,7 +367,7 @@ required = true
             test::TestRequest::post()
                 .uri("/api/note")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"Admin note"}).to_string()),
+                .payload(json!({"title":"Admin note"}).to_string()),
         ),
     )
     .await;
@@ -380,7 +380,7 @@ required = true
             test::TestRequest::post()
                 .uri("/api/note")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"Member note"}).to_string()),
+                .payload(json!({"title":"Member note"}).to_string()),
         ),
     )
     .await;
@@ -475,7 +475,7 @@ required = true
             test::TestRequest::post()
                 .uri("/api/organization")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "name": name }).to_string()),
+                .payload(json!({ "name": name }).to_string()),
             token,
         )
         .to_request()
@@ -503,7 +503,7 @@ required = true
             test::TestRequest::post()
                 .uri("/api/membership")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"email":"member@example.com","role":"member"}).to_string()),
+                .payload(json!({"email":"member@example.com","role":"member"}).to_string()),
         ),
     )
     .await;
@@ -514,7 +514,7 @@ required = true
             test::TestRequest::post()
                 .uri("/api/note")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"Note"}).to_string()),
+                .payload(json!({"title":"Note"}).to_string()),
             token,
         )
         .to_request()
@@ -598,7 +598,7 @@ async fn a_member_is_added_by_email_through_the_builtin_hook() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"name":"Acme"}).to_string()),
+                    .payload(json!({"name":"Acme"}).to_string()),
                 &admin_token,
             )
             .to_request(),
@@ -614,7 +614,7 @@ async fn a_member_is_added_by_email_through_the_builtin_hook() {
                 .uri("/api/membership")
                 .header("x-organization", org_id.clone())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(body.to_string()),
+                .payload(body.to_string()),
             &admin_token,
         )
         .to_request()
@@ -653,7 +653,7 @@ async fn a_member_is_added_by_email_through_the_builtin_hook() {
                 .uri("/api/membership")
                 .header("x-organization", org_id.clone())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"user_id": newcomer_id, "role":"member"}).to_string()),
+                .payload(json!({"user_id": newcomer_id, "role":"member"}).to_string()),
             &admin_token,
         )
         .to_request(),
@@ -781,7 +781,7 @@ hidden = true
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"name":"Newsroom"}).to_string()),
+                    .payload(json!({"name":"Newsroom"}).to_string()),
                 &author_token,
             )
             .to_request(),
@@ -799,7 +799,7 @@ hidden = true
                 .uri("/api/membership")
                 .header("x-organization", org_id.clone())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"user_id": reader_id, "role": "member"}).to_string()),
+                .payload(json!({"user_id": reader_id, "role": "member"}).to_string()),
             &author_token,
         )
         .to_request(),
@@ -814,7 +814,7 @@ hidden = true
                 .uri("/api/post")
                 .header("x-organization", org_id.clone())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"Scoop"}).to_string()),
+                .payload(json!({"title":"Scoop"}).to_string()),
             &author_token,
         )
         .to_request(),
@@ -906,7 +906,7 @@ type = "string"
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({ "name": "Acme" }).to_string()),
+                    .payload(json!({ "name": "Acme" }).to_string()),
                 &founder_token,
             )
             .to_request(),
@@ -930,7 +930,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/order")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "reference": "PO-1" }).to_string()),
+                .payload(json!({ "reference": "PO-1" }).to_string()),
         ),
     )
     .await;
@@ -944,7 +944,7 @@ type = "string"
                 test::TestRequest::post()
                     .uri("/api/membership")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(
+                    .payload(
                         json!({ "email": "staff@example.com", "role": "support" }).to_string(),
                     ),
             ),
@@ -961,7 +961,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/order")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "reference": "PO-2" }).to_string()),
+                .payload(json!({ "reference": "PO-2" }).to_string()),
         ),
     )
     .await;
@@ -974,9 +974,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/membership_role")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(
-                    json!({ "membership_id": staff_membership, "role": "buyer" }).to_string(),
-                ),
+                .payload(json!({ "membership_id": staff_membership, "role": "buyer" }).to_string()),
         ),
     )
     .await;
@@ -989,7 +987,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/order")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "reference": "PO-3" }).to_string()),
+                .payload(json!({ "reference": "PO-3" }).to_string()),
         ),
     )
     .await;
@@ -1027,9 +1025,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/membership_role")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(
-                    json!({ "membership_id": staff_membership, "role": "buyer" }).to_string(),
-                ),
+                .payload(json!({ "membership_id": staff_membership, "role": "buyer" }).to_string()),
         ),
     )
     .await;
@@ -1042,7 +1038,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/membership_role")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(
+                .payload(
                     json!({ "membership_id": staff_membership, "role": "support" }).to_string(),
                 ),
         ),
@@ -1063,7 +1059,7 @@ type = "string"
             test::TestRequest::post()
                 .uri("/api/order")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "reference": "PO-4" }).to_string()),
+                .payload(json!({ "reference": "PO-4" }).to_string()),
         ),
     )
     .await;
@@ -1094,7 +1090,7 @@ type = "string"
             test::TestRequest::patch()
                 .uri(&format!("/api/membership/{founder_membership}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "role": "support" }).to_string()),
+                .payload(json!({ "role": "support" }).to_string()),
         ),
     )
     .await;
@@ -1117,7 +1113,7 @@ type = "string"
             test::TestRequest::patch()
                 .uri(&format!("/api/membership/{founder_membership}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "role": "admin" }).to_string()),
+                .payload(json!({ "role": "admin" }).to_string()),
         ),
     )
     .await;
@@ -1131,7 +1127,7 @@ type = "string"
             test::TestRequest::patch()
                 .uri(&format!("/api/membership/{staff_membership}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "role": "admin" }).to_string()),
+                .payload(json!({ "role": "admin" }).to_string()),
         ),
     )
     .await;
@@ -1143,7 +1139,7 @@ type = "string"
             test::TestRequest::patch()
                 .uri(&format!("/api/membership/{founder_membership}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "role": "support" }).to_string()),
+                .payload(json!({ "role": "support" }).to_string()),
         ),
     )
     .await;
@@ -1205,7 +1201,7 @@ async fn a_global_admin_reaches_every_organisation_and_may_class_them() {
             test::TestRequest::post()
                 .uri("/api/organization")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({ "name": name }).to_string()),
+                .payload(json!({ "name": name }).to_string()),
             token,
         )
         .to_request()
@@ -1226,7 +1222,7 @@ async fn a_global_admin_reaches_every_organisation_and_may_class_them() {
                 .uri(&format!("/api/organization/{org}"))
                 .header("x-organization", active.to_string())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(body.to_string()),
+                .payload(body.to_string()),
             token,
         )
         .to_request()
@@ -1400,7 +1396,7 @@ async fn a_global_admin_does_not_bypass_private() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({ "name": "Ops" }).to_string()),
+                    .payload(json!({ "name": "Ops" }).to_string()),
                 &staff_token,
             )
             .to_request(),
@@ -1505,7 +1501,7 @@ async fn a_default_class_is_stamped_on_every_new_organisation() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({ "name": "Acme", "org_class": "admin" }).to_string()),
+                    .payload(json!({ "name": "Acme", "org_class": "admin" }).to_string()),
                 &token,
             )
             .to_request(),
@@ -1588,7 +1584,7 @@ type = "uuid"
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({ "name": "Family" }).to_string()),
+                    .payload(json!({ "name": "Family" }).to_string()),
                 &parent_token,
             )
             .to_request(),
@@ -1618,7 +1614,7 @@ type = "uuid"
                 test::TestRequest::post()
                     .uri("/api/membership")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({ "email": email, "role": role }).to_string()),
+                    .payload(json!({ "email": email, "role": role }).to_string()),
             ),
         )
         .await;
@@ -1628,7 +1624,7 @@ type = "uuid"
     let chore = |req: test::TestRequest, title: &str| {
         req.uri("/api/chore")
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(json!({ "title": title }).to_string())
+            .payload(json!({ "title": title }).to_string())
     };
     let kids_chore = read_json(
         test::call_service(&app, as_kid(chore(test::TestRequest::post(), "dishes"))).await,
@@ -1645,7 +1641,7 @@ type = "uuid"
         test::TestRequest::patch()
             .uri(&format!("/api/chore/{id}"))
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(json!({ "title": to }).to_string())
+            .payload(json!({ "title": to }).to_string())
     };
 
     // The `own` clause: a kid's own row, yes.
@@ -1687,7 +1683,7 @@ type = "uuid"
             test::TestRequest::post()
                 .uri("/api/membership_role")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(
+                .payload(
                     json!({ "membership_id": teen_membership, "role": "grounded" }).to_string(),
                 ),
         ),

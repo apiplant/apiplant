@@ -77,7 +77,7 @@ type = "file"
         test::TestRequest::post()
             .uri("/api/uploads?filename=logo.png")
             .header(CONTENT_TYPE, "image/png")
-            .set_payload("PNG")
+            .payload("PNG")
             .to_request(),
     )
     .await;
@@ -90,7 +90,7 @@ type = "file"
             test::TestRequest::post()
                 .uri("/api/uploads?filename=payload.html")
                 .header(CONTENT_TYPE, "text/html")
-                .set_payload("<script>"),
+                .payload("<script>"),
             &token,
         )
         .to_request(),
@@ -104,7 +104,7 @@ type = "file"
             test::TestRequest::post()
                 .uri("/api/uploads?filename=Logo%20Final%20(2).PNG")
                 .header(CONTENT_TYPE, "image/png")
-                .set_payload("PNGDATA"),
+                .payload("PNGDATA"),
             &token,
         )
         .to_request(),
@@ -165,7 +165,7 @@ type = "file"
             test::TestRequest::post()
                 .uri("/api/brand")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"name": "Acme", "logo": url}).to_string()),
+                .payload(json!({"name": "Acme", "logo": url}).to_string()),
             &token,
         )
         .to_request(),
@@ -294,7 +294,7 @@ async fn an_app_that_stores_nothing_has_no_upload_routes() {
         test::TestRequest::post()
             .uri("/api/uploads?filename=a.png")
             .header(CONTENT_TYPE, "image/png")
-            .set_payload("x")
+            .payload("x")
             .to_request(),
     )
     .await;

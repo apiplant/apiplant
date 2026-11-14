@@ -24,7 +24,7 @@
 //! the flip side bites instead: every request arrives from the proxy's address,
 //! so all callers share one bucket until that flag is set.
 //!
-//! The token buckets themselves come from [`ntex_ratelimiter`]; what lives here
+//! The token buckets themselves come from [`crate::token_bucket`]; what lives here
 //! is which bucket a request belongs in.
 
 use std::collections::HashMap;
@@ -32,12 +32,12 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::token_bucket::{RateLimitResult, RateLimiter, RateLimiterConfig};
 use apiplant_core::{App, CrudAction, RateLimitRule};
 use ntex::http::header::{HeaderName, HeaderValue};
 use ntex::http::Method;
-use ntex::service::{Middleware, Service, ServiceCtx};
+use ntex::service::{Ctx, Middleware, Service};
 use ntex::web;
-use ntex_ratelimiter::{RateLimitResult, RateLimiter, RateLimiterConfig};
 
 use crate::functions::FunctionRegistry;
 use crate::response::error;
@@ -238,10 +238,10 @@ impl RateLimit {
     }
 }
 
-impl<S> Middleware<S> for RateLimit {
+impl<S, St> Middleware<S, St> for RateLimit {
     type Service = RateLimitService<S>;
 
-    fn create(&self, service: S) -> Self::Service {
+    fn create(&self, _: &St, service: S) -> Self::Service {
         RateLimitService {
             service,
             policy: Arc::clone(&self.policy),
@@ -254,21 +254,20 @@ pub struct RateLimitService<S> {
     policy: Arc<RateLimitPolicy>,
 }
 
-impl<S, Err> Service<web::WebRequest<Err>> for RateLimitService<S>
+impl<S, St, In> Service<St, web::WebRequest<In>> for RateLimitService<S>
 where
-    S: Service<web::WebRequest<Err>, Response = web::WebResponse, Error = web::Error>,
-    Err: web::ErrorRenderer,
+    S: Service<St, web::WebRequest<In>, Res = web::WebResponse>,
 {
-    type Response = web::WebResponse;
-    type Error = web::Error;
+    type Res = web::WebResponse;
+    type Error = S::Error;
 
-    ntex::forward_ready!(service);
+    ntex::forward!(St, service);
 
     async fn call(
         &self,
-        req: web::WebRequest<Err>,
-        ctx: ServiceCtx<'_, Self>,
-    ) -> Result<Self::Response, Self::Error> {
+        req: web::WebRequest<In>,
+        ctx: Ctx<'_, Self, St>,
+    ) -> Result<Self::Res, Self::Error> {
         let Some(limiter) = self.policy.limiter(req.path(), req.method()) else {
             return ctx.call(&self.service, req).await;
         };
@@ -299,7 +298,7 @@ where
 /// caller cannot choose. The proxy headers are read only where the deployment
 /// says something in front of the server writes them; a forged `0.0.0.0` is
 /// refused so a caller cannot land on the loopback fallback on purpose.
-fn client_ip<Err>(req: &web::WebRequest<Err>, trust_proxy_headers: bool) -> IpAddr {
+fn client_ip<In>(req: &web::WebRequest<In>, trust_proxy_headers: bool) -> IpAddr {
     if trust_proxy_headers {
         let forwarded = req
             .headers()
@@ -421,7 +420,7 @@ mod tests {
 
         // Its own bucket, not the global one.
         let own = policy.limiter("/products", &Method::POST).unwrap();
-        assert_eq!(own.stats().capacity, 1);
+        assert_eq!(own.capacity(), 1);
         // `off` means no bucket at all, even though a global rule exists.
         assert!(policy.limiter("/products", &Method::GET).is_none());
         // Anything else still counts against the global rule.
@@ -429,8 +428,7 @@ mod tests {
             policy
                 .limiter("/products/7", &Method::GET)
                 .unwrap()
-                .stats()
-                .capacity,
+                .capacity(),
             10
         );
     }

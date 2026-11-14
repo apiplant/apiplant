@@ -666,7 +666,7 @@ async fn an_invitation_that_could_not_be_sent_is_not_left_pending() {
             test::TestRequest::post()
                 .uri("/api/auth/invitations")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(body.to_string()),
+                .payload(body.to_string()),
             token,
         )
         .header("x-organization", org.clone())

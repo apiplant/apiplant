@@ -6,7 +6,7 @@ use serde_json::json;
 
 /// A JSON `{ "error": ... }` body with the given status.
 pub fn error(status: u16, message: impl Into<String>) -> HttpResponse {
-    HttpResponse::build(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
+    HttpResponse::builder(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
         .json(&json!({ "error": message.into() }))
 }
 

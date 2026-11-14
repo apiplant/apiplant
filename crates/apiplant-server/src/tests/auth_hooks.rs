@@ -345,7 +345,7 @@ async fn auth_hooks_shape_registration_login_and_key_issuance() {
                 test::TestRequest::post()
                     .uri("/api/auth/apikeys")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"name":"ci"}).to_string()),
+                    .payload(json!({"name":"ci"}).to_string()),
                 &token,
             )
             .to_request(),

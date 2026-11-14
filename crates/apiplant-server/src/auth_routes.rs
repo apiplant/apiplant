@@ -30,9 +30,10 @@
 //! `after_create`, since it *is* a create; the register hooks run outside those
 //! and are the place for logic that should not fire on `POST <base>/user`.
 
+use crate::state::State;
 use apiplant_core::schema::AuthSpec;
 use apiplant_core::{AuthEvent, HookEvent};
-use ntex::web::types::{Json, State};
+use ntex::web::types::Json;
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -111,6 +112,7 @@ pub async fn register(
     // the account exists, but until the link in their mailbox is opened there
     // is no session to hand out. Saying so — rather than returning a token that
     // login would then refuse — is what lets a client show the right screen.
+    #[cfg(feature = "email")]
     if state.requires_email_verification() {
         let address = user
             .get(&spec.identity_field)
@@ -128,7 +130,11 @@ pub async fn register(
     }
 
     match state.auth.issue_token(user_id) {
-        Ok(token) => HttpResponse::Created().json(&json!({ "token": token, "user": user })),
+        Ok(token) => crate::session_cookie::respond(
+            &state.app.config.auth,
+            HttpResponse::Created().json(&json!({ "token": token, "user": user })),
+            &token,
+        ),
         Err(_) => error(500, "failed to issue token"),
     }
 }
@@ -518,7 +524,11 @@ pub async fn login(
         Err(resp) => return resp,
     }
     match token {
-        Some(_) => HttpResponse::Ok().json(&response),
+        Some(token) => crate::session_cookie::respond(
+            &state.app.config.auth,
+            HttpResponse::Ok().json(&response),
+            &token,
+        ),
         // Telling somebody who typed their own password correctly that their
         // address is unconfirmed reveals nothing they did not already know,
         // and is the difference between a dead end and a resend button.
@@ -688,4 +698,15 @@ pub(crate) fn table(state: &AppState, name: &str) -> Option<String> {
         .resources
         .get(name)
         .map(|r| format!("\"{}\"", r.table_name()))
+}
+
+/// `POST <base>/auth/logout`: expire the session cookie and its CSRF twin.
+///
+/// Mounted only with `[auth] cookie` on. The JWT itself stays valid until it
+/// expires, as a bearer token does when a client discards it. What this ends
+/// is the browser's possession of it.
+pub async fn logout(state: State<AppState>) -> HttpResponse {
+    let mut response = HttpResponse::NoContent().build();
+    crate::session_cookie::clear(&state.app.config.auth, &mut response);
+    response
 }

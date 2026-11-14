@@ -170,7 +170,7 @@ async fn only_an_admin_of_a_named_organization_can_start_a_checkout() {
             test::TestRequest::post()
                 .uri("/api/billing/checkout")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(body.to_string()),
+                .payload(body.to_string()),
             &member_token,
         )
         .to_request(),
@@ -186,7 +186,7 @@ async fn only_an_admin_of_a_named_organization_can_start_a_checkout() {
                 .uri("/api/billing/checkout")
                 .header(CONTENT_TYPE, "application/json")
                 .header("x-organization", org.as_str())
-                .set_payload(body.to_string()),
+                .payload(body.to_string()),
             &member_token,
         )
         .to_request(),
@@ -222,7 +222,7 @@ async fn an_admin_buying_an_unknown_price_gets_a_404_and_no_provider_call() {
                     .uri("/api/billing/checkout")
                     .header(CONTENT_TYPE, "application/json")
                     .header("x-organization", org.as_str())
-                    .set_payload(json!({ "price_id": price_id }).to_string()),
+                    .payload(json!({ "price_id": price_id }).to_string()),
                 &token,
             )
             .to_request(),
@@ -258,7 +258,7 @@ async fn an_unsigned_webhook_is_refused_and_records_nothing() {
         let mut request = test::TestRequest::post()
             .uri("/api/billing/webhook")
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(delivery.to_string());
+            .payload(delivery.to_string());
         if !signature.is_empty() {
             request = request.header("stripe-signature", signature);
         }
@@ -310,7 +310,7 @@ async fn the_catalogue_is_public_to_read_and_admin_to_change() {
                 .uri("/api/billing_product")
                 .header(CONTENT_TYPE, "application/json")
                 .header("x-organization", org.as_str())
-                .set_payload(json!({ "name": "Pro" }).to_string()),
+                .payload(json!({ "name": "Pro" }).to_string()),
             &member_token,
         )
         .to_request(),

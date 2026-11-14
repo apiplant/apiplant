@@ -384,7 +384,7 @@ pub fn build(app_dir: &Path, options: Options) -> Result<PathBuf> {
     let registry = FunctionRegistry::load(&app);
     // A baked copy has to make the same three claims the running server would,
     // so the mailer is built here too — for its verdict, not to send anything.
-    let email_enabled = apiplant_email::Mailer::from_config(&app.config.email)
+    let email_enabled = crate::optional::Mailer::from_config(&app.config.email)
         .map(|mailer| mailer.is_some())
         .unwrap_or(false);
     let manifest = build_manifest(&app, &registry, api_base_url.clone(), email_enabled)?;
@@ -637,6 +637,14 @@ fn build_manifest(
     })
 }
 
+/// What a built-in provider's entry contributes to the manifest, in a build
+/// without `oauth` (where the table itself is absent).
+#[cfg(not(feature = "oauth"))]
+struct BuiltinLabel {
+    label: &'static str,
+    provides_email: bool,
+}
+
 /// The sign-in buttons, built from config alone.
 ///
 /// Deliberately not built from `apiplant_oauth::Providers`: the manifest is
@@ -650,7 +658,12 @@ fn oauth_providers_manifest(app: &App) -> Vec<OAuthProviderManifest> {
         .into_iter()
         .map(|provider| {
             let configured = app.config.oauth.providers.get(provider);
+            #[cfg(feature = "oauth")]
             let builtin = apiplant_oauth::BUILTIN.iter().find(|b| b.key == provider);
+            // Unreachable without the feature (`[oauth]` refuses to boot), but
+            // the manifest is also baked by `apiplant admin`, which only reads.
+            #[cfg(not(feature = "oauth"))]
+            let builtin: Option<&BuiltinLabel> = None;
             let label = configured
                 .map(|c| c.label.trim())
                 .filter(|label| !label.is_empty())
@@ -1283,6 +1296,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "admin")]
     #[test]
     fn build_writes_static_admin_files_and_manifest() {
         let app_dir = temp_dir("files");

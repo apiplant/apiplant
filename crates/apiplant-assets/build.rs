@@ -20,8 +20,15 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
 
     let mut code = String::new();
-    emit(&mut code, "ADMIN", &assets.join("admin"), "admin");
-    emit(&mut code, "STUDIO", &assets.join("studio"), "studio");
+    // A bundle whose feature is off is an empty table: same name, same type,
+    // nothing to find in it.
+    for (name, package) in [("ADMIN", "admin"), ("STUDIO", "studio")] {
+        if env::var_os(format!("CARGO_FEATURE_{name}")).is_some() {
+            emit(&mut code, name, &assets.join(package), package);
+        } else {
+            writeln!(code, "pub static {name}: &[(&str, &[u8])] = &[];").expect("write");
+        }
+    }
 
     fs::write(out_dir.join("embedded.rs"), code).expect("write embedded.rs");
 }

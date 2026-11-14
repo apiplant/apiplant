@@ -31,11 +31,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use apiplant_ai::Ai;
-use apiplant_cache::Cache;
+use crate::optional::Ai;
+use crate::optional::Cache;
+use crate::optional::Mailer;
+use crate::optional::Payments;
 use apiplant_db::Db;
-use apiplant_email::Mailer;
-use apiplant_payments::Payments;
 use apiplant_queue::{Delivery, Listener, Queue};
 
 use crate::functions::{FunctionRegistry, HostBridge};
@@ -51,7 +51,7 @@ pub struct Subscriber {
     pub functions: Arc<FunctionRegistry>,
     pub mailer: Option<Mailer>,
     /// The app's email templates, so a queued handler can send one by name.
-    pub email_templates: std::sync::Arc<crate::email_templates::EmailTemplates>,
+    pub email_templates: std::sync::Arc<crate::optional::EmailTemplates>,
     pub cache: Option<Cache>,
     pub payments: Option<Payments>,
     pub ai: Option<Ai>,

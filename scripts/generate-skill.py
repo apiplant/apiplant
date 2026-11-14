@@ -52,6 +52,7 @@ GUIDES = [
     ("cli.md", "`apiplant cli`: the dashboard in a terminal"),
     ("security.md", "What to configure before exposing the server"),
     ("openapi.md", "The generated spec and Swagger UI"),
+    ("embedding.md", "apiplant as a Rust library: `Platform`, `Caller`, your routes, Cargo features"),
 ]
 
 DESCRIPTION = (

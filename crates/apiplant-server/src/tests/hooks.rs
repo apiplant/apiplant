@@ -215,7 +215,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"name":"Acme","slug":"acme"}).to_string()),
+                    .payload(json!({"name":"Acme","slug":"acme"}).to_string()),
                 &token,
             )
             .to_request(),
@@ -232,7 +232,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
             test::TestRequest::post()
                 .uri("/api/post")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"hello","body":"first"}).to_string()),
+                .payload(json!({"title":"hello","body":"first"}).to_string()),
             &token,
         )
         .header("x-organization", org_id.as_str())
@@ -266,7 +266,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
             test::TestRequest::post()
                 .uri("/api/post")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"   ","body":"nope"}).to_string()),
+                .payload(json!({"title":"   ","body":"nope"}).to_string()),
             &token,
         )
         .header("x-organization", org_id.as_str())
@@ -326,7 +326,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
             test::TestRequest::patch()
                 .uri(&format!("/api/post/{post_id}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"body":"typed by hand"}).to_string()),
+                .payload(json!({"body":"typed by hand"}).to_string()),
             &token,
         )
         .header("x-organization", org_id.as_str())
@@ -344,7 +344,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
             test::TestRequest::patch()
                 .uri(&format!("/api/post/{post_id}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"locked": true}).to_string()),
+                .payload(json!({"locked": true}).to_string()),
             &token,
         )
         .header("x-organization", org_id.as_str())
@@ -372,7 +372,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
             test::TestRequest::patch()
                 .uri(&format!("/api/post/{post_id}"))
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"locked": false}).to_string()),
+                .payload(json!({"locked": false}).to_string()),
             &token,
         )
         .header("x-organization", org_id.as_str())
@@ -474,7 +474,7 @@ async fn lifecycle_hooks_validate_transform_and_observe_every_crud_operation() {
             test::TestRequest::post()
                 .uri("/api/functions/post_guard")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"title":"x"}).to_string()),
+                .payload(json!({"title":"x"}).to_string()),
             &token,
         )
         .header("x-organization", org_id.as_str())
@@ -753,7 +753,7 @@ async fn registering_runs_the_user_resources_create_hooks() {
                 test::TestRequest::post()
                     .uri("/api/organization")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"name":"Acme","domain":"acme.test"}).to_string()),
+                    .payload(json!({"name":"Acme","domain":"acme.test"}).to_string()),
                 &ana_token,
             )
             .to_request(),

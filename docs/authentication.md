@@ -320,6 +320,40 @@ An API key **authenticates as its owning user**, with the same identity,
 organisation memberships and permissions. A key therefore inherits everything
 that user can do.
 
+### The session in a cookie
+
+A browser makes some requests on its own, and no script can add a header to
+them: an `<img src>`, a `<video src>`, a download link, a WebSocket. For those,
+`main.toml` can ask for the session to be carried in a cookie as well:
+
+```toml
+[auth]
+cookie        = true
+cookie_name   = "apiplant_session"   # default; the CSRF cookie is this + "_csrf"
+cookie_secure = true                 # default; browsers accept it on http://localhost
+cookie_domain = ""                   # default: the exact host that set it
+```
+
+The token is the same JWT. Nothing about sessions changes. The cookie is a
+second way to carry the token:
+
+* every response that hands out a session (register, login, confirming an
+  address, accepting an invitation, resetting a password, an OAuth sign-in,
+  starting or stopping impersonation) also sets it as an `HttpOnly`,
+  `SameSite=Lax` cookie, beside a readable `<cookie_name>_csrf` cookie holding
+  a random token;
+* a request with **no** `Authorization` header and no API key is authenticated
+  from the cookie. A header always wins, even one that fails: a script that
+  sends a bearer token is saying which session it means;
+* a cookie-authenticated request that changes something (any method but `GET`,
+  `HEAD`, `OPTIONS`) must repeat the CSRF token in `X-CSRF-Token`. Without it
+  the request is anonymous. A cookie is sent with every request to this host,
+  including the ones another site makes the browser send; the header can only
+  be written by a script on this origin (double-submit);
+* `POST /auth/logout` expires both cookies (`204`). It exists only with
+  `cookie = true`. The JWT itself stays valid until it expires, exactly as a
+  bearer token does when a client discards it.
+
 ## Implementation details
 
 * **Passwords**: argon2id with a random salt (`argon2` crate). Verification is

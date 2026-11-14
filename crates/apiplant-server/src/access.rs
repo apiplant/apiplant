@@ -10,11 +10,25 @@
 
 use apiplant_abi::{FunctionAccess, FunctionPolicy};
 use apiplant_auth::Principal;
-use ntex::web::types::State;
+use apiplant_core::{Access, Policy};
 use ntex::web::{HttpRequest, HttpResponse};
 
 use crate::response::error;
 use crate::state::AppState;
+
+/// [`check`], for a permission in the resource grammar.
+///
+/// The two grammars differ only by `owner`, which needs a row to compare
+/// against and so is `private` here. This is the door code outside the crate
+/// comes through, via [`crate::Caller::require`].
+pub async fn check_policy(
+    state: &AppState,
+    req: &HttpRequest,
+    policy: &Policy,
+    missing: &str,
+) -> Result<Option<Principal>, HttpResponse> {
+    check(state, req, &to_function_policy(policy), missing).await
+}
 
 /// Resolve the caller and check them against `access`.
 ///
@@ -23,7 +37,7 @@ use crate::state::AppState;
 /// when credentials would help, `403` when they wouldn't, and `404` for
 /// `private`, which is not merely forbidden but not there.
 pub async fn check(
-    state: &State<AppState>,
+    state: &AppState,
     req: &HttpRequest,
     policy: &FunctionPolicy,
     missing: &str,
@@ -102,4 +116,53 @@ pub async fn check(
         }
     }
     Ok(principal)
+}
+
+/// The resource grammar (`[queues] publish`, [`crate::Caller::require`]) in
+/// the function one, which is what [`check`] reads. They differ only by `owner`, which
+/// [`QueuesConfig::publish_access`](apiplant_core::QueuesConfig::publish_access)
+/// has already ruled out because a topic has no owner column to compare against.
+pub(crate) fn to_function_policy(policy: &Policy) -> FunctionPolicy {
+    FunctionPolicy {
+        access: to_function_access(&policy.level),
+        org_class: policy.org_class.clone(),
+    }
+}
+
+fn to_function_access(access: &Access) -> FunctionAccess {
+    match access {
+        Access::Public => FunctionAccess::Public,
+        Access::Authenticated => FunctionAccess::Authenticated,
+        Access::Member => FunctionAccess::Member,
+        Access::Role(role) => FunctionAccess::Role(role.clone()),
+        Access::Owner | Access::Private => FunctionAccess::Private,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two grammars have to agree, or an app's `publish = "role:admin"`
+    /// would silently enforce something else.
+    #[test]
+    fn the_two_access_grammars_line_up() {
+        assert_eq!(to_function_access(&Access::Public), FunctionAccess::Public);
+        assert_eq!(
+            to_function_access(&Access::Authenticated),
+            FunctionAccess::Authenticated
+        );
+        assert_eq!(to_function_access(&Access::Member), FunctionAccess::Member);
+        assert_eq!(
+            to_function_access(&Access::Role("admin".into())),
+            FunctionAccess::Role("admin".into())
+        );
+        assert_eq!(
+            to_function_access(&Access::Private),
+            FunctionAccess::Private
+        );
+        // `owner` names a column on a row; a topic hasn't got one, so it closes
+        // the door rather than meaning something arbitrary.
+        assert_eq!(to_function_access(&Access::Owner), FunctionAccess::Private);
+    }
 }

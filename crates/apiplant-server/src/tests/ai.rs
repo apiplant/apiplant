@@ -334,7 +334,7 @@ history = "owner"
             test::TestRequest::post()
                 .uri("/api/ai/agents/coach/chat")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"message":"hello there"}).to_string()),
+                .payload(json!({"message":"hello there"}).to_string()),
             &token,
         )
         .to_request(),
@@ -422,7 +422,7 @@ history = "owner"
                 test::TestRequest::post()
                     .uri("/api/ai/agents/coach/chat")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"message":"hello there","stream":false}).to_string()),
+                    .payload(json!({"message":"hello there","stream":false}).to_string()),
                 &token,
             )
             .to_request(),
@@ -523,7 +523,7 @@ history = "owner"
                 test::TestRequest::post()
                     .uri("/api/ai/agents/coach/chat")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"message":first,"stream":false}).to_string()),
+                    .payload(json!({"message":first,"stream":false}).to_string()),
                 &token,
             )
             .to_request(),
@@ -540,7 +540,7 @@ history = "owner"
                 test::TestRequest::post()
                     .uri("/api/ai/agents/coach/chat")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"message":second,"thread_id":first_response["thread_id"],"stream":false}).to_string()),
+                    .payload(json!({"message":second,"thread_id":first_response["thread_id"],"stream":false}).to_string()),
                 &token,
             )
             .to_request(),
@@ -617,7 +617,7 @@ history = "owner"
                 test::TestRequest::post()
                     .uri("/api/ai/agents/coach/chat")
                     .header(CONTENT_TYPE, "application/json")
-                    .set_payload(json!({"message":"hello there","stream":false}).to_string()),
+                    .payload(json!({"message":"hello there","stream":false}).to_string()),
                 &token,
             )
             .to_request(),

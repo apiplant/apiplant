@@ -281,6 +281,36 @@ pub struct AuthConfig {
     /// names may act as anyone regardless, because a deployment's back office
     /// is not a tenant's admin.
     pub allow_impersonation: bool,
+
+    // --- where a browser keeps its session ------------------------------
+    /// Also hand the session token to the browser as a cookie.
+    ///
+    /// The token is the same signed JWT either way; this only adds a second
+    /// way to carry it. A response that issues one also sets it as an
+    /// `HttpOnly` cookie, and a request without an `Authorization` header is
+    /// authenticated from that cookie. That is what a browser needs for the
+    /// requests it makes on its own, where no script can add a header:
+    /// `<img src>`, `<video src>`, a download link, a WebSocket.
+    ///
+    /// A request authenticated *by the cookie* that changes something (any
+    /// method but `GET`, `HEAD` or `OPTIONS`) must also send the CSRF token in
+    /// `X-CSRF-Token`, matching the readable `<cookie_name>_csrf` cookie set
+    /// beside it (double-submit). A cookie arrives with every request whoever
+    /// started it, and the header is what proves this origin's own script did.
+    ///
+    /// Off by default: an API used from scripts and servers has no use for it,
+    /// and `Authorization: Bearer` behaves exactly as before either way.
+    pub cookie: bool,
+    /// The session cookie's name (default `apiplant_session`). The CSRF cookie
+    /// is this name plus `_csrf`.
+    pub cookie_name: String,
+    /// Send the cookies with `Secure` (default true). Browsers accept a
+    /// `Secure` cookie from `http://localhost`, so only a deployment served
+    /// over plain HTTP on another host needs this off.
+    pub cookie_secure: bool,
+    /// The cookie's `Domain`. Empty (the default) leaves it unset, which pins
+    /// the cookie to the exact host that set it.
+    pub cookie_domain: String,
 }
 
 impl Default for AuthConfig {
@@ -298,6 +328,10 @@ impl Default for AuthConfig {
             password_reset_ttl_secs: 60 * 60,
             verify_email_redirect: String::new(),
             allow_impersonation: true,
+            cookie: false,
+            cookie_name: "apiplant_session".to_string(),
+            cookie_secure: true,
+            cookie_domain: String::new(),
         }
     }
 }

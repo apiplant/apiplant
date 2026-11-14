@@ -480,7 +480,7 @@ default = "queued"
             test::TestRequest::post()
                 .uri("/api/organization")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"name":"Acme","slug":"acme","tier":"enterprise"}).to_string()),
+                .payload(json!({"name":"Acme","slug":"acme","tier":"enterprise"}).to_string()),
             &alice_token,
         )
         .to_request(),
@@ -506,7 +506,7 @@ default = "queued"
             test::TestRequest::post()
                 .uri("/api/preference")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(
+                .payload(
                     json!({"key":"theme","value":"dark","owner_id":Uuid::new_v4()}).to_string(),
                 ),
             &alice_token,
@@ -526,7 +526,7 @@ default = "queued"
             test::TestRequest::post()
                 .uri("/api/project")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"name":"alpha"}).to_string()),
+                .payload(json!({"name":"alpha"}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_id.as_str())
@@ -569,7 +569,7 @@ default = "queued"
             test::TestRequest::post()
                 .uri("/api/membership")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"user_id":bob_id,"role":"ops","team":"platform"}).to_string()),
+                .payload(json!({"user_id":bob_id,"role":"ops","team":"platform"}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_id.as_str())
@@ -587,9 +587,7 @@ default = "queued"
             test::TestRequest::post()
                 .uri("/api/membership")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(
-                    json!({"user_id":carol_id,"role":"member","team":"support"}).to_string(),
-                ),
+                .payload(json!({"user_id":carol_id,"role":"member","team":"support"}).to_string()),
             &alice_token,
         )
         .header("x-organization", org_id.as_str())
@@ -604,7 +602,7 @@ default = "queued"
             test::TestRequest::post()
                 .uri("/api/auth/apikeys")
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"name":"ops-bot"}).to_string()),
+                .payload(json!({"name":"ops-bot"}).to_string()),
             &bob_token,
         )
         .to_request(),
@@ -621,7 +619,7 @@ default = "queued"
             .header("x-api-key", bob_key.as_str())
             .header("x-organization", org_id.as_str())
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(json!({"project_id":project_id}).to_string())
+            .payload(json!({"project_id":project_id}).to_string())
             .to_request(),
     )
     .await;
@@ -637,7 +635,7 @@ default = "queued"
                 .uri("/api/deployment")
                 .header("x-organization", org_id.as_str())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"project_id":project_id}).to_string()),
+                .payload(json!({"project_id":project_id}).to_string()),
             &carol_token,
         )
         .to_request(),
@@ -663,7 +661,7 @@ default = "queued"
                 .uri("/api/membership")
                 .header("x-organization", org_id.as_str())
                 .header(CONTENT_TYPE, "application/json")
-                .set_payload(json!({"user_id":alice_id,"role":"member"}).to_string()),
+                .payload(json!({"user_id":alice_id,"role":"member"}).to_string()),
             &bob_token,
         )
         .to_request(),

@@ -12,10 +12,11 @@
 //! is what lets one function serve a browser that wants tokens as they land and
 //! a cron job that wants a JSON document.
 
+use crate::state::State;
 use apiplant_abi::HttpMethod;
 use ntex::http::Method;
 use ntex::util::Bytes;
-use ntex::web::types::{Path, State};
+use ntex::web::types::Path;
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::json;
 

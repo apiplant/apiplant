@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use apiplant_core::{LogFormat, ObservabilityConfig, OtlpProtocol, TracesConfig};
 use ntex::http::header::{HeaderName, HeaderValue};
-use ntex::service::{Middleware, Service, ServiceCtx};
+use ntex::service::{Ctx, Middleware, Service};
 use ntex::web;
 use opentelemetry::trace::{TraceContextExt, TracerProvider as _};
 use opentelemetry::{global, KeyValue};
@@ -452,10 +452,10 @@ impl Telemetry {
     }
 }
 
-impl<S> Middleware<S> for Telemetry {
+impl<S, St> Middleware<S, St> for Telemetry {
     type Service = TelemetryService<S>;
 
-    fn create(&self, service: S) -> Self::Service {
+    fn create(&self, _: &St, service: S) -> Self::Service {
         TelemetryService {
             service,
             policy: Arc::clone(&self.policy),
@@ -468,21 +468,21 @@ pub struct TelemetryService<S> {
     policy: Arc<TelemetryPolicy>,
 }
 
-impl<S, Err> Service<web::WebRequest<Err>> for TelemetryService<S>
+impl<S, St, In> Service<St, web::WebRequest<In>> for TelemetryService<S>
 where
-    S: Service<web::WebRequest<Err>, Response = web::WebResponse, Error = web::Error>,
-    Err: web::ErrorRenderer,
+    S: Service<St, web::WebRequest<In>, Res = web::WebResponse>,
+    S::Error: std::fmt::Debug,
 {
-    type Response = web::WebResponse;
-    type Error = web::Error;
+    type Res = web::WebResponse;
+    type Error = S::Error;
 
-    ntex::forward_ready!(service);
+    ntex::forward!(St, service);
 
     async fn call(
         &self,
-        req: web::WebRequest<Err>,
-        ctx: ServiceCtx<'_, Self>,
-    ) -> Result<Self::Response, Self::Error> {
+        req: web::WebRequest<In>,
+        ctx: Ctx<'_, Self, St>,
+    ) -> Result<Self::Res, Self::Error> {
         if !self.policy.is_active() || self.policy.excluded(req.path()) {
             return ctx.call(&self.service, req).await;
         }
@@ -534,7 +534,7 @@ where
         if let Some(span) = &span {
             span.record("http.response.status_code", status);
             match &result {
-                Err(e) => record_error("unhandled", e),
+                Err(e) => record_error("unhandled", format!("{e:?}")),
                 // A 5xx is a failure whether or not anything called
                 // `record_error` on the way out — a handler that returns
                 // `error(500, …)` by hand should still colour the trace red.
@@ -569,7 +569,7 @@ where
 impl<S> TelemetryService<S> {
     /// The span for one request: named for its route, parented to whatever
     /// trace the caller was already in.
-    fn span<Err>(&self, req: &web::WebRequest<Err>, method: &str, route: &str) -> Span {
+    fn span<In>(&self, req: &web::WebRequest<In>, method: &str, route: &str) -> Span {
         // `otel.name` and `otel.kind` are how `tracing-opentelemetry` is told
         // what the exported span should be called and that it is a server
         // span; the `Empty` fields are recorded once the response exists.

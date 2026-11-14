@@ -15,8 +15,8 @@
 //! places that cannot send a bearer token. Files that must not be readable by
 //! anyone holding the link do not belong in a `file` field.
 
+use crate::state::State;
 use apiplant_abi::FunctionAccess;
-use ntex::web::types::State;
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::json;
 
@@ -32,7 +32,7 @@ use crate::state::AppState;
 pub async fn upload(
     req: HttpRequest,
     state: State<AppState>,
-    body: ntex::util::Bytes,
+    mut payload: ntex::web::types::Payload,
 ) -> HttpResponse {
     let Some(storage) = state.storage.clone() else {
         return error(404, "this app does not store files");
@@ -48,21 +48,32 @@ pub async fn upload(
         return response;
     }
 
+    // Read only now, after the caller is known: an anonymous upload is turned
+    // away before a byte of it is buffered. The limit is enforced chunk by
+    // chunk as the body arrives, so an oversized file is refused at the first
+    // chunk past the limit rather than after it has been held in memory. (The
+    // app-wide payload limit is for JSON bodies and does not apply here.)
+    let limit = storage.max_bytes();
+    let mut buffer = ntex::util::BytesMut::new();
+    while let Some(chunk) = payload.recv().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(_) => return error(400, "the upload was interrupted"),
+        };
+        if (buffer.len() + chunk.len()) as u64 > limit {
+            return error(
+                413,
+                format!(
+                    "the file is larger than the {} MB limit",
+                    limit / (1024 * 1024)
+                ),
+            );
+        }
+        buffer.extend_from_slice(&chunk);
+    }
+    let body = buffer.freeze();
     if body.is_empty() {
         return error(400, "the request body is empty");
-    }
-    // A second line of defence, not the first: the route carries a
-    // `PayloadConfig` built from the same number, so a body over the limit is
-    // refused while it arrives rather than after a worker has buffered it. This
-    // catches the case where the two have drifted.
-    if body.len() as u64 > storage.max_bytes() {
-        return error(
-            413,
-            format!(
-                "the file is larger than the {} MB limit",
-                storage.max_bytes() / (1024 * 1024)
-            ),
-        );
     }
 
     let content_type = req
@@ -101,10 +112,10 @@ pub async fn upload(
 /// `GET <public_base>/{key}` — read a stored file back.
 pub async fn serve(req: HttpRequest, state: State<AppState>) -> HttpResponse {
     let Some(storage) = state.storage.clone() else {
-        return HttpResponse::NotFound().finish();
+        return HttpResponse::NotFound().build();
     };
     let Some(key) = storage.key_from_path(req.path()) else {
-        return HttpResponse::NotFound().finish();
+        return HttpResponse::NotFound().build();
     };
 
     match storage.get(&key).await {
@@ -118,11 +129,11 @@ pub async fn serve(req: HttpRequest, state: State<AppState>) -> HttpResponse {
             .header("x-content-type-options", "nosniff")
             .header("content-disposition", "inline")
             .body(object.bytes),
-        Ok(None) => HttpResponse::NotFound().finish(),
+        Ok(None) => HttpResponse::NotFound().build(),
         Err(e) => {
             crate::telemetry::record_error("storage", &e);
             tracing::error!(error = %e, %key, "failed to read a stored file");
-            HttpResponse::InternalServerError().finish()
+            HttpResponse::InternalServerError().build()
         }
     }
 }

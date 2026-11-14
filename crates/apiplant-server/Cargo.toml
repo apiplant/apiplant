@@ -9,7 +9,7 @@ authors.workspace = true
 description = "apiplant HTTP server: CRUD routing, function endpoints and TLS on ntex"
 
 [features]
-default = ["typescript"]
+default = ["typescript", "payments", "ai", "cache", "telemetry", "email", "oauth", "storage", "queues", "admin"]
 # TypeScript functions. On, the server embeds V8 (via `apiplant-js`) and can
 # load the `.js` that `apiplant build` produces from a `.ts`. Off — the "slim"
 # build — it serves compiled functions only and V8 is not linked at all, which
@@ -17,27 +17,66 @@ default = ["typescript"]
 # reported, rather than silently ignored: an app that is quietly missing half
 # its endpoints is worse than one that says why.
 typescript = ["dep:apiplant-js"]
+# The subsystems below are each optional for the same reason: an embedder (a
+# program that uses this crate as a library rather than running the `apiplant`
+# binary) may have no use for them, and each one brings a dependency tree of
+# its own. Off, the code that needs one is not compiled, and an app whose
+# main.toml configures it anyway fails to boot and names the missing feature,
+# rather than serving with that section quietly ignored.
+#
+# Stripe: the `/billing` routes, the `billing_*` hooks and a function's
+# `payments` call.
+payments = ["dep:apiplant-payments"]
+# The `/ai` routes, agents, and a function's `chat` call.
+ai = ["dep:apiplant-ai"]
+# The Redis cache behind a function's `cache` call.
+cache = ["dep:apiplant-cache"]
+# `[email]`: SMTP and HTTP providers (lettre), the `emails/` templates
+# (liquid), and the flows that need a mailbox: confirming an address,
+# invitations, password reset, a function's `send_email`.
+email = ["dep:apiplant-email", "dep:liquid"]
+# `[oauth]`: signing in with GitHub, Google, LinkedIn, X or a generic OIDC
+# provider, and the `/auth/oauth` routes.
+oauth = ["dep:apiplant-oauth"]
+# `[storage]`: the `/uploads` endpoint and stored files, on a directory or an
+# S3-compatible bucket.
+storage = ["dep:apiplant-storage"]
+# The queue: a function's `publish`, `/queues/{topic}`, a resource's
+# `[publish]`, and the `[queues.subscribe]` worker.
+queues = ["dep:apiplant-queue"]
+# The admin dashboard, embedded and served at `[admin] path`. Off, the
+# dashboard is not served whatever `[admin] enabled` says (with a warning).
+admin = ["apiplant-assets/admin"]
+# `[observability]`: OpenTelemetry traces and metrics over OTLP. Off, requests
+# are still logged through `tracing`; nothing is measured or exported.
+telemetry = [
+    "dep:tracing-opentelemetry",
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:otlp-http-client",
+    "dep:opentelemetry-semantic-conventions",
+]
 
 [dependencies]
 apiplant-core.workspace = true
 apiplant-db.workspace = true
 apiplant-auth.workspace = true
-apiplant-email.workspace = true
-liquid.workspace = true
-apiplant-payments.workspace = true
-apiplant-oauth.workspace = true
-apiplant-ai.workspace = true
+apiplant-email = { workspace = true, optional = true }
+liquid = { workspace = true, optional = true }
+apiplant-payments = { workspace = true, optional = true }
+apiplant-oauth = { workspace = true, optional = true }
+apiplant-ai = { workspace = true, optional = true }
 futures-util.workspace = true
-apiplant-cache.workspace = true
-apiplant-storage.workspace = true
-apiplant-queue.workspace = true
+apiplant-cache = { workspace = true, optional = true }
+apiplant-storage = { workspace = true, optional = true }
+apiplant-queue = { workspace = true, optional = true }
 apiplant-abi = { workspace = true, features = ["manifest-json"] }
 apiplant-assets.workspace = true
 apiplant-js = { workspace = true, optional = true }
 abi_stable.workspace = true
 libloading.workspace = true
 ntex.workspace = true
-ntex-ratelimiter.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -47,12 +86,12 @@ uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-tracing-opentelemetry.workspace = true
-opentelemetry.workspace = true
-opentelemetry_sdk.workspace = true
-opentelemetry-otlp.workspace = true
-otlp-http-client.workspace = true
-opentelemetry-semantic-conventions.workspace = true
+tracing-opentelemetry = { workspace = true, optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+otlp-http-client = { workspace = true, optional = true }
+opentelemetry-semantic-conventions = { workspace = true, optional = true }
 anyhow.workspace = true
 thiserror.workspace = true
 rustls.workspace = true

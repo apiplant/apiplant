@@ -413,7 +413,7 @@ async fn the_publish_endpoint_is_off_by_default_and_gated_when_on() {
             .uri("/api/queues/order.paid")
             .header("authorization", format!("Bearer {token}"))
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(json!({ "order_id": "o-1" }).to_string())
+            .payload(json!({ "order_id": "o-1" }).to_string())
             .to_request(),
     )
     .await;

@@ -29,7 +29,11 @@ const ADMIN_DB_URL: &str = "postgres://postgres@127.0.0.1:5432/postgres";
 
 macro_rules! init_http_app {
     ($state:expr) => {
-        test::init_service(build_app!($state)).await
+        test::init_service_st(
+            crate::state::Shared(::std::sync::Arc::new($state.clone())),
+            build_app!($state),
+        )
+        .await
     };
 }
 
@@ -190,6 +194,7 @@ fn events() -> Vec<String> {
 ///
 /// Returns their token and that organisation's id — the pair every request
 /// under an org-scoped or `role:` policy needs.
+#[cfg(any(feature = "payments", feature = "queues"))]
 pub(super) async fn member_with_role(
     state: &AppState,
     email: &str,
@@ -272,20 +277,21 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
     // test app that configures a provider gets the mailbox routes mounted and
     // one that doesn't gets a server with no such endpoints — which is the
     // difference these tests are largely about.
-    let mailer = apiplant_email::Mailer::from_config(&app.config.email).expect("valid [email]");
-    let payments = apiplant_payments::Payments::from_config(
+    let mailer = crate::optional::Mailer::from_config(&app.config.email).expect("valid [email]");
+    let payments = crate::optional::Payments::from_config(
         &app.config.payments,
         "https://test.example/admin/#/billing",
     )
     .expect("valid [payments]");
     // Same again for the assistant: a test app that names an `[ai]` provider
     // gets `/ai/chat`, and one that doesn't gets no such route.
-    let ai = apiplant_ai::Ai::from_config(&app.config.ai).expect("valid [ai]");
+    let ai = crate::optional::Ai::from_config(&app.config.ai).expect("valid [ai]");
     // And once more for sign-in providers: a test app with an `[oauth.…]`
     // block gets the `/auth/oauth` routes and the `oauth_state` table, and one
     // without gets neither.
+    #[cfg(feature = "oauth")]
     crate::oauth_routes::check_resources(&app).expect("oauth resources are intact");
-    let oauth = apiplant_oauth::Providers::from_config(
+    let oauth = crate::optional::Providers::from_config(
         &app.config.oauth,
         &format!(
             "{}{}/auth/oauth",
@@ -299,7 +305,7 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
         .values()
         .filter_map(|agent| {
             agent.ai.as_ref().map(|_| {
-                apiplant_ai::Ai::from_config(&agent.merged_ai_config(&app.config.ai))
+                crate::optional::Ai::from_config(&agent.merged_ai_config(&app.config.ai))
                     .map(|ai| (agent.meta.name.clone(), ai))
             })
         })
@@ -317,11 +323,11 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
     let statics = crate::state::Statics::resolve(&app);
     // Real, and rooted in the test app's own temporary directory: a test that
     // uploads writes into a directory that is deleted with the rest of it.
-    let storage = apiplant_storage::Storage::connect(&app.config.storage, &app.root)
-        .expect("valid [storage]");
+    let storage =
+        crate::optional::Storage::connect(&app.config.storage, &app.root).expect("valid [storage]");
     // Real, like the storage above: `queue_message` is a built-in, so the test
     // database has the table and a test that publishes actually writes a row.
-    let queue = apiplant_queue::Queue::new(&db, &app);
+    let queue = crate::optional::Queue::new(&db, &app);
     // Real, from the app's own `[rate_limit]` and whatever its resources and
     // functions say beside it: a test app that sets no limit gets a policy that
     // refuses nothing, and one that does gets 429s.
@@ -334,6 +340,7 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
         &app.config.server.base_path,
     );
 
+    let state_app_for_templates = app.clone();
     AppState {
         app: Arc::new(app),
         db,
@@ -342,9 +349,8 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
         mailer,
         // Compiled from the app being loaded, so a test that writes an
         // `emails/` directory gets its templates the way a real boot would.
-        email_templates: Arc::new(
-            crate::email_templates::EmailTemplates::load(root).expect("email templates"),
-        ),
+        email_templates: crate::optional::email_templates(&state_app_for_templates)
+            .expect("email templates"),
         // No test configures a cache, so a function that reaches for one gets
         // the same "not configured" error a real app would.
         cache: None,
@@ -369,7 +375,7 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
     }
 }
 
-async fn read_json(resp: ntex::web::WebResponse) -> Value {
+async fn read_json(resp: ntex::http::Response) -> Value {
     serde_json::from_slice(&test::read_body(resp).await).unwrap()
 }
 
@@ -384,7 +390,7 @@ fn req_json(method: &str, uri: &str, body: Value) -> ntex::http::Request {
     };
     req.uri(uri)
         .header(CONTENT_TYPE, "application/json")
-        .set_payload(body.to_string())
+        .payload(body.to_string())
         .to_request()
 }
 
@@ -392,20 +398,28 @@ fn bearer(req: test::TestRequest, token: &str) -> test::TestRequest {
     req.header("authorization", format!("Bearer {token}"))
 }
 
+#[cfg(feature = "ai")]
 mod ai;
 mod auth;
 mod auth_hooks;
+#[cfg(feature = "payments")]
 mod billing;
+mod cookie;
+#[cfg(feature = "email")]
 mod email_auth;
+mod embedding;
 mod functions;
 mod hooks;
 mod impersonation;
+#[cfg(feature = "oauth")]
 mod oauth;
 mod permissions;
+#[cfg(feature = "queues")]
 mod queues;
 mod rate_limit;
 mod resources;
 mod schema;
 mod serving;
+#[cfg(feature = "storage")]
 mod storage;
 mod switches;

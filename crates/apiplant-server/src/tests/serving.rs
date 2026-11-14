@@ -79,6 +79,7 @@ title = "Doc Test"
     db.cleanup().await;
 }
 
+#[cfg(feature = "admin")]
 #[ntex::test]
 async fn admin_is_served_from_the_binary_for_an_app_that_generated_nothing() {
     let db = TempDatabase::create("admin-embedded").await;
@@ -131,6 +132,7 @@ async fn admin_is_served_from_the_binary_for_an_app_that_generated_nothing() {
     db.cleanup().await;
 }
 
+#[cfg(feature = "admin")]
 #[ntex::test]
 async fn a_directory_in_the_app_never_shadows_the_dashboard() {
     let db = TempDatabase::create("admin-stale").await;

@@ -37,9 +37,10 @@
 //! who really owns the address learns the truth in the only place they should:
 //! their inbox.
 
+use crate::state::State;
 use apiplant_auth::Authenticator;
 use chrono::{DateTime, Duration, Utc};
-use ntex::web::types::{Json, Path, State};
+use ntex::web::types::{Json, Path};
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -346,10 +347,14 @@ pub async fn accept_invitation(
     }
 
     match state.auth.issue_token(user_id) {
-        Ok(session) => HttpResponse::Ok().json(&json!({
-            "token": session,
-            "organization_id": org.to_string(),
-        })),
+        Ok(session) => crate::session_cookie::respond(
+            &state.app.config.auth,
+            HttpResponse::Ok().json(&json!({
+                "token": session,
+                "organization_id": org.to_string(),
+            })),
+            &session,
+        ),
         Err(_) => error(500, "failed to issue token"),
     }
 }
@@ -417,7 +422,11 @@ pub async fn verify_email(state: State<AppState>, body: Json<Value>) -> HttpResp
             if !redirect.is_empty() {
                 body["redirect_to"] = Value::String(redirect.to_string());
             }
-            HttpResponse::Ok().json(&body)
+            crate::session_cookie::respond(
+                &state.app.config.auth,
+                HttpResponse::Ok().json(&body),
+                &session,
+            )
         }
         Err(_) => error(500, "failed to issue token"),
     }
@@ -553,7 +562,11 @@ pub async fn reset_password(state: State<AppState>, body: Json<Value>) -> HttpRe
     }
 
     match state.auth.issue_token(user_id) {
-        Ok(session) => HttpResponse::Ok().json(&json!({ "token": session })),
+        Ok(session) => crate::session_cookie::respond(
+            &state.app.config.auth,
+            HttpResponse::Ok().json(&json!({ "token": session })),
+            &session,
+        ),
         Err(_) => error(500, "failed to issue token"),
     }
 }

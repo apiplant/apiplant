@@ -28,8 +28,9 @@
 //! would have to consult. Nothing here is nestable: a borrowed session cannot
 //! borrow again, so `act` always names a real person.
 
+use crate::state::State;
 use apiplant_auth::{Principal, Session};
-use ntex::web::types::{Json, State};
+use ntex::web::types::Json;
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -92,8 +93,12 @@ pub async fn start(req: HttpRequest, state: State<AppState>, body: Json<Value>) 
         "impersonation started"
     );
     let mut response = session_response(session);
-    response["token"] = Value::String(token);
-    HttpResponse::Ok().json(&response)
+    response["token"] = Value::String(token.clone());
+    crate::session_cookie::respond(
+        &state.app.config.auth,
+        HttpResponse::Ok().json(&response),
+        &token,
+    )
 }
 
 /// `POST <base>/auth/impersonate/stop` — go back to being yourself.
@@ -122,8 +127,12 @@ pub async fn stop(req: HttpRequest, state: State<AppState>) -> HttpResponse {
     };
     tracing::info!(actor = %actor, subject = %principal.user_id, "impersonation ended");
     let mut response = session_response(session);
-    response["token"] = Value::String(token);
-    HttpResponse::Ok().json(&response)
+    response["token"] = Value::String(token.clone());
+    crate::session_cookie::respond(
+        &state.app.config.auth,
+        HttpResponse::Ok().json(&response),
+        &token,
+    )
 }
 
 /// Which door this caller comes through, and therefore what session they get.

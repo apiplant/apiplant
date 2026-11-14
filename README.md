@@ -189,6 +189,7 @@ This README is the tour. The [`docs/`](docs/) directory is the full reference:
 | [Security model](docs/security.md) | what the server enforces, and what you must configure before exposing it |
 | [API reference](docs/api-reference.md) | every endpoint, query parameter and status code |
 | [OpenAPI & Swagger UI](docs/openapi.md) | the generated spec and interactive docs |
+| [Embedding](docs/embedding.md) | apiplant as a Rust library: `Platform`, `Caller`, your own routes, Cargo features |
 
 ## Building with Claude
 

@@ -16,11 +16,12 @@
 
 use std::collections::HashMap;
 
+use crate::state::State;
 use apiplant_auth::{Principal, ADMIN_ROLE};
 use apiplant_core::schema::{Access, Effect, Policy, PolicySet, Rule};
 use apiplant_core::{FieldType, HookEvent, Resource, ORG_CLASS_FIELD};
 use apiplant_db::{value, Filter, Sort};
-use ntex::web::types::{Json, Path, State};
+use ntex::web::types::{Json, Path};
 use ntex::web::{HttpRequest, HttpResponse};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -1533,7 +1534,7 @@ pub async fn delete(
     let response = match hooks::run(&state, r, HookEvent::AfterDelete, &hook_req, payload()).await {
         // A replacement turns the usual empty `204` into a `200` with a body.
         Ok(Some(replacement)) => ok(&replacement),
-        Ok(None) => HttpResponse::NoContent().finish(),
+        Ok(None) => HttpResponse::NoContent().build(),
         Err(resp) => return resp,
     };
     // The row is gone, so the message carries what it was — the last chance

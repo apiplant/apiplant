@@ -5,20 +5,72 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use apiplant_ai::Ai;
+use crate::optional::Ai;
+use crate::optional::Cache;
+use crate::optional::Mailer;
+use crate::optional::Payments;
+use crate::optional::Providers;
+use crate::optional::Queue;
+use crate::optional::Storage;
 use apiplant_auth::{Authenticator, OrgMembership, Principal, Session as AuthSession, ADMIN_ROLE};
-use apiplant_cache::Cache;
 use apiplant_core::{Access, App, Policy, ORG_CLASS_FIELD};
 use apiplant_db::Db;
-use apiplant_email::Mailer;
-use apiplant_oauth::Providers;
-use apiplant_payments::Payments;
-use apiplant_queue::Queue;
-use apiplant_storage::Storage;
 use ntex::web::HttpRequest;
 use uuid::Uuid;
 
 use crate::functions::FunctionRegistry;
+
+/// What ntex holds as the application's state: the [`AppState`], behind an
+/// `Arc` so a worker's copy and every request's are one allocation.
+///
+/// Handlers do not name this. They take [`State<AppState>`](State), which
+/// derefs to the `AppState`, as they did before ntex 4 removed its own state
+/// extractor.
+#[derive(Clone)]
+pub struct Shared(pub Arc<AppState>);
+
+impl ntex::web::State for Shared {
+    type Error = ntex::web::DefaultError;
+}
+
+/// The extractor handlers take the app state with.
+///
+/// ntex 4 passes the application state to every extractor; this one hands it
+/// over as an `Arc`, so it costs a reference count per request.
+pub struct State<T>(Arc<T>);
+
+impl<T> Clone for State<T> {
+    fn clone(&self) -> Self {
+        State(Arc::clone(&self.0))
+    }
+}
+
+impl<T> std::ops::Deref for State<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl State<AppState> {
+    /// The state as an `Arc`, for handing to a task that outlives the request.
+    pub fn into_inner(self) -> Arc<AppState> {
+        self.0
+    }
+}
+
+impl ntex::web::FromRequest<Shared> for State<AppState> {
+    type Error = std::convert::Infallible;
+
+    async fn from_request(
+        st: &Shared,
+        _: &HttpRequest,
+        _: &mut ntex::http::Payload,
+    ) -> Result<Self, Self::Error> {
+        Ok(State(Arc::clone(&st.0)))
+    }
+}
 
 /// Immutable state shared across every worker and request.
 #[derive(Clone)]
@@ -33,7 +85,7 @@ pub struct AppState {
     /// The app's own wording for the messages the framework sends, compiled at
     /// boot from its `emails/` directory. Empty in the app that has none, which
     /// is the ordinary case — the built-in messages are used then.
-    pub email_templates: Arc<crate::email_templates::EmailTemplates>,
+    pub email_templates: Arc<crate::optional::EmailTemplates>,
     /// The app's Redis cache, when `[cache]` names one. Functions reach it
     /// through `cache`; no framework path caches through it.
     pub cache: Option<Cache>,
@@ -103,10 +155,9 @@ pub struct Statics {
 impl Statics {
     /// Work out what a loaded app serves statically.
     pub fn resolve(app: &App) -> Statics {
-        let admin_path = app
-            .config
-            .admin
-            .enabled
+        // A build without the `admin` feature has no dashboard to serve, and
+        // `[admin] enabled` (on by default) is answered with a warning at boot.
+        let admin_path = (cfg!(feature = "admin") && app.config.admin.enabled)
             .then(|| app.config.admin.path.clone());
         let public_dir = app.root.join(&app.config.public.dir);
         let public_dir = (app.config.public.enabled && public_dir.is_dir()).then_some(public_dir);
@@ -134,10 +185,9 @@ impl Statics {
         }
 
         Statics {
-            storage_base: app
-                .config
-                .storage
-                .is_active()
+            // Likewise storage: `backend = "local"` is the default, and a build
+            // without the `storage` feature reads it as `none`.
+            storage_base: (cfg!(feature = "storage") && app.config.storage.is_active())
                 .then(|| app.config.storage.normalized_public_base()),
             admin_path,
             public_dir,
@@ -166,7 +216,8 @@ impl AppState {
     /// Resolve the caller (identity + organisation memberships) from the request.
     ///
     /// Identity comes from `Authorization: Bearer <jwt>`, `Authorization: ApiKey
-    /// <key>`, or `X-Api-Key: <key>`. Memberships (and the caller's role in each
+    /// <key>`, or `X-Api-Key: <key>`, and, with `[auth] cookie` on and none of
+    /// those present, from the session cookie (see [`crate::session_cookie`]). Memberships (and the caller's role in each
     /// organisation) are loaded fresh from the database so changes take effect
     /// immediately. Anonymous callers resolve to `None`.
     pub async fn resolve_principal(&self, req: &HttpRequest) -> Option<Principal> {
@@ -218,7 +269,15 @@ impl AppState {
                     .map(AuthSession::plain);
             }
         }
-        let header = req.headers().get("authorization")?.to_str().ok()?;
+        let Some(header) = req.headers().get("authorization") else {
+            // No header at all: a browser's own request (an image, a video, a
+            // download, a WebSocket) may still carry the session as a cookie,
+            // when the app has asked for one. A header that *is* present is
+            // never second-guessed by the cookie, even when it fails.
+            let token = crate::session_cookie::session_token(&self.app.config.auth, req)?;
+            return self.auth.verify_session(&token).ok();
+        };
+        let header = header.to_str().ok()?;
         if let Some(token) = header.strip_prefix("Bearer ") {
             return self.auth.verify_session(token.trim()).ok();
         }

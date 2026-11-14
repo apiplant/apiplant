@@ -200,28 +200,29 @@ userinfo_url = "{origin}/user"
 
 /// Play the browser: start a flow, read the `state` out of the authorize URL,
 /// and hand it back to the callback with a code.
-async fn sign_in<S, E>(
-    app: &ntex::service::Pipeline<S>,
+async fn sign_in<E>(
+    app: &ntex::service::Pipeline<ntex::http::Request, ntex::http::Response, E>,
     session: Option<&str>,
-) -> ntex::web::WebResponse
+) -> ntex::http::Response
 where
-    S: ntex::service::Service<ntex::http::Request, Response = ntex::web::WebResponse, Error = E>,
-    E: std::fmt::Debug,
+    E: std::fmt::Debug + 'static,
 {
     let state = start(app, session).await;
     let request = test::TestRequest::post()
         .uri("/api/auth/oauth/github/callback")
         .header(CONTENT_TYPE, "application/json")
-        .set_payload(json!({ "code": "the-code", "state": state }).to_string())
+        .payload(json!({ "code": "the-code", "state": state }).to_string())
         .to_request();
     test::call_service(app, request).await
 }
 
 /// Start a flow and return its `state` parameter.
-async fn start<S, E>(app: &ntex::service::Pipeline<S>, session: Option<&str>) -> String
+async fn start<E>(
+    app: &ntex::service::Pipeline<ntex::http::Request, ntex::http::Response, E>,
+    session: Option<&str>,
+) -> String
 where
-    S: ntex::service::Service<ntex::http::Request, Response = ntex::web::WebResponse, Error = E>,
-    E: std::fmt::Debug,
+    E: std::fmt::Debug + 'static,
 {
     let mut request = test::TestRequest::post().uri("/api/auth/oauth/github/start");
     if let Some(token) = session {
@@ -391,7 +392,7 @@ async fn a_state_cannot_be_replayed_or_invented() {
         test::TestRequest::post()
             .uri("/api/auth/oauth/github/callback")
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(json!({ "code": "the-code", "state": state }).to_string())
+            .payload(json!({ "code": "the-code", "state": state }).to_string())
             .to_request()
     };
 
@@ -950,10 +951,12 @@ async fn a_caller_can_choose_how_the_token_reaches_it() {
 }
 
 /// Walk the redirecting pair the way a browser would, returning where it lands.
-async fn browser_flow<S, E>(app: &ntex::service::Pipeline<S>, extra: &str) -> String
+async fn browser_flow<E>(
+    app: &ntex::service::Pipeline<ntex::http::Request, ntex::http::Response, E>,
+    extra: &str,
+) -> String
 where
-    S: ntex::service::Service<ntex::http::Request, Response = ntex::web::WebResponse, Error = E>,
-    E: std::fmt::Debug,
+    E: std::fmt::Debug + 'static,
 {
     let out = test::call_service(
         app,
@@ -1056,7 +1059,7 @@ async fn a_refusal_at_the_provider_comes_back_as_a_refusal() {
         test::TestRequest::post()
             .uri("/api/auth/oauth/github/callback")
             .header(CONTENT_TYPE, "application/json")
-            .set_payload(
+            .payload(
                 json!({ "error": "access_denied", "error_description": "the user said no" })
                     .to_string(),
             )
