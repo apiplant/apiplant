@@ -3,15 +3,12 @@
 //! This is the root — named for its directory (`answer/answer.zig`), which is how
 //! `apiplant build` knows it is the entry point. It `@import`s `mathutil.zig`
 //! beside it; a single-file `.zig` function has nothing to import from. The ABI
-//! is reached through `@cImport` of `apiplant.h`, exactly as in
+//! is reached through `@import("apiplant")` (the translated `apiplant.h`), exactly as in
 //! examples/10-zig-functions.
 
 const std = @import("std");
 const mathutil = @import("mathutil.zig");
-const c = @cImport({
-    @cDefine("APIPLANT_NO_PROTOTYPES", "1");
-    @cInclude("apiplant.h");
-});
+const c = @import("apiplant");
 
 const allocator = std.heap.c_allocator;
 

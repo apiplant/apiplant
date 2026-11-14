@@ -1,8 +1,8 @@
 # 10 · Functions in Zig
 
 The same two endpoints as [example 09](../09-c-functions), written in Zig instead
-of C. They speak the identical C ABI — Zig reaches it by `@cImport`ing the same
-`apiplant.h` — so this example is really about what the contract looks like with
+of C. They speak the identical C ABI — Zig reaches it through `@import("apiplant")`, a
+module `apiplant build` translates from the same `apiplant.h` — so this example is really about what the contract looks like with
 slices, `defer` and error unions instead of raw pointers and manual frees.
 
 ```
@@ -57,8 +57,8 @@ if (raw == null) { … }
 defer host.free_string.?(host.ctx, raw);   // paired once, honoured everywhere
 ```
 
-`@cImport` means there is no second declaration of the ABI to keep in sync — the
-header *is* the binding. Function pointers arrive as optionals, hence the `.?`.
+The module is generated from the header, so there is no second declaration of
+the ABI to keep in sync: the header *is* the binding. Function pointers arrive as optionals, hence the `.?`.
 
 ## Two things to know
 

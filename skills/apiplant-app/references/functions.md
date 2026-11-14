@@ -666,8 +666,10 @@ three serve the same two endpoints, so they can be compared directly.
 
 ### Language notes
 
-**Zig** reaches the ABI with `@cImport`, so the header is the binding and there
-is no second declaration to keep in sync. `defer` makes the `free_string`
+**Zig** reaches the ABI with `const c = @import("apiplant");`. `apiplant build`
+translates `apiplant.h` into that module with `zig translate-c`, so the header
+is still the binding and there is no second declaration to keep in sync (Zig
+0.17 removed `@cImport`, which this used to be). `defer` makes the `free_string`
 pairing straightforward. `apiplant build` keeps safety checks enabled in both
 profiles (`Debug` and `ReleaseSafe`), since turning a bounds check into
 undefined behaviour inside the host process is not worth the few kilobytes

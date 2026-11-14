@@ -611,10 +611,11 @@ fn a_c_library_missing_the_other_symbols_is_an_error_not_a_miss() {
 
 // ---- the same contract, from other languages -------------------------------
 
-/// A Zig function reaching the ABI through `@cImport`.
+/// A Zig function reaching the ABI through the header translated into a
+/// module, as `apiplant build` does it.
 const ZIG_FIXTURE: &str = r#"
 const std = @import("std");
-const c = @cImport({ @cInclude("apiplant.h"); });
+const c = @import("apiplant");
 
 const manifest = "[{\"name\":\"zecho\",\"version\":\"3.0.0\",\"visibility\":\"public\"}]";
 
@@ -755,13 +756,28 @@ fn compile_zig(dir: &Path, source: &str) -> Option<PathBuf> {
     let zig_file = dir.join("fixture.zig");
     let library = dir.join("libfixture.so");
     std::fs::write(&zig_file, source).unwrap();
+    let zig = std::env::var("ZIG").unwrap_or_else(|_| "zig".into());
 
-    let output = Command::new(std::env::var("ZIG").unwrap_or_else(|_| "zig".into()))
+    // The header as a Zig module, exactly as `apiplant build` produces it.
+    let translated = Command::new(&zig)
+        .arg("translate-c")
+        .arg(include_dir().join("apiplant.h"))
+        .arg("-lc")
+        .output()
+        .ok()?;
+    if !translated.status.success() {
+        panic!(
+            "zig translate-c failed:\n{}",
+            String::from_utf8_lossy(&translated.stderr)
+        );
+    }
+    let bindings = dir.join("apiplant.zig");
+    std::fs::write(&bindings, &translated.stdout).unwrap();
+
+    let output = Command::new(&zig)
         .arg("build-lib")
         .arg("-dynamic")
         .arg("-lc")
-        .arg("-I")
-        .arg(include_dir())
         .arg("--cache-dir")
         .arg(dir.join("cache"))
         .arg("--name")
@@ -769,7 +785,11 @@ fn compile_zig(dir: &Path, source: &str) -> Option<PathBuf> {
         .arg("-O")
         .arg("ReleaseSafe")
         .arg(format!("-femit-bin={}", library.display()))
-        .arg(&zig_file)
+        .arg("--dep")
+        .arg("apiplant")
+        .arg(format!("-Mroot={}", zig_file.display()))
+        .arg("-lc")
+        .arg(format!("-Mapiplant={}", bindings.display()))
         .output()
         .ok()?;
 

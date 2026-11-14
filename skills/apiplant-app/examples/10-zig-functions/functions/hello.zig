@@ -6,16 +6,15 @@
 //!   GET  /api/functions/notes   authenticated  — counts rows via the host's DB
 //!
 //! `apiplant build` compiles this with `zig build-lib -dynamic` and drops
-//! libhello.so next to it. Zig reaches the ABI by `@cImport`ing the same
-//! `apiplant.h` a C function includes, so the contract below is identical to
+//! libhello.so next to it. Zig reaches the ABI through `@import("apiplant")`, a
+//! module `apiplant build` translates from the same `apiplant.h` a C function
+//! includes, so the contract below is identical to
 //! example 09 — this is what it looks like with slices, errors and `defer`
 //! instead of raw pointers and manual frees.
 
 const std = @import("std");
 
-const c = @cImport({
-    @cInclude("apiplant.h");
-});
+const c = @import("apiplant");
 
 /// Everything handed across the boundary is allocated with libc's malloc, so the
 /// host's `apiplant_free` below is just `free`. Using Zig's own allocators here

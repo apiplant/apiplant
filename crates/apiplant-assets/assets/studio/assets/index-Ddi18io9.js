@@ -1176,17 +1176,16 @@ int32_t apiplant_invoke(const char *name, const char *input_json,
 }
 `,TI=e=>`//! \`${e}\` — an apiplant function in Zig.
 //!
-//! Zig reaches the ABI by \`@cImport\`ing the same apiplant.h a C function
-//! includes, so the header is the binding. \`apiplant build\` compiles this with
+//! Zig reaches the ABI through \`@import("apiplant")\`: \`apiplant build\`
+//! translates the same apiplant.h a C function includes into that module, so
+//! the header is still the binding, then compiles this with
 //! \`zig build-lib -dynamic -lc\` and drops lib${e}.so beside it.
 //!
 //! See examples/10-zig-functions for reading input and querying the database.
 
 const std = @import("std");
 
-const c = @cImport({
-    @cInclude("apiplant.h");
-});
+const c = @import("apiplant");
 
 /// Everything crossing the boundary is malloc'd, so \`apiplant_free\` is \`free\`.
 const allocator = std.heap.c_allocator;

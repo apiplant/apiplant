@@ -14,7 +14,7 @@ is a complete app: point the binary at it and it runs.
 | 07 | [functions](07-functions) | writing custom code: compiled functions as endpoints |
 | 08 | [hooks](08-hooks) | running those functions around every CRUD operation |
 | 09 | [c-functions](09-c-functions) | the same idea in C: a function is just a shared library |
-| 10 | [zig-functions](10-zig-functions) | and in Zig, reaching the ABI through `@cImport` |
+| 10 | [zig-functions](10-zig-functions) | and in Zig, reaching the ABI through `@import("apiplant")` (the translated header) |
 | 11 | [go-functions](11-go-functions) | and in Go, via cgo and the standard library |
 | 12 | [function-dependencies](12-function-dependencies) | function *directories*: crates, modules, npm projects, multi-file — with dependencies |
 | 13 | [real-world](13-real-world) | all of it at once: 20 resources, self-references, join rows, ledgers |

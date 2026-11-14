@@ -110,7 +110,10 @@ pub(super) fn compile_c(
 /// Compile a Zig source into `library`.
 ///
 /// Like C, a Zig function exports the four ABI symbols, so no scaffolding is
-/// needed. `@cImport`ing `apiplant.h` is what `-lc` and the include path are for.
+/// needed. It reaches the ABI with `@import("apiplant")`: a module translated
+/// from `apiplant.h` by [`zig_bindings`], so the header is still the one
+/// declaration of the contract. (Zig 0.17 removed `@cImport`, which is what
+/// this used to be.)
 /// A single file *is* the root; a directory has a [root file](zig_root) that may
 /// `@import` the rest, so extra Zig modules just live beside it.
 ///
@@ -126,6 +129,7 @@ pub(super) fn compile_zig(
     options: Options,
 ) -> Result<()> {
     let include = abi_include_path(build_dir)?;
+    let bindings = zig_bindings(&include, build_dir, source)?;
     let root = if source.is_dir {
         zig_root(source)?
     } else {
@@ -135,10 +139,9 @@ pub(super) fn compile_zig(
 
     zig.arg("build-lib")
         .arg("-dynamic")
-        // Zig functions reach the ABI through `@cImport`, which needs libc.
+        // The bindings declare libc types, and a function allocates with
+        // libc's malloc so the host can free what it returns.
         .arg("-lc")
-        .arg("-I")
-        .arg(&include)
         // Keep zig's build cache inside .apiplant-build instead of dropping a
         // .zig-cache into the app's functions/ directory.
         .arg("--cache-dir")
@@ -163,9 +166,55 @@ pub(super) fn compile_zig(
     // `-femit-bin` names the output exactly, so nothing needs copying after.
     let mut emit = std::ffi::OsString::from("-femit-bin=");
     emit.push(library);
-    zig.arg(emit).arg(&root);
+    zig.arg(emit);
+
+    // Two modules: the function (the root, which may `@import` files beside
+    // it) depending on `apiplant`, the translated header.
+    let mut root_module = std::ffi::OsString::from("-Mroot=");
+    root_module.push(&root);
+    let mut abi_module = std::ffi::OsString::from("-Mapiplant=");
+    abi_module.push(&bindings);
+    zig.arg("--dep")
+        .arg("apiplant")
+        .arg(root_module)
+        .arg("-lc")
+        .arg(abi_module);
 
     run(zig, source)
+}
+
+/// `apiplant.h` as a Zig module, from `zig translate-c`.
+///
+/// Written to `<build_dir>/zig/apiplant.zig` and rewritten only when the
+/// translation changes, so a repeat build leaves it (and zig's cache) alone.
+fn zig_bindings(include: &Path, build_dir: &Path, source: &Source) -> Result<PathBuf> {
+    let output = Command::new(Language::Zig.command())
+        .arg("translate-c")
+        .arg(include.join("apiplant.h"))
+        .arg("-lc")
+        .arg("--cache-dir")
+        .arg(build_dir.join("zig-cache"))
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to run `zig translate-c` for {}; zig must be installed and on PATH",
+                source.path.display()
+            )
+        })?;
+    if !output.status.success() {
+        bail!(
+            "translating apiplant.h for Zig failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let dir = build_dir.join("zig");
+    let bindings = dir.join("apiplant.zig");
+    if std::fs::read(&bindings).ok().as_deref() != Some(output.stdout.as_slice()) {
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        std::fs::write(&bindings, &output.stdout)
+            .with_context(|| format!("writing {}", bindings.display()))?;
+    }
+    Ok(bindings)
 }
 
 /// The root `.zig` file of a Zig directory — the one handed to `zig build-lib`,
