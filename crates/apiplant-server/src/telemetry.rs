@@ -99,8 +99,9 @@ pub fn init(config: &ObservabilityConfig, app_name: &str) -> Guard {
     // `RUST_LOG` wins over the file: it is what someone reaches for while a
     // container is running, and a config file they cannot edit from there
     // should not override them.
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(config.logs.level.clone()));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(crate::telemetry_filter::directives(&config.logs.level))
+    });
 
     let stdout = match config.logs.format {
         LogFormat::Pretty => tracing_subscriber::fmt::layer().boxed(),

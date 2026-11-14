@@ -429,6 +429,7 @@ mod response;
 pub mod session_cookie;
 mod sse;
 mod state;
+mod telemetry_filter;
 mod token_bucket;
 pub use caller::Caller;
 pub use state::{AppState, Shared, State, Statics, SOLO_ORGANIZATION_ID, SOLO_USER_ID};

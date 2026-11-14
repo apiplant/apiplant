@@ -23,8 +23,9 @@ pub struct Guard;
 /// Install the global log subscriber. `RUST_LOG` wins over the file, as in the
 /// full build.
 pub fn init(config: &ObservabilityConfig, _app_name: &str) -> Guard {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(config.logs.level.clone()));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(crate::telemetry_filter::directives(&config.logs.level))
+    });
     let stdout = match config.logs.format {
         LogFormat::Pretty => tracing_subscriber::fmt::layer().boxed(),
         LogFormat::Compact => tracing_subscriber::fmt::layer().compact().boxed(),
