@@ -87,6 +87,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
 
+  # Every optional subsystem of apiplant-server is a Cargo feature, and a
+  # program embedding it picks its own set. Each feature is built on its own
+  # (plus none and all), tests included, so a `#[cfg]` that only compiles
+  # beside another feature is caught here rather than by the embedder.
+  features:
+    name: features (cargo hack)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      - run: >
+          cargo hack clippy -p apiplant-server -p apiplant-assets
+          --each-feature --all-targets --locked -- -D warnings
+
   # The slim build drops TypeScript and with it v8. It is a shipped artefact,
   # so a compile break in it is a release break.
   slim:
