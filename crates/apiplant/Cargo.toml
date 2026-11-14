@@ -34,7 +34,7 @@ apiplant-server = { workspace = true, features = [
 ] }
 apiplant-js = { workspace = true, features = ["transpile"], optional = true }
 ntex.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true

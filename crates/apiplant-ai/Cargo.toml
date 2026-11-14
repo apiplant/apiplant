@@ -16,7 +16,7 @@ thiserror.workspace = true
 tracing.workspace = true
 futures-util.workspace = true
 reqwest = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }   # the `summarize` bin
 
 [[bin]]
 name = "summarize"
