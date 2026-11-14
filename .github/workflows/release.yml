@@ -35,7 +35,29 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # The packages and archives are named from the tag, the binary reports the
+  # workspace version: a tag on a commit that never bumped Cargo.toml builds
+  # for half an hour and then fails at the first `apiplant version` check.
+  # Refuse it up front instead.
+  version:
+    name: tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$tag" in v*) ;; *) echo "not a version tag ($tag): nothing to compare"; exit 0 ;; esac
+          crate=$(awk -F'"' '/^\[workspace.package\]/{w=1} w && /^version *=/{print $2; exit}' Cargo.toml)
+          if [ "${tag#v}" != "$crate" ]; then
+            echo "::error::tag $tag but Cargo.toml says $crate — bump [workspace.package] version (and the apiplant-* entries in [workspace.dependencies]), commit, and re-tag"
+            exit 1
+          fi
+          echo "tag $tag = Cargo.toml $crate"
+
   binaries:
+    needs: version
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     # Uncomment together with the signing steps below. Job level, not step
@@ -423,8 +445,10 @@ jobs:
 
           for package in apiplant apiplant-slim; do
             dpkg-deb --info "debs/${package}_${version}-1_amd64.deb"
-            dpkg-deb --contents "debs/${package}_${version}-1_amd64.deb" \
-              | grep -q './usr/bin/apiplant'
+            # Listed into a variable first: `| grep -q` would exit at the first
+            # match and kill dpkg-deb's tar with a broken pipe.
+            contents=$(dpkg-deb --contents "debs/${package}_${version}-1_amd64.deb")
+            grep -q './usr/bin/apiplant' <<<"$contents"
             [ "$(dpkg-deb --field "debs/${package}_${version}-1_arm64.deb" Architecture)" = arm64 ]
           done
 
