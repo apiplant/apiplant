@@ -296,6 +296,13 @@ export interface AdminManifest {
    * write. See {@link organizationsEnabled} in `store.ts`.
    */
   organization?: OrganizationManifest;
+  /**
+   * The optional subsystems the server was compiled with (`payments`, `ai`,
+   * `cache`, `telemetry`, `typescript`, `email`, `oauth`, `storage`, `queues`,
+   * `admin`). A program embedding apiplant may build without some of them.
+   * Absent from manifests baked before the field existed.
+   */
+  features?: string[];
 }
 
 /** What the app's `[payments]` section amounts to, for the billing screen. */

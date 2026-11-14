@@ -102,6 +102,9 @@ The default is all of them. Measured with `cargo tree` (unique crates): about
 560 with everything, about 400 with `email`, `oauth`, `queues` and `admin`
 only, about 330 with nothing.
 
+The admin manifest (`apiplant-admin.json`) lists the compiled features as
+`features`, so a dashboard can tell "not configured" from "not in this build".
+
 **Configuration is checked against the build.** An app whose `main.toml` asks
 for something the build lacks is refused at boot, and the error names the
 feature to turn on. Nothing is served with a section quietly ignored. The two

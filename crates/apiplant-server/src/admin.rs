@@ -81,6 +81,11 @@ struct AdminManifest {
     /// `X-Organization` stops meaning anything.
     #[serde(skip_serializing_if = "Option::is_none")]
     organization: Option<OrganizationManifest>,
+    /// The optional subsystems this server was compiled with (`payments`,
+    /// `ai`, `email`, `oauth`, …), from [`crate::optional::compiled_features`].
+    /// A program that embeds apiplant may leave some out; the dashboard can
+    /// tell "not configured" from "not in this build" by reading this.
+    features: Vec<&'static str>,
 }
 
 /// Deployment-wide rules about the tenant itself.
@@ -622,6 +627,7 @@ fn build_manifest(
         functions: loaded_functions,
         agents,
         billing: billing_manifest(app),
+        features: crate::optional::compiled_features(),
         organization: app
             .config
             .organizations_enabled()
@@ -1331,6 +1337,20 @@ mod tests {
 
         fs::remove_dir_all(app_dir).unwrap();
         fs::remove_dir_all(out_dir).unwrap();
+    }
+
+    #[test]
+    fn the_manifest_lists_the_features_this_build_has() {
+        let manifest = build_manifest_for(&[]);
+        let features: Vec<&str> = manifest["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f.as_str().unwrap())
+            .collect();
+        assert_eq!(features, crate::optional::compiled_features());
+        assert_eq!(features.contains(&"payments"), cfg!(feature = "payments"));
+        assert_eq!(features.contains(&"email"), cfg!(feature = "email"));
     }
 
     #[test]
