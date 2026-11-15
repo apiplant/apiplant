@@ -494,3 +494,9 @@ afterwards, retries on its own, and cannot fail the write. See
   hooks point at.
 * [Permissions](permissions.md): the checks that run before any hook.
 * [Resources](resources.md): the rest of `resources/<name>.toml`.
+
+## From Rust, when embedding
+
+A program that embeds apiplant can also hook any resource in-process, built-ins
+included, with `Platform::on` — see [Embedding](embedding.md#hooks-in-rust).
+Those run before the `[hooks]` function.

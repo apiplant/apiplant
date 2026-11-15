@@ -431,7 +431,9 @@ mod sse;
 mod state;
 mod telemetry_filter;
 mod token_bucket;
+pub use apiplant_core::HookEvent;
 pub use caller::Caller;
+pub use hooks::{HookCall, HookOutcome, NativeHook};
 pub use state::{AppState, Shared, State, Statics, SOLO_ORGANIZATION_ID, SOLO_USER_ID};
 #[cfg(feature = "storage")]
 mod storage_routes;
@@ -710,6 +712,41 @@ impl Platform {
     /// The state every request handler shares.
     pub fn state(&self) -> &AppState {
         &self.state
+    }
+
+    /// Run `hook` around `event` on `resource`, in-process.
+    ///
+    /// A native hook is the Rust counterpart of a `[hooks]` function: it
+    /// receives the same context (the caller, the URL, the body or row) and
+    /// answers with [`HookOutcome`] — carry on, replace the payload or the
+    /// response, or refuse the request. Native hooks run before the
+    /// resource's `[hooks]` function, in the order they were registered; a
+    /// replacement is what the next hook sees.
+    ///
+    /// ```ignore
+    /// platform.on("organization", HookEvent::AfterCreate, move |call| {
+    ///     let workspaces = workspaces.clone();
+    ///     Box::pin(async move {
+    ///         workspaces.provision(&call.payload).await;
+    ///         HookOutcome::Continue
+    ///     })
+    /// })?;
+    /// ```
+    ///
+    /// Refused for a resource the app does not have, which is a typo that
+    /// would otherwise never fire.
+    pub fn on<F>(&mut self, resource: &str, event: HookEvent, hook: F) -> anyhow::Result<&mut Self>
+    where
+        F: Fn(HookCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = HookOutcome>>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        if !self.state.app.resources.contains_key(resource) {
+            anyhow::bail!("cannot hook `{resource}`: this app has no such resource");
+        }
+        Arc::make_mut(&mut self.state.native_hooks).add(resource, event, Arc::new(hook));
+        Ok(self)
     }
 
     /// Serve apiplant's routes until shut down.
@@ -1120,6 +1157,7 @@ impl Platform {
         }
 
         let state = AppState {
+            native_hooks: Default::default(),
             app: Arc::new(app),
             db,
             auth: authr,

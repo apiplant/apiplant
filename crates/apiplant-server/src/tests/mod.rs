@@ -342,6 +342,7 @@ async fn load_state_configured(root: &Path, functions: Vec<(BoxedFunction, Strin
 
     let state_app_for_templates = app.clone();
     AppState {
+        native_hooks: Default::default(),
         app: Arc::new(app),
         db,
         auth: Authenticator::new(b"test-secret".to_vec(), 3600),
@@ -411,6 +412,7 @@ mod embedding;
 mod functions;
 mod hooks;
 mod impersonation;
+mod native_hooks;
 #[cfg(feature = "oauth")]
 mod oauth;
 mod permissions;

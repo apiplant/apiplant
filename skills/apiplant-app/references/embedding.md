@@ -64,6 +64,56 @@ generic `/{resource}` match. Give the API a `[server] base_path` of its own
 (`[admin] path`) and stored files' prefix (`[storage]`, `/files` by default)
 win over a route of yours with the same prefix. Move them, pick another prefix, or build without the `storage` / `admin` feature.
 
+## Resources of your own, added at boot
+
+`App::add_resource(toml, source)` adds a resource exactly as if its file were
+in `resources/` — `$VAR` expansion, validation, and the injected
+`organization_id` when it is org-scoped. It is for resources compiled into
+your program or contributed by its plugins. Call it between `App::load` and
+`Platform::boot`, which migrates every resource the app has.
+
+```rust
+let mut app = apiplant_core::App::load("./platform")?;
+app.add_resource(include_str!("resources/mount.toml"), "stilla")?;
+let platform = Platform::boot(app, Default::default()).await?;
+```
+
+A name that already exists (built-in or not) is refused, and so is a
+reference to a resource the app does not have. To replace a built-in on
+purpose, edit `app.resources` directly.
+
+## Hooks in Rust
+
+`platform.on(resource, event, hook)` runs an async Rust closure around a CRUD
+event — the in-process counterpart of a [`[hooks]` function](hooks.md). It
+works on any resource, built-ins included, without restating its definition.
+
+```rust
+use apiplant_server::{HookCall, HookEvent, HookOutcome};
+
+let mut platform = Platform::boot(app, Default::default()).await?;
+platform.on("organization", HookEvent::AfterCreate, move |call: HookCall| {
+    Box::pin(async move {
+        let slug = call.payload["slug"].as_str().unwrap_or_default().to_string();
+        std::fs::create_dir_all(format!("workspaces/{slug}")).ok();
+        HookOutcome::Continue
+    })
+})?;
+```
+
+| | |
+|---|---|
+| `call.payload` | The submitted body (`before_create` / `before_update`), the row, or the rows — as left by any earlier hook. |
+| `call.context` | The same context object a function hook gets from `ctx.hook()`: `event`, `resource`, `url`, `principal_id`, `organization_id`, `roles`, `record_id`, … |
+| `HookOutcome::Continue` | Carry on unchanged. |
+| `HookOutcome::Replace(value)` | Replace the payload, answer a `before_read` / `before_list` without the database, or replace an `after_*` response. |
+| `HookOutcome::Abort { status, message }` | Refuse the request with that status. |
+
+Native hooks run before the resource's `[hooks]` function, in registration
+order; each sees the payload as the previous one left it, and an abort stops
+the chain. Any number can share one event. Registering a hook on a resource
+the app does not have is an error rather than a hook that never fires.
+
 ## `Caller`
 
 An ntex extractor. It never fails (an anonymous request is a `Caller` with no

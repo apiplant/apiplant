@@ -524,6 +524,18 @@ impl Resource {
     }
 
     /// Load and validate a single resource file.
+    /// Parse and validate a resource from TOML text. `source` names it in
+    /// errors, where a loaded resource would name its file.
+    pub fn parse(text: &str, source: &str) -> crate::Result<Self> {
+        let resource: Resource =
+            crate::env::parse_toml(text, source).map_err(|e| crate::Error::Toml {
+                path: std::path::PathBuf::from(source),
+                source: e,
+            })?;
+        resource.validate()?;
+        Ok(resource)
+    }
+
     pub fn load(path: &Path) -> crate::Result<Self> {
         let text = std::fs::read_to_string(path).map_err(|e| crate::Error::Io {
             path: path.to_path_buf(),

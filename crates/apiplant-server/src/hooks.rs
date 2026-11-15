@@ -30,6 +30,9 @@
 //! `Private` function — invisible over HTTP — is the natural way to write one.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use apiplant_auth::Principal;
 use apiplant_core::{AuthEvent, HookEvent, Resource};
@@ -40,6 +43,71 @@ use uuid::Uuid;
 use crate::functions::HostBridge;
 use crate::response::error;
 use crate::state::AppState;
+
+/// What a native hook receives: the same context object a function hook
+/// gets (event, resource, caller, URL, row or body), parsed, and the payload.
+#[derive(Debug, Clone)]
+pub struct HookCall {
+    pub resource: String,
+    pub event: HookEvent,
+    /// The context a `[hooks]` function receives through `ctx.hook()`.
+    pub context: Value,
+    /// The submitted body (`before_create`/`before_update`), the row, or the
+    /// list of rows — after any earlier hook replaced it.
+    pub payload: Value,
+}
+
+/// What a native hook decides; the same three outcomes a function hook has.
+#[derive(Debug, Clone)]
+pub enum HookOutcome {
+    /// Carry on unchanged.
+    Continue,
+    /// Replace the payload (`before_create`/`before_update`), answer without
+    /// touching the database (`before_read`/`before_list`), or replace the
+    /// response body (`after_*`).
+    Replace(Value),
+    /// Refuse the request with this status and message.
+    Abort { status: u16, message: String },
+}
+
+/// A hook written in Rust by the program embedding apiplant.
+pub type NativeHook =
+    Arc<dyn Fn(HookCall) -> Pin<Box<dyn Future<Output = HookOutcome>>> + Send + Sync>;
+
+/// The native hooks registered with [`crate::Platform::on`], by resource and
+/// event, in registration order.
+#[derive(Clone, Default)]
+pub struct NativeHooks {
+    hooks: HashMap<(String, HookEvent), Vec<NativeHook>>,
+}
+
+impl std::fmt::Debug for NativeHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(
+                self.hooks
+                    .iter()
+                    .map(|((r, e), v)| (format!("{r}.{}", e.as_str()), v.len())),
+            )
+            .finish()
+    }
+}
+
+impl NativeHooks {
+    pub(crate) fn add(&mut self, resource: &str, event: HookEvent, hook: NativeHook) {
+        self.hooks
+            .entry((resource.to_string(), event))
+            .or_default()
+            .push(hook);
+    }
+
+    fn get(&self, resource: &str, event: HookEvent) -> &[NativeHook] {
+        self.hooks
+            .get(&(resource.to_string(), event))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
 
 /// The request-scoped facts every hook sees, independent of the event.
 ///
@@ -198,11 +266,37 @@ pub async fn run(
     request: &HookRequest,
     payload: Value,
 ) -> Result<Option<Value>, HttpResponse> {
+    // Native hooks first, in registration order: they are the embedding
+    // program's own rules, and a `[hooks]` function then sees what they made
+    // of the payload. Each replacement is handed to the next hook.
+    let natives = state.native_hooks.get(&resource.meta.name, event);
+    let mut replaced: Option<Value> = None;
+    let mut payload = payload;
+    for hook in natives {
+        let context: Value =
+            serde_json::from_str(&context_json(resource, event, request, &payload))
+                .unwrap_or(Value::Null);
+        let call = HookCall {
+            resource: resource.meta.name.clone(),
+            event,
+            context,
+            payload: payload.clone(),
+        };
+        match hook(call).await {
+            HookOutcome::Continue => {}
+            HookOutcome::Replace(value) => {
+                payload = value.clone();
+                replaced = Some(value);
+            }
+            HookOutcome::Abort { status, message } => return Err(error(status, message)),
+        }
+    }
+
     let Some(name) = resource.hook(event) else {
-        return Ok(None);
+        return Ok(replaced);
     };
     let context = context_json(resource, event, request, &payload);
-    invoke(
+    let from_function = invoke(
         state,
         resource,
         event.as_str(),
@@ -211,7 +305,8 @@ pub async fn run(
         context,
         payload,
     )
-    .await
+    .await?;
+    Ok(from_function.or(replaced))
 }
 
 /// Publish the topic a resource declares for `event`, if it declares one.

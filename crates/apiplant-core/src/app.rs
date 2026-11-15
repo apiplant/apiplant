@@ -159,29 +159,7 @@ impl App {
         //    `organization_id` foreign key. Inject it where the author didn't
         //    declare one, so the column, its FK, and org filtering all just work.
         for resource in resources.values_mut() {
-            if resource.is_org_scoped() && !resource.fields.contains_key("organization_id") {
-                resource.fields.insert(
-                    "organization_id".to_string(),
-                    Field {
-                        ty: FieldType::Reference,
-                        references: Some("organization".to_string()),
-                        required: true,
-                        unique: false,
-                        hidden: false,
-                        default: None,
-                        default_type: Default::default(),
-                        max_length: None,
-                        case: None,
-                        on_delete: Some(OnDelete::Cascade),
-                        // Injected and stamped by the framework — an operator
-                        // should never see, let alone type, a tenant id.
-                        admin: FieldAdmin {
-                            visible: false,
-                            ..FieldAdmin::default()
-                        },
-                    },
-                );
-            }
+            inject_organization_column(resource);
         }
 
         // 4. TLS is inferred from the presence of an `https/` directory.
@@ -198,6 +176,48 @@ impl App {
             agents,
             tls,
         })
+    }
+
+    /// Add a resource defined in TOML, as if its file were in `resources/`.
+    ///
+    /// For a program that embeds apiplant and contributes resources of its own
+    /// at boot — compiled into the binary, or contributed by its plugins —
+    /// rather than shipping them as files. Call it after [`App::load`] and
+    /// before `Platform::boot`, which migrates every resource the app has.
+    ///
+    /// The resource gets everything a loaded one does: `$VAR` expansion, the
+    /// same validation, and the injected `organization_id` when it is
+    /// org-scoped. `source` names it in error messages (`"plugin media"`).
+    ///
+    /// Refused if a resource of that name exists already, built-in or not:
+    /// two parts of one program defining the same table is a bug to report,
+    /// not an override to apply silently. To deliberately replace one, edit
+    /// [`App::resources`] directly.
+    pub fn add_resource(&mut self, toml: &str, source: &str) -> crate::Result<&Resource> {
+        let mut resource = Resource::parse(toml, source)?;
+        let name = resource.meta.name.clone();
+        if self.resources.contains_key(&name) {
+            return Err(crate::Error::Schema {
+                resource: name,
+                message: format!("{source} defines a resource that already exists"),
+            });
+        }
+        for (field_name, field) in resource.fields.iter() {
+            let Some(target) = field.references.as_deref() else {
+                continue;
+            };
+            if target != name && !self.resources.contains_key(target) {
+                return Err(crate::Error::Schema {
+                    resource: name.clone(),
+                    message: format!(
+                        "field `{field_name}` references `{target}`, which this app does not have"
+                    ),
+                });
+            }
+        }
+        inject_organization_column(&mut resource);
+        tracing::info!(resource = %name, source, "added resource");
+        Ok(self.resources.entry(name).or_insert(resource))
     }
 
     /// Look for a cert + key under `https/`, tolerating common filenames.
@@ -287,8 +307,67 @@ impl App {
     }
 }
 
+/// Every org-scoped resource carries an `organization_id` foreign key: inject
+/// it where the author didn't declare one, so the column, its FK and org
+/// filtering all just work.
+fn inject_organization_column(resource: &mut Resource) {
+    if resource.is_org_scoped() && !resource.fields.contains_key("organization_id") {
+        resource.fields.insert(
+            "organization_id".to_string(),
+            Field {
+                ty: FieldType::Reference,
+                references: Some("organization".to_string()),
+                required: true,
+                unique: false,
+                hidden: false,
+                default: None,
+                default_type: Default::default(),
+                max_length: None,
+                case: None,
+                on_delete: Some(OnDelete::Cascade),
+                // Injected and stamped by the framework — an operator
+                // should never see, let alone type, a tenant id.
+                admin: FieldAdmin {
+                    visible: false,
+                    ..FieldAdmin::default()
+                },
+            },
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn resources_can_be_added_at_boot() {
+        let dir = std::env::temp_dir().join(format!("apiplant-add-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::load(&dir).unwrap();
+
+        let added = app
+            .add_resource(
+                "[resource]\nname = \"mount\"\n\n[fields.path]\ntype = \"string\"\n",
+                "plugin test",
+            )
+            .unwrap();
+        assert!(
+            added.fields.contains_key("organization_id"),
+            "org-scoped by default"
+        );
+        assert!(app.resources.contains_key("mount"));
+
+        let again = app.add_resource("[resource]\nname = \"mount\"\n", "plugin other");
+        assert!(again.unwrap_err().to_string().contains("already exists"));
+        let dangling = app.add_resource(
+            "[resource]\nname = \"share\"\n\n[fields.target]\ntype = \"reference\"\nreferences = \"nope\"\n",
+            "plugin test",
+        );
+        assert!(dangling.unwrap_err().to_string().contains("`nope`"));
+        assert!(app.add_resource("not toml [", "plugin bad").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};

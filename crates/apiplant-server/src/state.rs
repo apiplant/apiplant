@@ -76,6 +76,8 @@ impl ntex::web::FromRequest<Shared> for State<AppState> {
 #[derive(Clone)]
 pub struct AppState {
     pub app: Arc<App>,
+    /// Hooks the embedding program registered in Rust ([`crate::Platform::on`]).
+    pub native_hooks: Arc<crate::hooks::NativeHooks>,
     pub db: Db,
     pub auth: Authenticator,
     pub functions: Arc<FunctionRegistry>,
